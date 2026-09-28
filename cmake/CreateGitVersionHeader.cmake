@@ -67,6 +67,19 @@ macro( create_git_version_header _git_src_path )
     # to KiCadVersion.cmake as the revision level.
     if( _git_describe_result EQUAL 0 )
         set( KICAD_VERSION "${_git_DESCRIBE}" )
+        # KICLOUD: this fork's history contains upstream tags newer than its code (10.0.6 is an
+        # ancestor of the adopted 10.0.4 port), so `git describe` names the wrong release. Label the
+        # build with the source's own version plus this commit instead, whatever tags a clone has:
+        # e.g. "10.0.4-kicloud-gd94a9fe979" (+ "-dirty"). See docs/patches.md.
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} describe --always --dirty --abbrev=10 --exclude=*
+            WORKING_DIRECTORY ${_git_src_path}
+            OUTPUT_VARIABLE _kicloud_hash
+            RESULT_VARIABLE _kicloud_hash_result
+            OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if( _kicloud_hash_result EQUAL 0 AND KICAD_SEMANTIC_VERSION )
+            set( KICAD_VERSION "${KICAD_SEMANTIC_VERSION}-kicloud-g${_kicloud_hash}" )
+        endif()
     else()
         message( STATUS "git describe returned error ${_git_describe_result}: ${_git_describe_error}" )
     endif()
