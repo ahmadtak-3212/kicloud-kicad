@@ -391,7 +391,8 @@ void WEBGL_COMPOSITOR::SetBuffer( unsigned int aBufferHandle )
 
         // Clear stale GL errors from prior draw calls so they don't get attributed
         // to this texture re-attachment (bindFb only clears when the FBO changes).
-        while( glGetError() != GL_NO_ERROR ) {}
+        // KICLOUD: no error-queue draining inside a frame (utils.h, docs/patches.md B1.6)
+        while( !glFrameInProgress() && glGetError() != GL_NO_ERROR ) {}
 
         glFramebufferTexture2DEXT( GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0,
                                    GL_TEXTURE_2D, m_buffers[m_curBuffer].textureTarget, 0 );
@@ -488,7 +489,8 @@ void WEBGL_COMPOSITOR::bindFb( unsigned int aFb )
         // In WebGL 2.0, GL errors from draw calls can accumulate in the error queue
         // (e.g. from rendering to buffers with mismatched draw buffer routing).
         // Clear stale errors so they don't get falsely attributed to this FBO switch.
-        while( glGetError() != GL_NO_ERROR ) {}
+        // KICLOUD: no error-queue draining inside a frame (utils.h, docs/patches.md B1.6)
+        while( !glFrameInProgress() && glGetError() != GL_NO_ERROR ) {}
 
         glBindFramebufferEXT( GL_FRAMEBUFFER, aFb );
         checkGlError( "switching framebuffer", __FILE__, __LINE__ );

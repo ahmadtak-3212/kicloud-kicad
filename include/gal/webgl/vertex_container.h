@@ -34,6 +34,10 @@
 
 #include <gal/webgl/vertex_common.h>
 
+#include <algorithm>
+#include <utility>
+#include <vector>
+
 namespace KIGFX
 {
 class VERTEX_ITEM;
@@ -144,6 +148,31 @@ public:
     void SetDirty()
     {
         m_dirty = true;
+        m_dirtyAll = true;
+    }
+
+    // KICLOUD: record which vertices changed, so a cached container can upload only those
+    // ranges instead of the whole buffer (a full re-upload per change made zooming a large board
+    // push gigabytes through WebGL). See docs/patches.md (B1.6).
+    void SetDirty( unsigned int aOffset, unsigned int aSize )
+    {
+        m_dirty = true;
+
+        if( m_dirtyAll || aSize == 0 )
+            return;
+
+        // An item growing through successive Allocate() calls extends its own last range.
+        if( !m_dirtyRanges.empty() && m_dirtyRanges.back().first == aOffset )
+        {
+            m_dirtyRanges.back().second = std::max( m_dirtyRanges.back().second,
+                                                    aOffset + aSize );
+            return;
+        }
+
+        m_dirtyRanges.emplace_back( aOffset, aOffset + aSize );
+
+        if( m_dirtyRanges.size() >= MAX_DIRTY_RANGES )
+            compactDirtyRanges();
     }
 
     /**
@@ -152,6 +181,8 @@ public:
     void ClearDirty()
     {
         m_dirty = false;
+        m_dirtyAll = false;
+        m_dirtyRanges.clear();
     }
 
 protected:
@@ -165,6 +196,28 @@ protected:
     unsigned int usedSpace() const
     {
         return m_currentSize - m_freeSpace;
+    }
+
+    ///< KICLOUD: sort the recorded dirty ranges and merge overlapping or adjacent ones in place.
+    void compactDirtyRanges()
+    {
+        if( m_dirtyRanges.size() < 2 )
+            return;
+
+        std::sort( m_dirtyRanges.begin(), m_dirtyRanges.end() );
+
+        size_t out = 0;
+
+        for( size_t i = 1; i < m_dirtyRanges.size(); ++i )
+        {
+            if( m_dirtyRanges[i].first <= m_dirtyRanges[out].second )
+                m_dirtyRanges[out].second = std::max( m_dirtyRanges[out].second,
+                                                      m_dirtyRanges[i].second );
+            else
+                m_dirtyRanges[++out] = m_dirtyRanges[i];
+        }
+
+        m_dirtyRanges.resize( out + 1 );
     }
 
     ///< Free space left in the container, expressed in vertices
@@ -182,6 +235,15 @@ protected:
     // Status flags
     bool            m_failed;
     bool            m_dirty;
+
+    ///< KICLOUD: every vertex must be uploaded (set by SetDirty() without a range)
+    bool            m_dirtyAll;
+
+    ///< KICLOUD: changed vertex ranges [begin, end) since the last upload, unless m_dirtyAll
+    std::vector<std::pair<unsigned int, unsigned int>> m_dirtyRanges;
+
+    ///< KICLOUD: compact the dirty ranges once this many have been recorded
+    static constexpr size_t MAX_DIRTY_RANGES = 65536;
 
     ///< Default initial size of a container (expressed in vertices)
     static constexpr unsigned int DEFAULT_SIZE = 1048576;

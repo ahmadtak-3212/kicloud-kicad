@@ -42,6 +42,16 @@
 int checkGlError( const std::string& aInfo, const char* aFile, int aLine, bool aThrow = true );
 
 /**
+ * KICLOUD: skip glGetError() while a frame is drawn. In a browser every glGetError() is a
+ * synchronous round trip to the GPU process, and the per-call checks cost a large share of each
+ * frame. Setup (context, shaders, framebuffers) is still checked call by call. Build with
+ * KICLOUD_WEBGL_CHECK_ERRORS to check once at the end of every frame instead.
+ * See docs/patches.md (B1.6).
+ */
+void setGlFrameInProgress( bool aInFrame );
+bool glFrameInProgress();
+
+/**
  * Enable or disable OpenGL driver messages output.
  *
  * @param aEnable decides whether the message should be shown.

@@ -175,6 +175,13 @@ protected:
     ///< Element buffer object for glDrawElements
     ///< WebGL 2.0 does not support client-side index arrays
     GLuint m_ebo;
+
+    ///< KICLOUD: WEBGL_multi_draw state: -1 not probed yet, 0 unavailable, 1 enabled
+    int m_multiDraw;
+
+    ///< KICLOUD: first vertex and vertex count of each merged range for glMultiDrawArraysWEBGL
+    std::vector<GLint>   m_drawFirsts;
+    std::vector<GLsizei> m_drawCounts;
 };
 
 

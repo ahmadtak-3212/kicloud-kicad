@@ -80,6 +80,10 @@ protected:
 
     ///< Handle to vertices buffer
     GLuint  m_verticesBuffer;
+
+    ///< KICLOUD: size of the GPU-side buffer in vertices (0 until the first upload); the buffer
+    ///< matches the container's capacity so changed ranges are updated in place.
+    unsigned int m_gpuSize;
 };
 } // namespace KIGFX
 

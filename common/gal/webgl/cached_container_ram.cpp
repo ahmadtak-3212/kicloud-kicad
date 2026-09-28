@@ -31,6 +31,7 @@
 #include <gal/webgl/utils.h>
 
 #include <confirm.h>
+#include <algorithm>
 #include <list>
 #include <cassert>
 
@@ -54,7 +55,8 @@ static const wxChar* const traceGalCachedContainer = wxT( "KICAD_GAL_CACHED_CONT
 
 CACHED_CONTAINER_RAM::CACHED_CONTAINER_RAM( unsigned int aSize ) :
         CACHED_CONTAINER( aSize ),
-        m_verticesBuffer( 0 )
+        m_verticesBuffer( 0 ),
+        m_gpuSize( 0 )
 {
     glGenBuffers( 1, &m_verticesBuffer );
     checkGlError( "generating vertices buffer", __FILE__, __LINE__ );
@@ -80,13 +82,63 @@ void CACHED_CONTAINER_RAM::Unmap()
     if( !m_dirty )
         return;
 
-    // Upload vertices coordinates and shader types to GPU memory
+    // KICLOUD: upload only the vertices that changed. PCBJam's port re-sent every vertex
+    // (glBufferData of m_maxIndex vertices) on each change: zooming a large board uploaded
+    // gigabytes. The GPU buffer now has the container's capacity, so it is reallocated only when
+    // the container grows, and changed ranges are written in place with glBufferSubData.
+    // See docs/patches.md (B1.6).
     glBindBuffer( GL_ARRAY_BUFFER, m_verticesBuffer );
     checkGlError( "binding vertices buffer", __FILE__, __LINE__ );
-    glBufferData( GL_ARRAY_BUFFER, m_maxIndex * VERTEX_SIZE, m_vertices, GL_STREAM_DRAW );
+
+    if( m_gpuSize != m_currentSize )
+    {
+        glBufferData( GL_ARRAY_BUFFER, (GLsizeiptr) m_currentSize * VERTEX_SIZE, nullptr,
+                      GL_DYNAMIC_DRAW );
+        checkGlError( "allocating vertices buffer", __FILE__, __LINE__ );
+        m_gpuSize = m_currentSize;
+        m_dirtyAll = true;
+    }
+
+    if( m_dirtyAll )
+    {
+        // Everything that can be drawn: up to the end of the highest stored item, including
+        // the item being edited (items can sit anywhere in a fragmented container).
+        unsigned int end = m_maxIndex;
+
+        for( const VERTEX_ITEM* item : m_items )
+            end = std::max( end, item->GetOffset() + item->GetSize() );
+
+        if( m_item )
+            end = std::max( end, m_chunkOffset + m_chunkSize );
+
+        end = std::min( end, m_currentSize );
+
+        if( end > 0 )
+            glBufferSubData( GL_ARRAY_BUFFER, 0, (GLsizeiptr) end * VERTEX_SIZE, m_vertices );
+    }
+    else
+    {
+        compactDirtyRanges();
+
+        for( const std::pair<unsigned int, unsigned int>& range : m_dirtyRanges )
+        {
+            unsigned int begin = std::min( range.first, m_currentSize );
+            unsigned int end = std::min( range.second, m_currentSize );
+
+            if( end > begin )
+            {
+                glBufferSubData( GL_ARRAY_BUFFER, (GLintptr) begin * VERTEX_SIZE,
+                                 (GLsizeiptr) ( end - begin ) * VERTEX_SIZE, &m_vertices[begin] );
+            }
+        }
+    }
+
     checkGlError( "transferring vertices", __FILE__, __LINE__ );
     glBindBuffer( GL_ARRAY_BUFFER, 0 );
     checkGlError( "unbinding vertices buffer", __FILE__, __LINE__ );
+
+    m_dirtyAll = false;
+    m_dirtyRanges.clear();
 }
 
 
@@ -128,7 +180,9 @@ bool CACHED_CONTAINER_RAM::defragmentResize( unsigned int aNewSize )
     // Now there is only one big chunk of free memory
     m_freeChunks.clear();
     m_freeChunks.insert( std::make_pair( m_freeSpace, m_currentSize - m_freeSpace ) );
-    m_dirty = true;
+
+    // KICLOUD: every item moved, so the whole buffer is re-sent (docs/patches.md, B1.6)
+    SetDirty();
 
     return true;
 }

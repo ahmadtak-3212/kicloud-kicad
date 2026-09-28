@@ -136,7 +136,9 @@ VERTEX* CACHED_CONTAINER::Allocate( unsigned int aSize )
     m_item->setSize( newSize );
 
     // The content has to be updated
-    m_dirty = true;
+    // KICLOUD: only this item's vertices (its chunk may have just moved in reallocate()), so a
+    // RAM container uploads just this range. See docs/patches.md (B1.6).
+    SetDirty( m_chunkOffset, newSize );
 
 #if CACHED_CONTAINER_TEST > 0
     test();

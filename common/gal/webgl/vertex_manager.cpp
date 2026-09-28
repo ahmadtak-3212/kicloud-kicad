@@ -217,7 +217,8 @@ void VERTEX_MANAGER::ChangeItemColor( const VERTEX_ITEM& aItem, const COLOR4D& a
         vertex++;
     }
 
-    m_container->SetDirty();
+    // KICLOUD: mark only this item's vertices for upload (docs/patches.md, B1.6)
+    m_container->SetDirty( offset, size );
 }
 
 
@@ -234,7 +235,8 @@ void VERTEX_MANAGER::ChangeItemDepth( const VERTEX_ITEM& aItem, GLfloat aDepth )
         vertex++;
     }
 
-    m_container->SetDirty();
+    // KICLOUD: mark only this item's vertices for upload (docs/patches.md, B1.6)
+    m_container->SetDirty( offset, size );
 }
 
 

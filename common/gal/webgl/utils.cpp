@@ -42,8 +42,27 @@
 static const wxChar* const traceGalOpenGlError = wxT( "KICAD_GAL_OPENGL_ERROR" );
 
 
+// KICLOUD: see setGlFrameInProgress() in utils.h (docs/patches.md, B1.6)
+static bool s_glFrameInProgress = false;
+
+
+void setGlFrameInProgress( bool aInFrame )
+{
+    s_glFrameInProgress = aInFrame;
+}
+
+
+bool glFrameInProgress()
+{
+    return s_glFrameInProgress;
+}
+
+
 int checkGlError( const std::string& aInfo, const char* aFile, int aLine, bool aThrow )
 {
+    if( s_glFrameInProgress )
+        return GL_NO_ERROR;
+
     int      result = glGetError();
     wxString errorMsg;
 

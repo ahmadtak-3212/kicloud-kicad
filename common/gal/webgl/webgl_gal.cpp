@@ -697,6 +697,10 @@ void WEBGL_GAL::BeginDrawing()
         m_isFramebufferInitialized = true;
     }
 
+    // KICLOUD: per-frame work from here on skips glGetError(). The first frame, which also
+    // loads the bitmap font, keeps every check (utils.h, docs/patches.md B1.6).
+    setGlFrameInProgress( m_isBitmapFontInitialized );
+
     m_compositor->Begin();
 
     // Note: GL_TEXTURE_2D not used in WebGL 2.0, texturing controlled by shaders
@@ -795,6 +799,9 @@ void WEBGL_GAL::BeginDrawing()
     // Unbind buffers - set compositor for direct drawing
     m_compositor->SetBuffer( WEBGL_COMPOSITOR::DIRECT_RENDERING );
 
+    // KICLOUD: setup is done; skip glGetError() until EndDrawing() (utils.h, docs/patches.md B1.6)
+    setGlFrameInProgress( true );
+
 #ifdef KICAD_GAL_PROFILE
     totalRealTime.Stop();
     wxLogTrace( traceGalProfile, wxT( "WEBGL_GAL::beginDrawing(): %.1f ms" ),
@@ -868,6 +875,13 @@ void WEBGL_GAL::EndDrawing()
     cntSwap.Stop();
 
     cntTotal.Stop();
+
+    // KICLOUD: the frame is done; checks resume (utils.h, docs/patches.md B1.6)
+    setGlFrameInProgress( false );
+
+#ifdef KICLOUD_WEBGL_CHECK_ERRORS
+    checkGlError( "drawing a frame", __FILE__, __LINE__ );
+#endif
 
     KI_TRACE( traceGalProfile, "Timing: %s %s %s %s %s %s\n", cntTotal.to_string(),
               cntEndCached.to_string(), cntEndNoncached.to_string(), cntEndOverlay.to_string(),

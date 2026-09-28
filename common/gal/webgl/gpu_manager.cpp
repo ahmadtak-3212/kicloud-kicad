@@ -38,6 +38,9 @@
 #include <confirm.h>
 #include <trace_helpers.h>
 
+#include <emscripten/html5_webgl.h>
+#include <webgl/webgl1_ext.h>
+
 #ifdef KICAD_GAL_PROFILE
 #include <core/profile.h>
 #include <wx/log.h>
@@ -109,7 +112,8 @@ GPU_CACHED_MANAGER::GPU_CACHED_MANAGER( VERTEX_CONTAINER* aContainer ) :
         m_indexBufSize( 0 ),
         m_indexBufMaxSize( 0 ),
         m_curVrangeSize( 0 ),
-        m_ebo( 0 )
+        m_ebo( 0 ),
+        m_multiDraw( -1 )
 {
 }
 
@@ -176,7 +180,15 @@ void GPU_CACHED_MANAGER::EndDrawing()
     m_indexBufSize = std::max( m_curVrangeSize, m_indexBufSize );
     m_indexBufMaxSize = std::max( 2*m_indexBufSize, m_indexBufMaxSize );
 
-    resizeIndices( m_indexBufMaxSize );
+    // KICLOUD: probe WEBGL_multi_draw once; with it the CPU index buffer is not needed.
+    if( m_multiDraw < 0 )
+    {
+        EMSCRIPTEN_WEBGL_CONTEXT_HANDLE ctx = emscripten_webgl_get_current_context();
+        m_multiDraw = ( ctx > 0 && emscripten_webgl_enable_WEBGL_multi_draw( ctx ) ) ? 1 : 0;
+    }
+
+    if( m_multiDraw != 1 )
+        resizeIndices( m_indexBufMaxSize );
 
     if( m_enableDepthTest )
         glEnable( GL_DEPTH_TEST );
@@ -210,16 +222,51 @@ void GPU_CACHED_MANAGER::EndDrawing()
 
     PROF_TIMER cntDraw( "gl-draw-elements" );
 
-    int     n_ranges = m_vranges.size();
+    // KICLOUD: draw every visible range with one glMultiDrawArraysWEBGL call. PCBJam's path
+    // below rebuilds an index per vertex on the CPU and uploads it every frame (hundreds of MB
+    // while panning a large board) plus one glDrawArrays per large item. Adjacent ranges are
+    // merged; the draw order is unchanged. Falls back to that path without WEBGL_multi_draw.
+    // See docs/patches.md (B1.6).
+    bool drawn = false;
+    int  drawCalls = 0;
+
+    if( m_multiDraw == 1 )
+    {
+        m_drawFirsts.clear();
+        m_drawCounts.clear();
+
+        for( const VRANGE& range : m_vranges )
+        {
+            GLint   first = range.m_start;
+            GLsizei count = range.m_end - range.m_start + 1;
+
+            if( !m_drawFirsts.empty() && m_drawFirsts.back() + m_drawCounts.back() == first )
+                m_drawCounts.back() += count;
+            else
+            {
+                m_drawFirsts.push_back( first );
+                m_drawCounts.push_back( count );
+            }
+        }
+
+        if( !m_drawFirsts.empty() )
+        {
+            glMultiDrawArraysWEBGL( GL_TRIANGLES, m_drawFirsts.data(), m_drawCounts.data(),
+                                    (GLsizei) m_drawFirsts.size() );
+            drawCalls = 1;
+        }
+
+        drawn = true;
+    }
+
+    int     n_ranges = drawn ? 0 : m_vranges.size();
     int     n = 0;
     GLuint* iptr = m_indices.get();
     GLuint  icnt = 0;
 
-    int drawCalls = 0;
-
     // Lazily create element buffer object for indexed drawing
     // WebGL 2.0 does not support client-side index arrays in glDrawElements
-    if( m_ebo == 0 )
+    if( !drawn && m_ebo == 0 )
         glGenBuffers( 1, &m_ebo );
 
     while( n < n_ranges )

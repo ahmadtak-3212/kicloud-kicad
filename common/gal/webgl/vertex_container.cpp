@@ -58,7 +58,8 @@ VERTEX_CONTAINER::VERTEX_CONTAINER( unsigned int aSize ) :
         m_initialSize( aSize ),
         m_vertices( nullptr ),
         m_failed( false ),
-        m_dirty( true )
+        m_dirty( true ),
+        m_dirtyAll( true )
 {
 }
 
