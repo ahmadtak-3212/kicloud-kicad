@@ -43,6 +43,22 @@ namespace std
     };
 }
 
+// KICLOUD: libc++ 20+ swaps std::less<T> for the transparent std::less<> when it inserts into a
+// std::map/std::set (__make_transparent), which calls operator< and ignores a user specialization
+// of std::less<T>. wxPoint has no operator< of its own, so keep KiCad's specialization for its
+// maps and sets as well (the same fix as VECTOR2I in math/vector2d.h). See docs/patches.md (B1.7).
+#if defined( _LIBCPP_VERSION ) && __has_include( <__type_traits/make_transparent.h> )
+#include <__type_traits/make_transparent.h>
+namespace std
+{
+    template <>
+    struct __make_transparent<wxPoint, less<wxPoint>>
+    {
+        using type = less<wxPoint>;
+    };
+}
+#endif
+
 /***
  * Helper function to construct a wxString from a std::string_view.
  */

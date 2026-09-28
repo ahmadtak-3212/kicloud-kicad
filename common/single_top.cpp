@@ -452,6 +452,10 @@ bool PGM_SINGLE_TOP::OnPgmInit()
     FRAME_T topFrame = TOP_FRAME;
 
 #ifdef __EMSCRIPTEN__
+    bool wasmLibEditorProject = false;    // KICLOUD: see the project load below
+#endif
+
+#ifdef __EMSCRIPTEN__
     // WASM: one kiface binary already implements all of its sibling frames (e.g.
     // the pcbnew kiface serves both FRAME_PCB_EDITOR and FRAME_FOOTPRINT_EDITOR;
     // eeschema serves FRAME_SCH and FRAME_SCH_SYMBOL_EDITOR). Let the JS launcher
@@ -493,6 +497,23 @@ bool PGM_SINGLE_TOP::OnPgmInit()
                     topFrame = token.type;
                     break;
                 }
+            }
+        }
+
+        // KICLOUD: the symbol and footprint editors are started with the project file when
+        // they are opened from the browser's project manager. Load that project before the
+        // frame exists, as desktop KiCad's project manager does, so the frame starts with the
+        // project's library tables. See docs/patches.md (B1.7).
+        if( ( topFrame == FRAME_SCH_SYMBOL_EDITOR || topFrame == FRAME_FOOTPRINT_EDITOR )
+            && frameParser.GetParamCount() == 1 )
+        {
+            wxFileName pro( frameParser.GetParam( 0 ) );
+
+            if( pro.GetExt() == wxT( "kicad_pro" ) )
+            {
+                pro.MakeAbsolute();
+                GetSettingsManager().LoadProject( pro.GetFullPath() );
+                wasmLibEditorProject = true;
             }
         }
     }
@@ -609,6 +630,10 @@ bool PGM_SINGLE_TOP::OnPgmInit()
             fileArgs[0] = argv1.GetFullPath();
         }
 
+#ifdef __EMSCRIPTEN__
+        // KICLOUD: a library editor's project file was loaded above; it is not a document.
+        if( !wasmLibEditorProject )
+#endif
         frame->OpenProjectFiles( fileArgs );
     }
 

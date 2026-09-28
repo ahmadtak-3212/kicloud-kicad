@@ -728,4 +728,21 @@ namespace std
     };
 }
 
+// KICLOUD: libc++ 20+ swaps std::less<T> for the transparent std::less<> when it inserts into a
+// std::map/std::set (__make_transparent), which calls operator< and ignores a user specialization
+// of std::less<T>. For VECTOR2I that operator< compares vector lengths, so every map/set keyed by it merged
+// distinct keys (e.g. the schematic connection map joined unrelated points that are equally far
+// from the origin). Keep the specialization for such containers. See docs/patches.md (B1.7).
+#if defined( _LIBCPP_VERSION ) && __has_include( <__type_traits/make_transparent.h> )
+#include <__type_traits/make_transparent.h>
+namespace std
+{
+    template <>
+    struct __make_transparent<VECTOR2I, less<VECTOR2I>>
+    {
+        using type = less<VECTOR2I>;
+    };
+}
+#endif
+
 #endif    // VECTOR2D_H_
