@@ -49,7 +49,6 @@
  */
 
 #include <gr_text.h>
-#include <increment.h>
 #include <math/util.h>      // for KiROUND
 #include <view/view.h>
 #include <title_block.h>
@@ -343,13 +342,7 @@ bool DS_DATA_ITEM::IsInsidePage( int ii ) const
 {
     DS_DATA_MODEL& model = DS_DATA_MODEL::GetTheInstance();
 
-    std::vector<VECTOR2D> corners = { GetStartPos( ii ) };
-
-    // Text and bitmap have no real end point, so only test it for lines and rects.
-    if( GetType() == DS_SEGMENT || GetType() == DS_RECT )
-        corners.push_back( GetEndPos( ii ) );
-
-    for( const VECTOR2D& pos : corners )
+    for( const VECTOR2D& pos : { GetStartPos( ii ), GetEndPos( ii ) } )
     {
         if( model.m_RB_Corner.x < pos.x || model.m_LT_Corner.x > pos.x )
             return false;
@@ -626,16 +619,17 @@ int DS_DATA_ITEM_TEXT::GetPenSizeIU()
 
 void DS_DATA_ITEM_TEXT::IncrementLabel( int aIncr )
 {
-    STRING_INCREMENTER incrementer;
-    incrementer.SetSkipIOSQXZ( false );      // step through every letter
-    incrementer.SetAlphabeticMaxIndex( -1 ); // no upper bound on label length
+    int last = m_TextBase.Len() -1;
 
-    // Step the rightmost letter or number, carrying within its own type so a
-    // letter rolls z -> aa instead of running into punctuation.
-    if( std::optional<wxString> stepped = incrementer.Increment( m_TextBase, aIncr, 0 ) )
-        m_FullText = *stepped;
+    wxChar lbchar = m_TextBase[last];
+    m_FullText = m_TextBase;
+    m_FullText.RemoveLast();
+
+    if( lbchar >= '0' &&  lbchar <= '9' )
+        // A number is expected:
+        m_FullText << (int)( aIncr + lbchar - '0' );
     else
-        m_FullText = m_TextBase;
+        m_FullText << (wxChar) ( aIncr + lbchar );
 }
 
 

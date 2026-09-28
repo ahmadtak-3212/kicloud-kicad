@@ -155,10 +155,11 @@ private:
     /// Conflict resolutions chosen by user
     std::map<wxString, CONFLICT_RESOLUTION> m_conflictResolutions;
 
-    /// Column indices for the data view (checkbox plus a combined icon+text symbol column)
+    /// Column indices for the data view
     enum
     {
         COL_CHECKBOX = 0,
-        COL_SYMBOL
+        COL_ICON,
+        COL_NAME
     };
 };

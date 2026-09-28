@@ -27,7 +27,6 @@
 
 #include <cmath>
 #include <iostream>
-#include <limits>
 #include <regex>
 
 
@@ -90,15 +89,12 @@ std::optional<wxString> STRING_INCREMENTER::Increment( const wxString& aStr, int
     if( aStr.IsEmpty() )
         return std::nullopt;
 
-    // Slice the UTF-8 encoding, not the wxString - the regexes report byte offsets, and mixing
-    // the two underflows the length arithmetic on non-ASCII input and never shortens the string
-    std::string                                           remaining = aStr.utf8_string();
-    std::vector<std::pair<std::string, STRING_PART_TYPE>> parts;
-    size_t                                                goodParts = 0;
+    wxString                                           remaining = aStr;
+    std::vector<std::pair<wxString, STRING_PART_TYPE>> parts;
+    size_t                                             goodParts = 0;
 
     // Keep popping chunks off the string until we have what we need
-    // (compare against aRightIndex directly so a SIZE_MAX index can't wrap the target to zero)
-    while( goodParts <= aRightIndex && !remaining.empty() )
+    while( goodParts < ( aRightIndex + 1 ) && !remaining.IsEmpty() )
     {
         static const std::regex integerRegex( R"(\d+$)" );
 
@@ -108,52 +104,52 @@ std::optional<wxString> STRING_INCREMENTER::Increment( const wxString& aStr, int
         // Skippables - for now anything that isn't a letter or number
         static const std::regex skipRegex( R"([^a-zA-Z0-9]+$)" );
 
+        std::string remainingStr = remaining.ToStdString();
         std::smatch match;
 
-        if( std::regex_search( remaining, match, integerRegex ) )
+        if( std::regex_search( remainingStr, match, integerRegex ) )
         {
             parts.push_back( { match.str(), STRING_PART_TYPE::INTEGER } );
+            remaining = remaining.Left( remaining.Len() - match.str().size() );
             goodParts++;
         }
-        else if( std::regex_search( remaining, match, sameCaseAlphabetRegex ) )
+        else if( std::regex_search( remainingStr, match, sameCaseAlphabetRegex ) )
         {
             parts.push_back( { match.str(), STRING_PART_TYPE::ALPHABETIC } );
+            remaining = remaining.Left( remaining.Len() - match.str().size() );
             goodParts++;
         }
-        else if( std::regex_search( remaining, match, skipRegex ) )
+        else if( std::regex_search( remainingStr, match, skipRegex ) )
         {
             parts.push_back( { match.str(), STRING_PART_TYPE::SKIP } );
+            remaining = remaining.Left( remaining.Len() - match.str().size() );
         }
         else
         {
             // Out of ideas
             break;
         }
-
-        remaining.erase( remaining.size() - match.str().size() );
     }
 
     // Couldn't find the part we wanted
-    if( goodParts <= aRightIndex )
+    if( goodParts < aRightIndex + 1 )
         return std::nullopt;
 
-    // The incrementable parts are ASCII by construction, so the round trip is lossless
-    wxString part = wxString::FromUTF8( parts.back().first );
+    // Increment the part we wanted
+    bool didIncrement = incrementPart( parts.back().first, parts.back().second, aDelta );
 
-    if( !incrementPart( part, parts.back().second, aDelta ) )
+    if( !didIncrement )
         return std::nullopt;
-
-    parts.back().first = part.utf8_string();
 
     // Reassemble the string - the left-over part, then parts in reverse
-    std::string result = remaining;
+    wxString result = remaining;
 
     for( auto it = parts.rbegin(); it != parts.rend(); ++it )
     {
-        result += it->first;
+        result << it->first;
     }
 
-    return wxString::FromUTF8( result );
+    return result;
 }
 
 
@@ -183,11 +179,6 @@ bool STRING_INCREMENTER::incrementPart( wxString& aPart, STRING_PART_TYPE aType,
 
         if( aPart.ToLong( &number ) )
         {
-            // Test the sum before forming it; signed overflow is UB and the compiler is free
-            // to discard the range check below
-            if( aDelta > 0 && number > std::numeric_limits<long>::max() - aDelta )
-                return false;
-
             number += aDelta;
 
             // Going below zero makes things awkward
@@ -198,9 +189,10 @@ bool STRING_INCREMENTER::incrementPart( wxString& aPart, STRING_PART_TYPE aType,
             aPart.Printf( "%ld", number );
 
             // If the number was zero-padded, we need to re-pad it
-            // (carrying into a wider number drops the padding rather than underflowing)
-            if( zeroPadded && aPart.Len() < oldLen )
-                aPart.Prepend( wxString( '0', oldLen - aPart.Len() ) );
+            if( zeroPadded )
+            {
+                aPart = wxString( "0", oldLen - aPart.Len() ) + aPart;
+            }
 
             return true;
         }
@@ -229,13 +221,12 @@ bool STRING_INCREMENTER::incrementPart( wxString& aPart, STRING_PART_TYPE aType,
         if( index > m_AlphabeticMaxIndex && m_AlphabeticMaxIndex >= 0 )
             return false;
 
-        // Widen before adding; index is unbounded once m_AlphabeticMaxIndex is disabled
-        const long long nextIndex = static_cast<long long>( index ) + aDelta;
+        index += aDelta;
 
-        if( nextIndex < 0 || nextIndex > std::numeric_limits<int>::max() )
+        if( index < 0 )
             return false;
 
-        wxString newStr = AlphabeticFromIndex( static_cast<size_t>( nextIndex ), alpha, true );
+        wxString newStr = AlphabeticFromIndex( index, alpha, true );
 
         if( !wasUpper )
             newStr = newStr.Lower();

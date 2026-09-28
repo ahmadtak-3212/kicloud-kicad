@@ -38,29 +38,6 @@
 #include <algorithm>
 
 
-// ASC SYMBOL lines look like: SYMBOL [folder\]name ...
-// Examples: "res", "Misc\signal", "SomeFolder\opamp".
-//
-// We index each .asy under its real path and as a bare name.  If the ASC uses a
-// folder that is not in the LTspice library tree, try the bare name so the same
-// symbol still loads.
-static wxString resolveAsyMapKey( const std::map<wxString, wxString>& aMap, const wxString& aName )
-{
-    wxString key = aName.Lower();
-    key.Replace( '\\', '/' );
-
-    if( aMap.find( key ) != aMap.end() )
-        return key;
-
-    wxString base = key.AfterLast( '/' );
-
-    if( !base.IsEmpty() && aMap.find( base ) != aMap.end() )
-        return base;
-
-    return {};
-}
-
-
 void LTSPICE_SCHEMATIC::Load( SCHEMATIC* aSchematic, SCH_SHEET* aRootSheet,
                               const wxFileName& aLibraryFileName, REPORTER* aReporter )
 {
@@ -115,12 +92,12 @@ void LTSPICE_SCHEMATIC::Load( SCHEMATIC* aSchematic, SCH_SHEET* aRootSheet,
         for( LTSPICE_FILE& newSubSchematicElement : newSubSchematicElements )
         {
             wxString asyName = newSubSchematicElement.ElementName;
-            wxString asyKey = resolveAsyMapKey( mapOfAsyFiles, asyName );
+            auto     it = mapOfAsyFiles.find( asyName );
 
-            if( asyKey.IsEmpty() )
+            if( it == mapOfAsyFiles.end() )
                 continue;
 
-            wxString asyBuffer = SafeReadFile( mapOfAsyFiles.at( asyKey ), "r" );
+            wxString asyBuffer = SafeReadFile( it->second, "r" );
 
             if( IsAsySubsheet( asyBuffer ) )
             {
@@ -297,35 +274,33 @@ void LTSPICE_SCHEMATIC::GetAscAndAsyFilePaths( const wxDir& aDir, bool aRecursiv
 }
 
 
-std::map<wxString, wxString> LTSPICE_SCHEMATIC::ReadAsyFile( const LTSPICE_FILE&                 aSourceFile,
-                                                             const std::map<wxString, wxString>& aAsyFileMap )
+std::map<wxString, wxString>
+LTSPICE_SCHEMATIC::ReadAsyFile( const LTSPICE_FILE& aSourceFile,
+                                const std::map<wxString, wxString>& aAsyFileMap )
 {
     std::map<wxString, wxString> resultantMap;
 
     wxString fileName = aSourceFile.ElementName;
-    // resolveAsyMapKey may match by bare name if the folder is unknown.
-    wxString mapKey = resolveAsyMapKey( aAsyFileMap, fileName );
 
-    if( !mapKey.IsEmpty() )
-        resultantMap[fileName] = SafeReadFile( aAsyFileMap.at( mapKey ), wxS( "r" ) );
+    if( aAsyFileMap.count( fileName ) )
+        resultantMap[fileName] = SafeReadFile( aAsyFileMap.at( fileName ), wxS( "r" ) );
 
     return resultantMap;
 }
 
 
-std::map<wxString, wxString> LTSPICE_SCHEMATIC::ReadAsyFiles( const std::vector<LTSPICE_FILE>&    aSourceFiles,
-                                                              const std::map<wxString, wxString>& aAsyFileMap )
+std::map<wxString, wxString>
+LTSPICE_SCHEMATIC::ReadAsyFiles( const std::vector<LTSPICE_FILE>& aSourceFiles,
+                                 const std::map<wxString, wxString>& aAsyFileMap )
 {
     std::map<wxString, wxString> resultantMap;
 
     for( const LTSPICE_FILE& source : aSourceFiles )
     {
         wxString fileName = source.ElementName;
-        // resolveAsyMapKey may match by bare name if the folder is unknown.
-        wxString mapKey = resolveAsyMapKey( aAsyFileMap, fileName );
 
-        if( !mapKey.IsEmpty() )
-            resultantMap[fileName] = SafeReadFile( aAsyFileMap.at( mapKey ), wxS( "r" ) );
+        if( aAsyFileMap.count( fileName ) )
+            resultantMap[fileName] = SafeReadFile( aAsyFileMap.at( fileName ), wxS( "r" ) );
     }
 
     return resultantMap;
@@ -568,15 +543,15 @@ void LTSPICE_SCHEMATIC::removeCarriageReturn( wxString& elementFromLine )
 }
 
 
-LTSPICE_SCHEMATIC::LT_SYMBOL LTSPICE_SCHEMATIC::SymbolBuilder( const wxString& aAscFileName, LT_ASC& aAscFile )
+LTSPICE_SCHEMATIC::LT_SYMBOL LTSPICE_SCHEMATIC::SymbolBuilder( const wxString& aAscFileName,
+                                                               LT_ASC& aAscFile )
 {
-    const std::map<wxString, wxString>& asyFiles = m_fileCache[wxS( "asyFiles" )];
-    wxString                            key = resolveAsyMapKey( asyFiles, aAscFileName );
+    const std::map<wxString, wxString>& asyFiles = m_fileCache[ wxS( "asyFiles" ) ];
 
-    if( !asyFiles.count( key ) )
+    if( !asyFiles.count( aAscFileName.Lower() ) )
         THROW_IO_ERROR( wxString::Format( _( "Symbol '%s.asy' not found" ), aAscFileName ) );
 
-    return SymbolBuilder( aAscFileName, asyFiles.at( key ), aAscFile );
+    return SymbolBuilder( aAscFileName, asyFiles.at( aAscFileName.Lower() ), aAscFile );
 }
 
 LTSPICE_SCHEMATIC::LT_SYMBOL LTSPICE_SCHEMATIC::SymbolBuilder( const wxString& aAscFileName,

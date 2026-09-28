@@ -248,7 +248,9 @@ bool PCB_PLOTTER::Plot( const wxString& aOutputPath, const LSEQ& aLayersToPlot,
                 break;
             }
 
-            if( m_plotOpts.GetFormat() == PLOT_FORMAT::PDF && m_plotOpts.m_PDFSingle && pageNum != finalPageCount )
+            if( m_plotOpts.GetFormat() == PLOT_FORMAT::PDF
+                    && m_plotOpts.m_PDFSingle
+                    && i != layersToPlot.size() - 1 )
             {
                 wxString     pageNumber = wxString::Format( "%d", pageNum + 1 );
                 size_t       nextI = i + 1;

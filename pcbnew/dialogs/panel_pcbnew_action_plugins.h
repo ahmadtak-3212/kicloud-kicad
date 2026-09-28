@@ -66,9 +66,7 @@ public:
     void OnShowErrorsButtonClick( wxCommandEvent& event ) override;
 
 private:
-#ifdef KICAD_IPC_API
     void onPluginAvailabilityChanged( wxCommandEvent& aEvt );
-#endif
 
     enum GRID_COLUMNS
     {

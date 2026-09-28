@@ -264,7 +264,6 @@ bool checkCandidateNetConsistency( const std::unordered_map<int, int>& aBaseMapp
 std::vector<COMPONENT*>
 CONNECTION_GRAPH::findMatchingComponents( COMPONENT*                             aRef,
                                           const std::vector<COMPONENT*>&         aStructuralMatches,
-                                          const TOPOLOGY_MISMATCH_REASON&        aStructuralReason,
                                           const BACKTRACK_STAGE&                 partialMatches,
                                           std::vector<TOPOLOGY_MISMATCH_REASON>& aMismatchReasons,
                                           const std::atomic<bool>*               aCancelled )
@@ -349,24 +348,14 @@ CONNECTION_GRAPH::findMatchingComponents( COMPONENT*                            
 
     timerScore.Stop();
 
-    if( matches.empty() && aMismatchReasons.empty() )
+    if( matches.empty() )
     {
-        // No net-consistency reasons were recorded above, which means there were no structural
-        // candidates to test in the first place.  Surface the structural reason captured during
-        // precomputation so the user sees the actual connectivity difference (e.g. a pad that
-        // connects to a different number of pads because of an external loop between channels)
-        // rather than a generic "no compatible component" message.
-        if( !aStructuralReason.m_reason.IsEmpty() )
-        {
-            aMismatchReasons.push_back( aStructuralReason );
-        }
-        else
-        {
-            TOPOLOGY_MISMATCH_REASON reason;
-            reason.m_reference = aRef->GetParent()->GetReferenceAsString();
-            reason.m_reason = _( "No compatible component found in the target area." );
+        TOPOLOGY_MISMATCH_REASON reason;
+        reason.m_reference = aRef->GetParent()->GetReferenceAsString();
+        reason.m_reason = _( "No compatible component found in the target area." );
+
+        if( aMismatchReasons.empty() )
             aMismatchReasons.push_back( reason );
-        }
     }
 
     timerFmc.Stop();
@@ -406,11 +395,6 @@ void CONNECTION_GRAPH::breakTie( COMPONENT* aRef, std::vector<COMPONENT*>& aMatc
         wxLogTrace( traceTopoMatchDetail, wxT( "Broke tie with symbol UUID match for %s" ),
                     aRef->GetParent()->GetReferenceAsString() );
     }
-    else if( breakTieByValue( aRef, aMatches ) )
-    {
-        wxLogTrace( traceTopoMatchDetail, wxT( "Broke tie with footprint value match for %s" ),
-                    aRef->GetParent()->GetReferenceAsString() );
-    }
     // TODO: other tie breakers can be added, e.g. based on position or reference designators,
     // just waiting for actual user test cases
     else
@@ -418,44 +402,6 @@ void CONNECTION_GRAPH::breakTie( COMPONENT* aRef, std::vector<COMPONENT*>& aMatc
         wxLogTrace( traceTopoMatchDetail, wxT( "No tie breakers worked for %s, leaving match order alone." ),
                     aRef->GetParent()->GetReferenceAsString() );
     }
-}
-
-
-bool CONNECTION_GRAPH::breakTieByValue( COMPONENT* aRef, std::vector<COMPONENT*>& aMatches ) const
-{
-    FOOTPRINT* refFp = aRef ? aRef->GetParent() : nullptr;
-
-    if( !refFp )
-        return false;
-
-    const wxString refValue = refFp->GetValue();
-
-    if( refValue.IsEmpty() )
-        return false;
-
-    int valueHitCount = 0;
-    int uniqueMatchIdx = -1;
-
-    for( size_t i = 0; i < aMatches.size(); i++ )
-    {
-        if( aMatches[i]->GetParent()->GetValue() == refValue )
-        {
-            if( uniqueMatchIdx < 0 )
-                uniqueMatchIdx = static_cast<int>( i );
-
-            valueHitCount++;
-        }
-    }
-
-    // Only one candidate may share the value for it to disambiguate the tie. Several same-value
-    // candidates (e.g. a bank of identical decoupling caps) tell us nothing.
-    if( valueHitCount == 1 )
-    {
-        std::rotate( aMatches.begin(), aMatches.begin() + uniqueMatchIdx, aMatches.begin() + uniqueMatchIdx + 1 );
-        return true;
-    }
-
-    return false;
 }
 
 
@@ -677,11 +623,6 @@ bool CONNECTION_GRAPH::FindIsomorphism( CONNECTION_GRAPH* aTarget, COMPONENT_MAT
     size_t numRef = m_components.size();
     std::vector<std::vector<COMPONENT*>> structuralMatches( numRef );
 
-    // When a source component has no structural match at all, keep a representative reason so we
-    // can explain the actual connectivity difference rather than a generic "no compatible
-    // component" message.
-    std::vector<TOPOLOGY_MISMATCH_REASON> structuralReasons( numRef );
-
     PROF_TIMER timerPrecompute;
     {
         thread_pool& tp = GetKiCadThreadPool();
@@ -693,32 +634,19 @@ bool CONNECTION_GRAPH::FindIsomorphism( CONNECTION_GRAPH* aTarget, COMPONENT_MAT
         for( size_t i = 0; i < numRef; i++ )
         {
             futures.emplace_back( tp.submit_task(
-                    [this, i, aTarget, &structuralMatches, &structuralReasons, cancelled]()
+                    [this, i, aTarget, &structuralMatches, cancelled]()
                     {
                         if( cancelled && cancelled->load( std::memory_order_relaxed ) )
                             return;
 
                         COMPONENT* ref = m_components[i];
                         TOPOLOGY_MISMATCH_REASON reason;
-                        TOPOLOGY_MISMATCH_REASON bestReason;
 
                         for( COMPONENT* tgt : aTarget->m_components )
                         {
                             if( ref->MatchesWith( tgt, reason ) )
-                            {
                                 structuralMatches[i].push_back( tgt );
-                            }
-                            else if( bestReason.m_reason.IsEmpty() || ref->IsSameKind( *tgt ) )
-                            {
-                                // Prefer the reason from a same-kind counterpart (same prefix and
-                                // footprint) because that is the candidate the user actually expects
-                                // to match; a connectivity difference there is the meaningful failure.
-                                bestReason = reason;
-                            }
                         }
-
-                        if( structuralMatches[i].empty() )
-                            structuralReasons[i] = bestReason;
                     } ) );
         }
 
@@ -783,8 +711,7 @@ bool CONNECTION_GRAPH::FindIsomorphism( CONNECTION_GRAPH* aTarget, COMPONENT_MAT
             localReasons.clear();
             current.m_matches = aTarget->findMatchingComponents(
                     current.m_ref, structuralMatches[current.m_refIndex],
-                    structuralReasons[current.m_refIndex], current, localReasons,
-                    aParams.m_cancelled );
+                    current, localReasons, aParams.m_cancelled );
 
             timerInitMatch.Stop();
 
@@ -910,12 +837,11 @@ bool CONNECTION_GRAPH::FindIsomorphism( CONNECTION_GRAPH* aTarget, COMPONENT_MAT
             for( MRV_CANDIDATE& c : mrvCandidates )
             {
                 futures.emplace_back( tp.submit_task(
-                        [&c, aTarget, &current, &structuralMatches, &structuralReasons, cancelled]()
+                        [&c, aTarget, &current, &structuralMatches, cancelled]()
                         {
                             c.m_matches = aTarget->findMatchingComponents(
                                     c.m_cmp, structuralMatches[c.m_index],
-                                    structuralReasons[c.m_index], current, c.m_reasons,
-                                    cancelled );
+                                    current, c.m_reasons, cancelled );
                         } ) );
             }
 
@@ -928,8 +854,7 @@ bool CONNECTION_GRAPH::FindIsomorphism( CONNECTION_GRAPH* aTarget, COMPONENT_MAT
             {
                 c.m_matches = aTarget->findMatchingComponents(
                         c.m_cmp, structuralMatches[c.m_index],
-                        structuralReasons[c.m_index], current, c.m_reasons,
-                        aParams.m_cancelled );
+                        current, c.m_reasons, aParams.m_cancelled );
             }
         }
 
@@ -1124,23 +1049,10 @@ bool COMPONENT::prefixesShareCommonBase( const wxString& aPrefixA, const wxStrin
 }
 
 
-bool COMPONENT::isUnannotatedRef( const wxString& aRef )
-{
-    // REF** placeholder prefix ends in wildcard glyph so shares no base with annotated dest
-    // clean-prefix placeholders like SW? already match via prefixesShareCommonBase
-    wxString prefix = UTIL::GetRefDesPrefix( aRef );
-
-    return !prefix.IsEmpty() && ( prefix.Last() == '*' || prefix.Last() == '?' );
-}
-
-
 bool COMPONENT::IsSameKind( const COMPONENT& b ) const
 {
-    if( !isUnannotatedRef( m_reference ) && !isUnannotatedRef( b.m_reference )
-        && !prefixesShareCommonBase( m_prefix, b.m_prefix ) )
-    {
+    if( !prefixesShareCommonBase( m_prefix, b.m_prefix ) )
         return false;
-    }
 
     return ( m_parentFootprint->GetFPID() == b.m_parentFootprint->GetFPID() )
            || ( m_parentFootprint->GetFPID().empty() && b.m_parentFootprint->GetFPID().empty() );
@@ -1171,8 +1083,7 @@ bool COMPONENT::MatchesWith( COMPONENT* b, TOPOLOGY_MISMATCH_REASON& aReason )
         aReason.m_reference = GetParent()->GetReferenceAsString();
         aReason.m_candidate = b->GetParent()->GetReferenceAsString();
 
-        if( !isUnannotatedRef( m_reference ) && !isUnannotatedRef( b->m_reference )
-            && !prefixesShareCommonBase( m_prefix, b->m_prefix ) )
+        if( !prefixesShareCommonBase( m_prefix, b->m_prefix ) )
         {
             aReason.m_reason = wxString::Format(
                     _( "Reference prefix mismatch: %s uses prefix '%s' but candidate %s uses '%s'." ),
@@ -1199,9 +1110,7 @@ bool COMPONENT::MatchesWith( COMPONENT* b, TOPOLOGY_MISMATCH_REASON& aReason )
 
     for( int pin = 0; pin < b->GetPinCount(); pin++ )
     {
-        // Call with the reference pin as the subject so the reason's reference/candidate match
-        // MatchesWith's own orientation (this == reference, b == candidate).
-        if( !m_pins[pin]->IsIsomorphic( *b->m_pins[pin], aReason ) )
+        if( !b->m_pins[pin]->IsIsomorphic( *m_pins[pin], aReason ) )
         {
             if( aReason.m_reason.IsEmpty() )
             {
@@ -1238,8 +1147,7 @@ void CONNECTION_GRAPH::AddFootprint( FOOTPRINT* aFp, const VECTOR2I& aOffset )
 
 std::unique_ptr<CONNECTION_GRAPH>
 CONNECTION_GRAPH::BuildFromFootprintSet( const std::set<FOOTPRINT*>& aFps,
-                                         const std::set<FOOTPRINT*>& aOtherChannelFps,
-                                         const std::unordered_set<int>& aGlobalNets )
+                                         const std::set<FOOTPRINT*>& aOtherChannelFps )
 {
     auto cgraph = std::make_unique<CONNECTION_GRAPH>();
     VECTOR2I ref(0, 0);
@@ -1272,9 +1180,11 @@ CONNECTION_GRAPH::BuildFromFootprintSet( const std::set<FOOTPRINT*>& aFps,
         }
     }
 
-    // Caller-supplied global rails, plus the pairwise fallback: nets with >=2 pads in both channels.
-    // Single-pad boundary nets stay in the comparison; excluding them asymmetrically breaks the match.
-    std::unordered_set<int> externalNets = aGlobalNets;
+    // Exclude a net from topology comparison only when it forms a real internal connection (two
+    // or more pads) in BOTH sets.  This drops global rails (GND, VCC) while keeping single-pad
+    // boundary nets, such as an applied design block's daisy-chain output feeding the target
+    // instance's inputs, whose asymmetric exclusion would otherwise break the isomorphism.
+    std::unordered_set<int> externalNets;
 
     for( const auto& [netCode, localCount] : localNetPadCounts )
     {

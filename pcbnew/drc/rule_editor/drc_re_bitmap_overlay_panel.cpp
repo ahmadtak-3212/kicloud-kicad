@@ -36,7 +36,7 @@
 DRC_RE_BITMAP_OVERLAY_PANEL::DRC_RE_BITMAP_OVERLAY_PANEL( wxWindow* aParent, wxWindowID aId ) :
         wxPanel(),
         m_bitmapId( BITMAPS::INVALID_BITMAP ),
-        m_logicalBitmapSize( 0, 0 )
+        m_baseBitmapSize( 0, 0 )
 {
     // Must set background style BEFORE creating the window
     SetBackgroundStyle( wxBG_STYLE_PAINT );
@@ -117,8 +117,8 @@ void DRC_RE_BITMAP_OVERLAY_PANEL::LoadBitmap()
 
     wxBitmapBundle bundle = KiBitmapBundle( m_bitmapId );
 
-    m_logicalBitmapSize = FromDIP( bundle.GetDefaultSize() );
-    m_bitmap = bundle.GetBitmap( ToPhys( m_logicalBitmapSize ) );
+    m_bitmap = bundle.GetBitmapFor( this );
+    m_baseBitmapSize = bundle.GetDefaultSize();
 
     Refresh();
 }
@@ -130,7 +130,7 @@ void DRC_RE_BITMAP_OVERLAY_PANEL::SetBackgroundBitmap( BITMAPS aBitmap )
     LoadBitmap();
 
     if( m_bitmap.IsOk() )
-        SetMinSize( m_logicalBitmapSize );
+        SetMinSize( m_baseBitmapSize );
 }
 
 
@@ -144,20 +144,16 @@ void DRC_RE_BITMAP_OVERLAY_PANEL::PositionFields()
         if( !ctrl )
             continue;
 
-        int heightLogical = ctrl->GetBestSize().GetHeight();
-        int widthLogical = FromDIP( pos.xEnd - pos.xStart );
-        int xLogical = FromDIP( pos.xStart );
-        int yLogical = FromDIP( pos.yCenter ) - heightLogical / 2;
+        wxPoint scaledPos( pos.xStart, pos.yTop );
+        int width = pos.xEnd - pos.xStart + DRC_RE_OVERLAY_WE;
+        wxSize scaledSize( width, ctrl->GetBestSize().GetHeight() );
 
-        ctrl->SetPosition( wxPoint( xLogical, yLogical ) );
-        ctrl->SetSize( wxSize( widthLogical, heightLogical ) );
+        ctrl->SetPosition( scaledPos );
+        ctrl->SetSize( scaledSize );
 
-        // Position labels if present
+        // Position label if present
         if( field->HasLabel() )
             PositionLabel( field.get() );
-
-        if( field->HasPrefixLabel() )
-            PositionPrefixLabel( field.get() );
     }
 }
 
@@ -176,7 +172,7 @@ void DRC_RE_BITMAP_OVERLAY_PANEL::PositionLabel( DRC_RE_OVERLAY_FIELD* aField )
     wxSize labelSize = label->GetBestSize();
 
     wxPoint labelPos;
-    int     GAP = FromDIP( 4 );
+    constexpr int GAP = 4;
 
     switch( pos.labelPosition )
     {
@@ -206,30 +202,6 @@ void DRC_RE_BITMAP_OVERLAY_PANEL::PositionLabel( DRC_RE_OVERLAY_FIELD* aField )
     }
 
     label->SetPosition( labelPos );
-    label->SetSize( labelSize );
-}
-
-
-void DRC_RE_BITMAP_OVERLAY_PANEL::PositionPrefixLabel( DRC_RE_OVERLAY_FIELD* aField )
-{
-    wxStaticText* prefix = aField->GetPrefixLabel();
-    wxControl*    ctrl = aField->GetControl();
-
-    if( !prefix || !ctrl )
-        return;
-
-    wxPoint ctrlPos = ctrl->GetPosition();
-    wxSize  ctrlSize = ctrl->GetSize();
-    wxSize prefixSize = prefix->GetBestSize();
-
-    int GAP = FromDIP( 4 );
-
-    wxPoint prefixPos;
-    prefixPos.x = ctrlPos.x - prefixSize.GetWidth() - GAP;
-    prefixPos.y = ctrlPos.y + ( ctrlSize.GetHeight() - prefixSize.GetHeight() ) / 2;
-
-    prefix->SetPosition( prefixPos );
-    prefix->SetSize( prefixSize );
 }
 
 
@@ -263,18 +235,27 @@ void DRC_RE_BITMAP_OVERLAY_PANEL::ShowFieldError( const wxString& aFieldId )
 }
 
 
-DRC_RE_OVERLAY_FIELD* DRC_RE_BITMAP_OVERLAY_PANEL::AddCheckbox( const wxString&              aId,
-                                                                const DRC_RE_FIELD_POSITION& aPosition )
+DRC_RE_OVERLAY_FIELD* DRC_RE_BITMAP_OVERLAY_PANEL::AddCheckbox( const wxString& aId,
+                                                                 const DRC_RE_FIELD_POSITION& aPosition )
 {
-    long style = wxALIGN_CENTER_VERTICAL;
+    wxCheckBox* checkbox = new wxCheckBox( this, wxID_ANY, wxEmptyString );
 
-    if( aPosition.labelPosition == LABEL_POSITION::LEFT )
-        style |= wxALIGN_RIGHT;
-    else
-        style |= wxALIGN_LEFT;
+    auto field = std::make_unique<DRC_RE_OVERLAY_FIELD>( this, aId, checkbox, aPosition );
+    DRC_RE_OVERLAY_FIELD* fieldPtr = field.get();
 
-    wxCheckBox* checkbox =
-            new wxCheckBox( this, wxID_ANY, aPosition.labelText, wxDefaultPosition, wxDefaultSize, style );
+    SetupFieldStyling( checkbox );
 
-    return AddControl( aId, aPosition, checkbox );
+    wxPoint pos( aPosition.xStart, aPosition.yTop );
+    checkbox->SetPosition( pos );
+
+    // Create label if specified
+    fieldPtr->CreateLabel();
+
+    if( fieldPtr->HasLabel() )
+        PositionLabel( fieldPtr );
+
+    m_fieldIdMap[aId] = fieldPtr;
+    m_fields.push_back( std::move( field ) );
+
+    return fieldPtr;
 }

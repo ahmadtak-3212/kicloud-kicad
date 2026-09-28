@@ -40,15 +40,6 @@
 static const int kDataViewIndent = 20;
 
 
-bool LIB_TREE_MODEL_ADAPTER::IsValidColumnWidth( int aWidth )
-{
-    // An out-of-range persisted width (seen after mixed-DPI monitor changes) can push the
-    // tree content out of view and leave the chooser unusable, so anything outside a width
-    // that could legitimately fit on a display is treated as corrupt rather than a resize.
-    return aWidth > 0 && aWidth <= MAX_COL_WIDTH;
-}
-
-
 class LIB_TREE_RENDERER : public wxDataViewCustomRenderer
 {
 public:
@@ -184,10 +175,7 @@ TOOL_DISPATCHER* LIB_TREE_MODEL_ADAPTER::GetToolDispatcher() const
 void LIB_TREE_MODEL_ADAPTER::loadColumnConfig()
 {
     for( const std::pair<const wxString, int>& pair : m_cfg.column_widths )
-    {
-        if( IsValidColumnWidth( pair.second ) )
-            m_colWidths[pair.first] = pair.second;
-    }
+        m_colWidths[pair.first] = pair.second;
 
     m_shownColumns = m_cfg.columns;
 
@@ -240,7 +228,7 @@ void LIB_TREE_MODEL_ADAPTER::SaveSettings()
 
         for( const std::pair<const wxString, wxDataViewColumn*>& pair : m_colNameMap )
         {
-            if( pair.second && IsValidColumnWidth( pair.second->GetWidth() ) )
+            if( pair.second )
                 m_cfg.column_widths[pair.first] = pair.second->GetWidth();
         }
 
@@ -668,14 +656,8 @@ void LIB_TREE_MODEL_ADAPTER::RefreshTree()
 
         for( const auto& [ colName, colPtr ] : m_colNameMap )
         {
-            if( i >= widths.size() )
-                break;
-
-            int width = widths[i++];
-
-            // Keep the prior sane width if a DPI change handed back a corrupt one.
-            if( IsValidColumnWidth( width ) )
-                m_colWidths[ colName ] = width;
+            if( i < widths.size() )
+                m_colWidths[ colName ] = widths[i++];
         }
     }
 

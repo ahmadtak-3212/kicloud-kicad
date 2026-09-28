@@ -215,9 +215,6 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
     }
 
 
-    // Modify() appends to m_entries, so collect first and stage after the loop.
-    std::vector<std::pair<EDA_GROUP*, BASE_SCREEN*>> removedItemGroups;
-
     for( COMMIT_LINE& entry : m_entries )
     {
         SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( entry.m_item );
@@ -226,11 +223,8 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
         wxCHECK2( schItem, continue );
 
         if( changeType == CHT_REMOVE && schItem->GetParentGroup() )
-            removedItemGroups.emplace_back( schItem->GetParentGroup(), entry.m_screen );
+            Modify( schItem->GetParentGroup()->AsEdaItem(), entry.m_screen );
     }
-
-    for( const auto& [group, screen] : removedItemGroups )
-        Modify( group->AsEdaItem(), screen );
 
     for( COMMIT_LINE& entry : m_entries )
     {
@@ -451,20 +445,20 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
         }
     }
 
-    if( !( aCommitFlags & SKIP_UNDO ) )
+    if( frame )
     {
-        if( frame )
-        {
-            if( undoList.GetCount() > 0 )
-                frame->SaveCopyInUndoList( undoList, UNDO_REDO::UNSPECIFIED, false );
+        if( !( aCommitFlags & SKIP_UNDO ) && undoList.GetCount() > 0 )
+            frame->SaveCopyInUndoList( undoList, UNDO_REDO::UNSPECIFIED, false );
 
-            if( dirtyConnectivity )
-            {
-                wxLogTrace( wxS( "CONN_PROFILE" ),
-                            wxS( "SCH_COMMIT::pushSchEdit() %s clean up connectivity rebuild." ),
-                            connectivityCleanUp == LOCAL_CLEANUP ? wxS( "local" ) : wxS( "global" ) );
-                frame->RecalculateConnections( this, connectivityCleanUp );
-            }
+        // Connectivity is recalculated even under SKIP_UNDO: a commit that skips the
+        // undo stack (e.g. a collaborative remote apply) still changes the model, and
+        // stale connectivity would diverge from what the same edit produces locally.
+        if( dirtyConnectivity )
+        {
+            wxLogTrace( wxS( "CONN_PROFILE" ),
+                        wxS( "SCH_COMMIT::pushSchEdit() %s clean up connectivity rebuild." ),
+                        connectivityCleanUp == LOCAL_CLEANUP ? wxS( "local" ) : wxS( "global" ) );
+            frame->RecalculateConnections( this, connectivityCleanUp );
         }
     }
 

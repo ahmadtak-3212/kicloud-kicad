@@ -625,7 +625,7 @@ void BOARD_ADAPTER::addShape( const PCB_SHAPE* aShape, CONTAINER_2D_BASE* aConta
 
     if( IsSolderMaskLayer( aLayer )
             && aShape->HasSolderMask()
-            && ( aShape->IsOnLayer( F_Cu ) || aShape->IsOnLayer( B_Cu ) ) )
+            && IsExternalCopperLayer( aShape->GetLayer() ) )
     {
         margin = aShape->GetSolderMaskExpansion();
         linewidth += margin * 2;
@@ -822,7 +822,7 @@ void BOARD_ADAPTER::addShape( const PCB_SHAPE* aShape, CONTAINER_2D_BASE* aConta
 
     if( lineStyle > LINE_STYLE::FIRST_TYPE )
     {
-        std::vector<SHAPE*> shapes = aShape->MakeEffectiveShapesForStroking();
+        std::vector<SHAPE*> shapes = aShape->MakeEffectiveShapes( true );
         SFVEC2F             a3DU;
         SFVEC2F             b3DU;
 

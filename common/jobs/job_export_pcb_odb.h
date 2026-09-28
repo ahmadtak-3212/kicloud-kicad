@@ -54,8 +54,6 @@ public:
     int            m_precision;
 
     ODB_COMPRESSION m_compressionMode;
-
-    bool m_checkZonesBeforeExport;
 };
 
 #endif

@@ -43,9 +43,6 @@ class NAME_GENERATOR
 public:
     std::string Generate( const std::string& aProposedName );
 
-    /// Forget every previously generated name so a reused exporter starts each netlist clean.
-    void Clear() { m_names.clear(); }
-
 private:
     std::unordered_set<std::string> m_names;
 };

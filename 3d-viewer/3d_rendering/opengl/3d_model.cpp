@@ -241,6 +241,7 @@ MODEL_3D::MODEL_3D( const S3DMODEL& a3DModel, MATERIAL_MODE aMaterialMode )
 
 
         // append indices of this mesh to the mesh group.
+        const unsigned int idx_offset = mesh_group.m_indices.size();
         unsigned int use_idx_count = mesh.m_FaceIdxSize;
 
         if( use_idx_count % 3 != 0 )
@@ -250,22 +251,20 @@ MODEL_3D::MODEL_3D( const S3DMODEL& a3DModel, MATERIAL_MODE aMaterialMode )
             use_idx_count = ( use_idx_count / 3 ) * 3;
         }
 
-        mesh_group.m_indices.reserve( mesh_group.m_indices.size() + use_idx_count );
+        mesh_group.m_indices.resize( mesh_group.m_indices.size() + use_idx_count );
 
-        for( unsigned int idx_i = 0; idx_i < use_idx_count; idx_i += 3 )
+        for( unsigned int idx_i = 0; idx_i < use_idx_count; ++idx_i )
         {
-            if( !IsTriangleInRange( mesh.m_FaceIdx, idx_i, mesh.m_VertexSize ) )
+            if( mesh.m_FaceIdx[idx_i] >= mesh.m_VertexSize )
             {
-                wxLogTrace( m_logTrace, wxT( " triangle at index %u out of range (%u), skipping" ),
-                            static_cast<unsigned int>( idx_i ),
+                wxLogTrace( m_logTrace, wxT( " index %u out of range (%u)" ),
+                            static_cast<unsigned int>( mesh.m_FaceIdx[idx_i] ),
                             static_cast<unsigned int>( mesh.m_VertexSize ) );
 
-                continue;
+                // FIXME: should skip this triangle
             }
 
-            mesh_group.m_indices.push_back( mesh.m_FaceIdx[idx_i + 0] + vtx_offset );
-            mesh_group.m_indices.push_back( mesh.m_FaceIdx[idx_i + 1] + vtx_offset );
-            mesh_group.m_indices.push_back( mesh.m_FaceIdx[idx_i + 2] + vtx_offset );
+            mesh_group.m_indices[idx_offset + idx_i] = mesh.m_FaceIdx[idx_i] + vtx_offset;
         }
     }
 

@@ -32,8 +32,6 @@
 #include <project_sch.h>
 #include <kiway.h>
 #include <core/profile.h>
-#include <core/wx_stl_compat.h>
-#include <unordered_map>
 #include <wx_filename.h>
 #include <sch_io/kicad_legacy/sch_io_kicad_legacy.h>
 #include <progress_reporter.h>
@@ -127,11 +125,6 @@ wxArrayString SYMBOL_LIBRARY_MANAGER::GetLibraryNames() const
 
         res.Add( row->Nickname() );
     }
-
-    res.Sort( []( const wxString& lhs, const wxString& rhs ) -> int
-              {
-                  return StrNumCmp( lhs, rhs, true );
-              } );
 
     return res;
 }
@@ -723,14 +716,6 @@ size_t SYMBOL_LIBRARY_MANAGER::GetDerivedSymbolNames( const wxString& aSymbolNam
 }
 
 
-bool SYMBOL_LIBRARY_MANAGER::HasDerivedSymbols( const wxString& aSymbolName, const wxString& aLibraryName )
-{
-    LIB_BUFFER& libBuf = getLibraryBuffer( aLibraryName );
-
-    return libBuf.HasDerivedSymbols( aSymbolName );
-}
-
-
 size_t SYMBOL_LIBRARY_MANAGER::GetLibraryCount() const
 {
     SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &m_frame.Prj() );
@@ -1203,23 +1188,15 @@ std::shared_ptr<SYMBOL_BUFFER> LIB_BUFFER::GetBuffer( const wxString& aSymbolNam
 }
 
 
-/// Name of the parent a buffered symbol inherits from, or empty if it is a root symbol.
-static wxString getParentName( const SYMBOL_BUFFER& aSymbolBuf )
-{
-    std::shared_ptr<LIB_SYMBOL> parent = aSymbolBuf.GetSymbol().GetParent().lock();
-
-    return parent ? parent->GetName() : wxString();
-}
-
-
 bool LIB_BUFFER::HasDerivedSymbols( const wxString& aParentName ) const
 {
-    wxCHECK( !aParentName.IsEmpty(), false );
-
     for( const std::shared_ptr<SYMBOL_BUFFER>& entry : m_symbols )
     {
-        if( getParentName( *entry ) == aParentName )
-            return true;
+        if( std::shared_ptr<LIB_SYMBOL> parent = entry->GetSymbol().GetParent().lock() )
+        {
+            if( parent->GetName() == aParentName )
+                return true;
+        }
     }
 
     return false;
@@ -1241,50 +1218,51 @@ void LIB_BUFFER::GetSymbolNames( wxArrayString& aSymbolNames, SYMBOL_NAME_FILTER
 }
 
 
-size_t LIB_BUFFER::GetDerivedSymbolNames( const wxString& aSymbolName, wxArrayString& aList ) const
+size_t LIB_BUFFER::GetDerivedSymbolNames( const wxString& aSymbolName, wxArrayString& aList )
 {
     wxCHECK( !aSymbolName.IsEmpty(), 0 );
 
-    // Links resolve by parent name rather than by parent object, because a buffered child can
-    // still point at an unbuffered copy of its parent
-    std::unordered_map<wxString, std::vector<wxString>> derivedMap;
+    // Parent: children map
+    std::unordered_map<std::shared_ptr<LIB_SYMBOL>, std::vector<std::shared_ptr<LIB_SYMBOL>>> derivedMap;
 
-    // Resolve every parent link up front so the walk below is only map lookups
-    for( const std::shared_ptr<SYMBOL_BUFFER>& entry : m_symbols )
+    // Iterate the library once to resolve all derived symbol links.
+    // This means we only need to iterate the library once, and we can then look up the links
+    // as needed.
+    for( std::shared_ptr<SYMBOL_BUFFER>& entry : m_symbols )
     {
-        const wxString parentName = getParentName( *entry );
+        std::shared_ptr<LIB_SYMBOL> symbol = entry->GetSymbol().SharedPtr();
 
-        if( !parentName.IsEmpty() )
-            derivedMap[parentName].emplace_back( entry->GetSymbol().GetName() );
+        if( std::shared_ptr<LIB_SYMBOL> parent = symbol->GetParent().lock() )
+            derivedMap[parent].emplace_back( std::move( symbol ) );
     }
 
-    // Seeded with the query so that a name cycle in a corrupt library neither recurses forever nor
-    // reports the root as its own descendant, which would have removeChildSymbols() delete it
-    std::set<wxString> visited{ aSymbolName };
+    const auto visit =
+            [&]( LIB_SYMBOL& aSymbol )
+            {
+                aList.Add( aSymbol.GetName() );
+            };
 
     // Assign to std::function to allow recursion
-    const std::function<void( const wxString& )> getDerived =
-            [&]( const wxString& aParentName )
+    const std::function<void( std::shared_ptr<LIB_SYMBOL>& )> getDerived =
+            [&]( std::shared_ptr<LIB_SYMBOL>& aSymbol )
             {
-                auto it = derivedMap.find( aParentName );
+                auto it = derivedMap.find( aSymbol );
 
                 if( it != derivedMap.end() )
                 {
-                    for( const wxString& derivedName : it->second )
+                    for( std::shared_ptr<LIB_SYMBOL>& derivedSymbol : it->second )
                     {
-                        if( !visited.insert( derivedName ).second )
-                            continue;
-
-                        aList.Add( derivedName );
+                        visit( *derivedSymbol );
 
                         // Recurse to get symbols derived from this one
-                        getDerived( derivedName );
+                        getDerived( derivedSymbol );
                     }
                 }
             };
 
-    // A name that is not buffered simply has no children here
-    getDerived( aSymbolName );
+    // Start the recursion at the top
+    std::shared_ptr<LIB_SYMBOL> symbol = GetSymbol( aSymbolName )->SharedPtr();
+    getDerived( symbol );
 
     return aList.GetCount();
 }

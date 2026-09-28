@@ -295,12 +295,11 @@ bool DRC_TEST_PROVIDER_HOLE_TO_HOLE::testHoleAgainstHole( BOARD_ITEM* aItem, SHA
 
         auto constraint = m_drcEngine->EvalRules( HOLE_TO_HOLE_CONSTRAINT, aItem, aOther,
                                                   UNDEFINED_LAYER /* holes pierce all layers */ );
-        int  minClearance = constraint.GetValue().Min();
+        int  minClearance = std::max( 0, constraint.GetValue().Min() - epsilon );
 
-        // Relax the comparison by the epsilon, but quote the rule as the user entered it
         if( constraint.GetSeverity() != RPT_SEVERITY_IGNORE
                 && minClearance >= 0
-                && actual < std::max( 0, minClearance - epsilon ) )
+                && actual < minClearance )
         {
             // Generate violations based on a well-defined order so that exclusion checking
             // against previously-generated violations will work.

@@ -52,6 +52,8 @@ using namespace std::placeholders;
 #include <pcbnew_settings.h>
 #include <tool/tool_event.h>
 #include <tool/tool_manager.h>
+#include <pcbjam_remote_lock.h>
+#include <pcbjam_read_only.h>
 #include <tools/tool_event_utils.h>
 #include <tools/pcb_point_editor.h>
 #include <tools/pcb_selection_tool.h>
@@ -372,7 +374,12 @@ int PCB_SELECTION_TOOL::Main( const TOOL_EVENT& aEvent )
             // Show selection before opening menu
             m_frame->GetCanvas()->ForceRefresh();
 
-            if( !selectionCancelled )
+            // pcbjam WASM addition (read-only-viewer): no right-click CONTEXT
+            // menu for viewers — it offers edit entries whose actions the
+            // read-only gate silently swallows. The right-click SELECTION
+            // above (incl. the clarify list) stays — viewer-panels. Skipping
+            // the show is safe: nothing waits on this menu's outcome.
+            if( !selectionCancelled && !PCBJAM_READ_ONLY::IsReadOnly() )
             {
                 m_toolMgr->VetoContextMenuMouseWarp();
                 m_menu->ShowContextMenu( m_selection );
@@ -633,12 +640,6 @@ void PCB_SELECTION_TOOL::EnterGroup()
 
     m_toolMgr->ProcessEvent( EVENTS::SelectedEvent );
 
-    // Processing the selection event can re-enter the tool and ExitGroup(), which clears
-    // m_enteredGroup. If that happened, don't operate on the now-stale (possibly null) group
-    // or we would hide/overlay a null item and crash (issue #24391).
-    if( m_enteredGroup != aGroup )
-        return;
-
     view()->Hide( m_enteredGroup, true );
     m_enteredGroupOverlay.Add( m_enteredGroup );
     view()->Update( &m_enteredGroupOverlay );
@@ -702,15 +703,6 @@ PCB_SELECTION& PCB_SELECTION_TOOL::RequestSelection( CLIENT_SELECTION_FILTER aCl
         }
 
         aClientFilter( VECTOR2I(), collector, this );
-
-        // Locked items were filtered with Override locks off. Keep the selection and return an
-        // empty one so the action does nothing. The banner then prompts to enable the override.
-        if( m_lockedItemsFiltered )
-        {
-            m_frame->GetCanvas()->ForceRefresh();
-            m_blockedSelection.Clear();
-            return m_blockedSelection;
-        }
 
         for( EDA_ITEM* item : collector )
         {
@@ -803,8 +795,13 @@ bool PCB_SELECTION_TOOL::selectPoint( const VECTOR2I& aWhere, bool aOnDrag, bool
     // Remove unselectable items
     for( int i = collector.GetCount() - 1; i >= 0; --i )
     {
-        if( !Selectable( collector[ i ] ) || ( aOnDrag && collector[i]->IsLocked() ) )
+        if( !Selectable( collector[ i ] )
+            || ( aOnDrag
+                 && ( collector[i]->IsLocked()
+                      || PCBJAM_REMOTE_LOCK::IsLocked( collector[i]->m_Uuid ) ) ) )
+        {
             collector.Remove( i );
+        }
     }
 
     m_selection.ClearReferencePoint();
@@ -2119,12 +2116,6 @@ void PCB_SELECTION_TOOL::selectAllConnectedTracks( const std::vector<BOARD_CONNE
 
     auto connectivity = board()->GetConnectivity();
 
-    // Don't let expansion select outside an entered group, or select() would ExitGroup mid-walk.
-    auto inScope = [this]( BOARD_ITEM* aItem )
-    {
-        return isWithinEnteredGroup( aItem, m_enteredGroup, m_isFootprintEditor );
-    };
-
     std::set<PAD*>                     startPadSet;
     std::vector<BOARD_CONNECTED_ITEM*> cleanupItems;
 
@@ -2137,7 +2128,7 @@ void PCB_SELECTION_TOOL::selectAllConnectedTracks( const std::vector<BOARD_CONNE
         // Select any starting track items
         if( startItem->IsType( { PCB_TRACE_T, PCB_ARC_T, PCB_VIA_T } ) )
         {
-            if( itemPassesFilter( startItem, true ) && inScope( startItem ) )
+            if( itemPassesFilter( startItem, true ) )
                 select( startItem );
         }
     }
@@ -2350,7 +2341,7 @@ void PCB_SELECTION_TOOL::selectAllConnectedTracks( const std::vector<BOARD_CONNE
                     if( !itemPassesFilter( track, true ) )
                         continue;
 
-                    if( !track->IsSelected() && inScope( track ) )
+                    if( !track->IsSelected() )
                         select( track );
 
                     if( !track->HasFlag( SKIP_STRUCT ) )
@@ -2376,7 +2367,7 @@ void PCB_SELECTION_TOOL::selectAllConnectedTracks( const std::vector<BOARD_CONNE
                     if( !itemPassesFilter( shape, true ) )
                         continue;
 
-                    if( !shape->IsSelected() && inScope( shape ) )
+                    if( !shape->IsSelected() )
                         select( shape );
 
                     if( !shape->HasFlag( SKIP_STRUCT ) )
@@ -2399,7 +2390,7 @@ void PCB_SELECTION_TOOL::selectAllConnectedTracks( const std::vector<BOARD_CONNE
 
                 if( hitVia )
                 {
-                    if( !hitVia->IsSelected() && inScope( hitVia ) )
+                    if( !hitVia->IsSelected() )
                         select( hitVia );
 
                     if( !hitVia->HasFlag( SKIP_STRUCT ) )
@@ -3619,6 +3610,14 @@ void PCB_SELECTION_TOOL::RebuildSelection()
 
 bool PCB_SELECTION_TOOL::Selectable( const BOARD_ITEM* aItem, bool checkVisibilityOnly ) const
 {
+    // pcbjam WASM addition (read-only-viewer): selection stays LIVE for
+    // viewers — the shell's inspector panel reads it (viewer-panels). Every
+    // mutation downstream of a selection is still blocked: move/properties/
+    // delete dispatch TOOL_ACTIONs the TOOL_MANAGER gate swallows, the point
+    // editor has its own read-only guard (it mutates without actions), and
+    // the right-click CONTEXT menu is skipped in this tool's own RMB arm
+    // (the clarify list stays — pure selection).
+
     const RENDER_SETTINGS* settings = getView()->GetPainter()->GetSettings();
     const PCB_DISPLAY_OPTIONS& options = frame()->GetDisplayOptions();
 
@@ -4566,49 +4565,31 @@ void PCB_SELECTION_TOOL::GuessSelectionCandidates( GENERAL_COLLECTOR& aCollector
 }
 
 
-bool PCB_SELECTION_TOOL::ReportFilteredLockedItems()
+void PCB_SELECTION_TOOL::ReportFilteredLockedItems()
 {
+    // pcbjam: remote soft-locks report the holding peer (collab-presence 0007).
+    if( !m_remoteLockHolder.IsEmpty() && m_frame )
+    {
+        m_frame->ShowInfoBarWarning( wxString::Format( _( "Some items are being edited by %s "
+                                                          "and were skipped." ),
+                                                       m_remoteLockHolder ),
+                                     true );
+        return;
+    }
+
     if( m_lockedItemsFiltered && m_frame )
     {
         m_frame->ShowInfoBarWarning( _( "Selection contains locked items. "
                                         "Enable 'Override locks' to operate on them." ),
                                      true );
     }
-
-    return m_lockedItemsFiltered;
-}
-
-
-bool PCB_SELECTION_TOOL::HasLockedDescendant( const BOARD_ITEM* aItem )
-{
-    bool lockedDescendant = false;
-
-    aItem->RunOnChildren(
-            [&]( BOARD_ITEM* curr_item )
-            {
-                if( !curr_item->GetParentFootprint() && curr_item->IsLocked() )
-                    lockedDescendant = true;
-            },
-            RECURSE_MODE::RECURSE );
-
-    return lockedDescendant;
-}
-
-
-bool PCB_SELECTION_TOOL::isWithinEnteredGroup( BOARD_ITEM* aItem, PCB_GROUP* aEnteredGroup, bool aIsFootprintEditor )
-{
-    if( aEnteredGroup )
-        return PCB_GROUP::WithinScope( aItem, aEnteredGroup, aIsFootprintEditor );
-
-    // Not entered: keep expansion at the top level so it can't reach into a group and
-    // silently pull the whole group into a later delete.
-    return aItem->GetParentGroup() == nullptr;
 }
 
 
 void PCB_SELECTION_TOOL::FilterCollectorForLockedItems( GENERAL_COLLECTOR& aCollector )
 {
     m_lockedItemsFiltered = false;
+    m_remoteLockHolder.Clear();
 
     if( m_frame && m_frame->IsType( FRAME_PCB_EDITOR ) && !m_frame->GetOverrideLocks() )
     {
@@ -4616,12 +4597,35 @@ void PCB_SELECTION_TOOL::FilterCollectorForLockedItems( GENERAL_COLLECTOR& aColl
         for( int i = (int) aCollector.GetCount() - 1; i >= 0; --i )
         {
             BOARD_ITEM* item = aCollector[i];
+            bool        lockedDescendant = false;
 
-            if( item->IsLocked() || HasLockedDescendant( item ) )
+            item->RunOnChildren(
+                    [&]( BOARD_ITEM* curr_item )
+                    {
+                        if( curr_item->IsLocked() )
+                            lockedDescendant = true;
+                    },
+                    RECURSE_MODE::RECURSE );
+
+            if( item->IsLocked() || lockedDescendant )
             {
                 aCollector.Remove( item );
                 m_lockedItemsFiltered = true;
             }
+        }
+    }
+
+    // pcbjam: remote soft-locks (collab peers' live selections, 0007) —
+    // ephemeral, never serialized, deliberately NOT overridable via
+    // 'Override locks' (the point is not to fight another person).
+    for( int i = (int) aCollector.GetCount() - 1; i >= 0; --i )
+    {
+        wxString holder;
+
+        if( PCBJAM_REMOTE_LOCK::IsLocked( aCollector[i]->m_Uuid, &holder ) )
+        {
+            aCollector.Remove( i );
+            m_remoteLockHolder = holder;
         }
     }
 }

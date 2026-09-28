@@ -23,8 +23,6 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <algorithm>
-
 #include <project.h>
 #include <scintilla_tricks.h>
 #include <widgets/bitmap_button.h>
@@ -556,15 +554,15 @@ bool PROPERTIES_FRAME::CopyPrmsFromPanelToItem( DS_DATA_ITEM* aItem )
     }
 
     // Import Repeat prms
-    // ToLong leaves itmp untouched on a parse failure, so seed it rather than read stack garbage
-    long itmp = aItem->m_RepeatCount;
+    long itmp;
     msg = m_textCtrlRepeatCount->GetValue();
+    msg.ToLong( &itmp );
 
-    // Hold the count to the range the file format allows. A count < 1 makes no sense, and an
-    // unbounded one stalls the editor building draw items
-    if( !msg.ToLong( &itmp ) || itmp < 1l || itmp > DS_MAX_REPEAT_COUNT )
+    // Ensure m_RepeatCount is > 0. Otherwise it create issues because a repeat
+    // count < 1 make no sense
+    if( itmp < 1l )
     {
-        itmp = std::clamp( aItem->m_RepeatCount, 1, DS_MAX_REPEAT_COUNT );
+        itmp = 1;
         msg.Printf( wxT( "%ld" ), itmp );
         m_textCtrlRepeatCount->SetValue( msg );
     }
@@ -581,9 +579,8 @@ bool PROPERTIES_FRAME::CopyPrmsFromPanelToItem( DS_DATA_ITEM* aItem )
         item->m_TextBase = m_stcText->GetValue();
 
         msg = m_textCtrlTextIncrement->GetValue();
-
-        if( msg.ToLong( &itmp ) )
-            item->m_IncrementLabel = itmp;
+        msg.ToLong( &itmp );
+        item->m_IncrementLabel = itmp;
 
         item->m_Bold = m_bold->IsChecked();
         item->m_Italic = m_italic->IsChecked();

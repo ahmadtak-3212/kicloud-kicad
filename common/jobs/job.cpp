@@ -117,7 +117,6 @@ wxString JOB::ResolveOutputPath( const wxString& aPath, bool aPathIsDirectory, P
     outPath.Replace( wxT( "\\" ), wxT( "/" ) );
 
     outPath = ExpandTextVars( outPath, &textResolver );
-    outPath = ExpandEnvVarSubstitutions( outPath, aProject );
 
     if( !m_tempOutputDirectory.IsEmpty() )
     {

@@ -158,8 +158,9 @@ public:
     EDA_ANGLE    m_Hole_Orient;          // Hole rotation (= pad rotation) for oblong holes
     int          m_Hole_Shape;           // hole shape: round (0) or oval (1)
     VECTOR2I     m_Hole_Pos;             // hole position
-    PCB_LAYER_ID m_Hole_Bottom_Layer;    // physically lowest layer reached by the hole
-    PCB_LAYER_ID m_Hole_Top_Layer;       // physically highest layer reached by the hole
+    PCB_LAYER_ID m_Hole_Bottom_Layer;    // hole ending layer (usually back layer)
+    PCB_LAYER_ID m_Hole_Top_Layer;       // hole starting layer (usually front layer):
+                                         // m_Hole_Top_Layer < m_Hole_Bottom_Layer
     bool         m_Hole_NotPlated;       // hole not plated. Must be in a specific drill file or
                                          // section.
     HOLE_ATTRIBUTE m_HoleAttribute;      // Attribute, used in Excellon drill file and to sort holes
@@ -213,14 +214,12 @@ struct DRILL_SPAN
 
     PCB_LAYER_ID TopLayer() const
     {
-        // B_Cu (id=2) is numerically less than inner layers (id>=4), but is physically
-        // at the bottom of the stack. Use IsCopperLayerLowerThan for correct ordering.
-        return IsCopperLayerLowerThan( m_StartLayer, m_EndLayer ) ? m_EndLayer : m_StartLayer;
+        return m_StartLayer < m_EndLayer ? m_StartLayer : m_EndLayer;
     }
 
     PCB_LAYER_ID BottomLayer() const
     {
-        return IsCopperLayerLowerThan( m_StartLayer, m_EndLayer ) ? m_StartLayer : m_EndLayer;
+        return m_StartLayer < m_EndLayer ? m_EndLayer : m_StartLayer;
     }
 
     PCB_LAYER_ID DrillStartLayer() const
@@ -459,21 +458,13 @@ protected:
     /// Get unique layer pairs by examining the micro and blind_buried vias.
     std::vector<DRILL_SPAN> getUniqueLayerPairs() const;
 
-    /// Selects which subset of m_toolListBuffer a summary covers.
-    enum class TOOL_SUMMARY
-    {
-        PLATED,     ///< Plated holes.
-        UNPLATED,   ///< Non-plated holes, excluding backdrills.
-        BACKDRILL   ///< Backdrills, which are non-plated by construction.
-    };
-
     /**
      * Print m_toolListBuffer[] tools to aOut and returns total hole count.
      *
      * @param aOut is the current OUTPUTFORMATTER to print summary.
-     * @param aSummary selects which tools the summary covers.
+     * @param aSummaryNPTH is true to print summary for NPTH, false for PTH.
      */
-    unsigned printToolSummary( FILE* out, TOOL_SUMMARY aSummary ) const;
+    unsigned printToolSummary( FILE* out, bool aSummaryNPTH ) const;
 
     /**
      * @return a string from aPair to identify the layer layer pair.

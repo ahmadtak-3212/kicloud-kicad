@@ -25,7 +25,6 @@
 #include <3d-viewer/3d_canvas/eda_3d_canvas.h>
 
 // KiCad includes
-#include <navlib_safe_init.h>
 #include <tool/action_manager.h>
 #include <tool/tool_manager.h>
 #include <tool/tools_holder.h>
@@ -89,8 +88,7 @@ NL_3D_VIEWER_PLUGIN_IMPL::NL_3D_VIEWER_PLUGIN_IMPL( EDA_3D_CANVAS* aCanvas,
 
 NL_3D_VIEWER_PLUGIN_IMPL::~NL_3D_VIEWER_PLUGIN_IMPL()
 {
-    if( IsEnabled() )
-        EnableNavigation( false );
+    EnableNavigation( false );
 }
 
 
@@ -109,12 +107,9 @@ EDA_3D_CANVAS* NL_3D_VIEWER_PLUGIN_IMPL::GetCanvas() const
 
 void NL_3D_VIEWER_PLUGIN_IMPL::Connect()
 {
-    SafeNavlibInit( [this]()
-    {
-        EnableNavigation( true );
-        PutFrameTimingSource( TimingSource::SpaceMouse );
-        exportCommandsAndImages();
-    } );
+   EnableNavigation(true);
+   PutFrameTimingSource(TimingSource::SpaceMouse);
+   exportCommandsAndImages();
 }
 
 

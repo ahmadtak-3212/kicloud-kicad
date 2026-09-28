@@ -186,9 +186,6 @@ public:
     bool IsOk() const { return m_ok; }
     const wxString& ErrorDescription() const { return m_errorDescription; }
 
-    /// Marks a table valid that was built for a file that does not exist yet
-    void SetOk() { m_ok = true; }
-
     /// Returns true if the underlying file exists but is not writable
     bool IsReadOnly() const;
 

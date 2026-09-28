@@ -453,7 +453,6 @@ bool DIALOG_PRINT::TransferDataFromWindow()
         else
         {
             m_parent->GetPageSetupData() = printer.GetPrintDialogData().GetPrintData();
-            KIPLATFORM::PRINTING::ResetPrintToFilePath( m_parent->GetPageSetupData().GetPrintData() );
         }
     }
 

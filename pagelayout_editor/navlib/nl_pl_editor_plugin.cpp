@@ -23,14 +23,12 @@
 
 #include <advanced_config.h>
 #include <kiplatform/drivers.h>
-#include <navlib_safe_init.h>
 
 
 NL_PL_EDITOR_PLUGIN::NL_PL_EDITOR_PLUGIN()
 {
     if( ADVANCED_CFG::GetCfg().m_Use3DConnexionDriver
-        && KIPLATFORM::DRIVERS::Valid3DConnexionDriverVersion()
-        && !NavlibDriverCrashed() )
+        && KIPLATFORM::DRIVERS::Valid3DConnexionDriverVersion() )
     {
         m_impl = std::make_unique<NL_PL_EDITOR_PLUGIN_IMPL>();
     }

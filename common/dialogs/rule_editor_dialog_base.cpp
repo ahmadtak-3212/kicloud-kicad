@@ -1005,11 +1005,7 @@ bool RULE_EDITOR_DIALOG_BASE::filterRuleTree( const wxTreeItemId& aItem, const w
 
 void RULE_EDITOR_DIALOG_BASE::saveRuleTreeState( const wxTreeItemId& aItem, const int& aNodeId )
 {
-    wxString itemText;
-
-    if( aItem != m_ruleTreeCtrl->GetRootItem() )
-        itemText = m_ruleTreeCtrl->GetItemText( aItem );
-
+    wxString         itemText = m_ruleTreeCtrl->GetItemText( aItem );
     std::vector<int> children;
 
     wxTreeItemIdValue cookie;

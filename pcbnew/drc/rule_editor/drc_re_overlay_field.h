@@ -148,21 +148,10 @@ public:
     bool HasLabel() const { return m_label != nullptr; }
 
     /**
-     * @return The prefix label control, or nullptr if no prefix label was created.
-     */
-    wxStaticText* GetPrefixLabel() const { return m_prefixLabel; }
-
-    /**
-     * @return true if this field has a prefix label.
-     */
-    bool HasPrefixLabel() const { return m_prefixLabel != nullptr; }
-
-    /**
-     * Create and associate labels with this field.
+     * Create and associate a label with this field.
      * The label is positioned according to the LABEL_POSITION in the field position struct.
-     * The prefix label is always placed on the left, if specified.
      */
-    void CreateLabels();
+    void CreateLabel();
 
 private:
     void createErrorIcon();
@@ -180,7 +169,6 @@ private:
     bool                 m_showingError;
 
     wxStaticText*        m_label;
-    wxStaticText*        m_prefixLabel;
 };
 
 #endif // DRC_RE_OVERLAY_FIELD_H

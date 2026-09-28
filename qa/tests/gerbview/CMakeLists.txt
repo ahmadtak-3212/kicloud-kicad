@@ -25,10 +25,6 @@ set( QA_GERBVIEW_SRCS
     test_module.cpp
 
     test_aperture_macro.cpp
-    test_excellon_repeat.cpp
-
-    # Gerbview-specific tests
-    test_step_and_repeat.cpp
 
     # Shared between programs, but dependent on the BIU
     ${CMAKE_SOURCE_DIR}/qa/tests/common/test_format_units.cpp
@@ -69,7 +65,6 @@ add_dependencies( qa_gerbview gerbview )
 target_link_libraries( qa_gerbview
     gerbview_kiface_objects
     pcbcommon
-    3d-viewer
     gal
     common
     gal

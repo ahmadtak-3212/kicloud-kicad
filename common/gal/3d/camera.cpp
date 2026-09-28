@@ -658,21 +658,21 @@ void CAMERA::RotateScreen( float aAngleInRadians )
 
 void CAMERA::RotateX( float aAngleInRadians )
 {
-    SetRotationMatrix( glm::rotate( GetRotationMatrix(), aAngleInRadians, SFVEC3F( 1.0f, 0.0f, 0.0f ) ) );
+    m_rotate_aux.x += aAngleInRadians;
     updateRotationMatrix();
 }
 
 
 void CAMERA::RotateY( float aAngleInRadians )
 {
-    SetRotationMatrix( glm::rotate( GetRotationMatrix(), aAngleInRadians, SFVEC3F( 0.0f, 1.0f, 0.0f ) ) );
+    m_rotate_aux.y += aAngleInRadians;
     updateRotationMatrix();
 }
 
 
 void CAMERA::RotateZ( float aAngleInRadians )
 {
-    SetRotationMatrix( glm::rotate( GetRotationMatrix(), aAngleInRadians, SFVEC3F( 0.0f, 0.0f, 1.0f ) ) );
+    m_rotate_aux.z += aAngleInRadians;
     updateRotationMatrix();
 }
 

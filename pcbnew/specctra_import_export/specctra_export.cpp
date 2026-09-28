@@ -1063,41 +1063,37 @@ void SPECCTRA_DB::fillBOUNDARY( BOARD* aBoard, BOUNDARY* boundary )
 }
 
 
-// Specctra strings have no in-string escape, so a payload holding the quote delimiter would end
-// the token early and desync the reader.  Only fold free-text fields that need no round-trip
-static std::string sanitizeForDSNString( const wxString& aValue )
-{
-    wxString ret = aValue;
-    ret.Replace( wxT( "\"" ), wxT( "''" ) );
-    return TO_UTF8( ret );
-}
+typedef std::set<std::string>                   STRINGSET;
+typedef std::pair<STRINGSET::iterator, bool>    STRINGSET_PAIR;
 
 
 void SPECCTRA_DB::FromBOARD( BOARD* aBoard )
 {
     std::shared_ptr<NET_SETTINGS>& netSettings = aBoard->GetDesignSettings().m_NetSettings;
 
-    // Component ids must be unique for the session file to round-trip, but empty and duplicate
-    // references (unannotated REF** fiducials, intentional duplicates) are common, so uniquify
-    // rather than refuse the export.  Exported DSN defaults to case-insensitive ids, so fold case
-    // when checking for collisions.
-    std::map<FOOTPRINT*, std::string> componentIds;
+    // Not all boards are exportable.  Check that all reference Ids are unique, or we won't be
+    // able to import the session file which comes back to us later from the router.
     {
-        std::set<wxString> used;
+        STRINGSET refs;       // holds footprint reference designators
 
         for( FOOTPRINT* footprint : aBoard->Footprints() )
         {
-            wxString ref = footprint->GetReference();
+            if( footprint->GetReference() == wxEmptyString )
+            {
+                THROW_IO_ERROR( wxString::Format( _( "Footprint with value of '%s' has an empty "
+                                                     "reference designator." ),
+                                                  footprint->GetValue() ) );
+            }
 
-            if( ref.IsEmpty() )
-                ref = wxT( "REF**" );
+            // if we cannot insert OK, that means the reference has been seen before.
+            STRINGSET_PAIR refpair = refs.insert( TO_UTF8( footprint->GetReference() ) );
 
-            wxString unique = ref;
-
-            for( int suffix = 1; !used.insert( unique.Lower() ).second; ++suffix )
-                unique = wxString::Format( wxT( "%s_%d" ), ref, suffix );
-
-            componentIds[footprint] = TO_UTF8( unique );
+            if( !refpair.second )      // insert failed
+            {
+                THROW_IO_ERROR( wxString::Format( _( "Multiple footprints have the reference "
+                                                     "designator '%s'." ),
+                                                  footprint->GetReference() ) );
+            }
         }
     }
 
@@ -1432,7 +1428,7 @@ void SPECCTRA_DB::FromBOARD( BOARD* aBoard )
         for( NETINFO_LIST::iterator i = netInfo.begin(); i != netInfo.end(); ++i )
         {
             if( i->GetNetCode() > 0 )
-                m_nets[i->GetNetCode()]->m_net_id = sanitizeForDSNString( i->GetNetname() );
+                m_nets[i->GetNetCode()]->m_net_id = TO_UTF8( i->GetNetname() );
         }
 
         m_padstackset.clear();
@@ -1441,7 +1437,7 @@ void SPECCTRA_DB::FromBOARD( BOARD* aBoard )
         {
             IMAGE* image = makeIMAGE( aBoard, footprint );
 
-            componentId = componentIds[footprint];
+            componentId = TO_UTF8( footprint->GetReference() );
 
             // Create a net list entry for all the actual pins in the current footprint.
             // Location of this code is critical because we fabricated some pin names to ensure
@@ -1484,7 +1480,7 @@ void SPECCTRA_DB::FromBOARD( BOARD* aBoard )
             place->SetRotation( footprint->GetOrientationDegrees() );
             place->SetVertex( mapPt( footprint->GetPosition() ) );
             place->m_component_id = componentId;
-            place->m_part_number  = sanitizeForDSNString( footprint->GetValue() );
+            place->m_part_number  = TO_UTF8( footprint->GetValue() );
 
             // footprint is flipped from bottom side, set side to T_back
             if( footprint->GetFlag() )

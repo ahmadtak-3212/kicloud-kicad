@@ -212,8 +212,6 @@ public:
      */
     void SetScanTypes( const std::vector<KICAD_T>& aTypes ) { m_scanTypes = aTypes; }
 
-    const std::vector<KICAD_T>& GetScanTypes() const { return m_scanTypes; }
-
     void SetRefPos( const VECTOR2I& aRefPos ) { m_refPos = aRefPos; }
 
     /**

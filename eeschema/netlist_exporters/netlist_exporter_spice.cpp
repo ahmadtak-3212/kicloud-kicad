@@ -56,9 +56,7 @@ std::string NAME_GENERATOR::Generate( const std::string& aProposedName )
     std::string name = aProposedName;
     int         ii = 1;
 
-    // insert() both tests for the collision and records the accepted name, so subsequent calls
-    // actually see previously generated names.
-    while( !m_names.insert( name ).second )
+    while( m_names.contains( name ) )
         name = fmt::format( "{}#{}", aProposedName, ii++ );
 
     return name;
@@ -133,7 +131,6 @@ bool NETLIST_EXPORTER_SPICE::ReadSchematicAndLibraries( unsigned aNetlistOptions
 
     m_nets.clear();
     m_items.clear();
-    m_modelNameGenerator.Clear();
     m_referencesAlreadyFound.Clear();
     m_libParts.clear();
 
@@ -521,14 +518,8 @@ void NETLIST_EXPORTER_SPICE::readModel( SCH_SHEET_PATH& aSheet, SCH_SYMBOL& aSym
     aItem.model = &libModel.model;
 
     std::string modelName = aItem.model->SpiceGenerator().ModelName( aItem );
-
-    // Only uniquify names that KiCad itself defines with a .model line.  A subcircuit (or other
-    // externally defined) name has to match the definition pulled in from its library verbatim, and
-    // several symbols sharing one subcircuit must resolve to that same name, so it is left untouched.
-    if( aItem.model->requiresSpiceModelLine( aItem ) )
-        aItem.modelName = m_modelNameGenerator.Generate( modelName );
-    else
-        aItem.modelName = modelName;
+    // Resolve model name collisions.
+    aItem.modelName = m_modelNameGenerator.Generate( modelName );
 
     // FIXME: Don't have special cases for raw Spice models and KIBIS.
     if( auto rawSpiceModel = dynamic_cast<const SIM_MODEL_RAW_SPICE*>( aItem.model ) )

@@ -2313,35 +2313,6 @@ void CADSTAR_PCB_ARCHIVE_LOADER::loadNets()
         // at the junction in order to correctly apply the same "route offset" operation that the
         // CADSTAR post processor applies when generating Manufacturing output. The only exception
         // is if there is just a single route at the junction point, we use that route width
-        // Optimal width of a route code, falling back to the default netclass track width when the
-        // route code is missing or specifies no usable width. Unlike getRouteCode() this tolerates
-        // an absent route code silently, as expected for CADSTAR Revision 7 routes that omit
-        // ROUTEWIDTH, and never yields a non-positive track width.
-        auto getRouteCodeWidth =
-                [&]( const ROUTECODE_ID& aRouteCodeID ) -> long
-                {
-                    auto rcIt = Assignments.Codedefs.RouteCodes.find( aRouteCodeID );
-
-                    if( rcIt != Assignments.Codedefs.RouteCodes.end() && rcIt->second.OptimalWidth > 0 )
-                        return rcIt->second.OptimalWidth;
-
-                    long defaultWidth =
-                            m_board->GetDesignSettings().m_NetSettings->GetDefaultNetclass()->GetTrackWidth();
-
-                    return defaultWidth / KiCadUnitMultiplier;
-                };
-
-        // Resolve a vertex width, falling back to the connection's route code when the
-        // ROUTEWIDTH node was omitted (CADSTAR Revision 7 format).
-        auto getVertexWidth =
-                [&]( const NET_PCB::ROUTE_VERTEX& aVertex, const ROUTECODE_ID& aRouteCodeID ) -> long
-                {
-                    if( aVertex.RouteWidthIsExplicit )
-                        return aVertex.RouteWidth;
-
-                    return getRouteCodeWidth( aRouteCodeID );
-                };
-
         auto getJunctionSize =
                 [&]( const NETELEMENT_ID& aJptNetElemId, const NET_PCB::CONNECTION_PCB& aConnectionToIgnore ) -> int
                 {
@@ -2360,14 +2331,12 @@ void CADSTAR_PCB_ARCHIVE_LOADER::loadNets()
 
                         if( connection.StartNode == aJptNetElemId )
                         {
-                            int s = getKiCadLength( getVertexWidth( connection.Route.RouteVertices.front(),
-                                                                    connection.RouteCodeID ) );
+                            int s = getKiCadLength( connection.Route.RouteVertices.front().RouteWidth );
                             jptsize = std::max( jptsize, s );
                         }
                         else if( connection.EndNode == aJptNetElemId )
                         {
-                            int s = getKiCadLength( getVertexWidth( connection.Route.RouteVertices.back(),
-                                                                    connection.RouteCodeID ) );
+                            int s = getKiCadLength( connection.Route.RouteVertices.back().RouteWidth );
                             jptsize = std::max( jptsize, s );
                         }
                     }
@@ -2382,7 +2351,7 @@ void CADSTAR_PCB_ARCHIVE_LOADER::loadNets()
                         if( aConnectionToIgnore.EndNode == aJptNetElemId )
                             vertex = aConnectionToIgnore.Route.RouteVertices.back();
 
-                        jptsize = getKiCadLength( getVertexWidth( vertex, aConnectionToIgnore.RouteCodeID ) );
+                        jptsize = getKiCadLength( vertex.RouteWidth );
                     }
 
                     return jptsize;
@@ -2407,10 +2376,7 @@ void CADSTAR_PCB_ARCHIVE_LOADER::loadNets()
             endSize /= KiCadUnitMultiplier;
 
             if( !connection.Unrouted )
-            {
-                loadNetTracks( net.ID, connection.Route, getRouteCodeWidth( connection.RouteCodeID ),
-                               startSize, endSize );
-            }
+                loadNetTracks( net.ID, connection.Route, startSize, endSize );
         }
     }
 }
@@ -2508,7 +2474,6 @@ void CADSTAR_PCB_ARCHIVE_LOADER::loadComponentAttributes( const COMPONENT& aComp
 
 void CADSTAR_PCB_ARCHIVE_LOADER::loadNetTracks( const NET_ID&         aCadstarNetID,
                                                 const NET_PCB::ROUTE& aCadstarRoute,
-                                                long aDefaultRouteWidth,
                                                 long aStartWidth, long aEndWidth )
 {
     if( aCadstarRoute.RouteVertices.size() == 0 )
@@ -2516,13 +2481,6 @@ void CADSTAR_PCB_ARCHIVE_LOADER::loadNetTracks( const NET_ID&         aCadstarNe
 
     std::vector<PCB_SHAPE*> shapes;
     std::vector<NET_PCB::ROUTE_VERTEX> routeVertices = aCadstarRoute.RouteVertices;
-
-    // Fill in default route width for vertices that don't have explicit widths (CADSTAR Revision 7)
-    for( NET_PCB::ROUTE_VERTEX& v : routeVertices )
-    {
-        if( !v.RouteWidthIsExplicit )
-            v.RouteWidth = aDefaultRouteWidth;
-    }
 
     // Add thin route at front so that route offsetting works as expected
     if( aStartWidth < routeVertices.front().RouteWidth )
@@ -3971,9 +3929,7 @@ NETINFO_ITEM* CADSTAR_PCB_ARCHIVE_LOADER::getKiCadNet( const NET_ID& aCadstarNet
         {
             netclass = m_netClassMap.at( key );
         }
-        else if( auto rcIt = Assignments.Codedefs.RouteCodes.find( csNet.RouteCodeID );
-                 !csNet.RouteCodeID.IsEmpty() && rcIt != Assignments.Codedefs.RouteCodes.end()
-                 && rcIt->second.OptimalWidth > 0 )
+        else
         {
             wxString  netClassName;
 
@@ -3996,12 +3952,6 @@ NETINFO_ITEM* CADSTAR_PCB_ARCHIVE_LOADER::getKiCadNet( const NET_ID& aCadstarNet
             netSettings->SetNetclass( netClassName, netclass );
             netclass->SetTrackWidth( getKiCadLength( rc.OptimalWidth ) );
             m_netClassMap.insert( { key, netclass } );
-        }
-        else
-        {
-            // No route code specified, route code not found, or it has no usable width; use the
-            // default netclass
-            netclass = netSettings->GetDefaultNetclass();
         }
 
         m_board->GetDesignSettings().m_NetSettings->SetNetclassPatternAssignment( newName, netclass->GetName() );

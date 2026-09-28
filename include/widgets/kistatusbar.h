@@ -77,6 +77,14 @@ public:
     ~KISTATUSBAR();
 
     /**
+     * Set the text in a field using wxELLIPSIZE_MIDDLE option to adjust the text size
+     * to the field size.
+     *
+     * @note Unfortunately, setting the wxStatusBar style to wxELLIPSIZE_MIDDLE does not work.
+     */
+    void SetEllipsedTextField( const wxString& aText, int aFieldId );
+
+    /**
      * Show the background progress bar.
      */
     void ShowBackgroundProgressBar( bool aCancellable = false );
@@ -129,8 +137,6 @@ public:
      * Get current message count (thread-safe).
      */
     size_t GetLoadWarningCount() const;
-
-    virtual void SetStatusWidths( int aSize, const int* aWidths ) override;
 
 private:
     void onSize( wxSizeEvent& aEvent );

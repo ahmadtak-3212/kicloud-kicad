@@ -472,9 +472,6 @@ public:
     static TOOL_ACTION editFpInFpEditor;
     static TOOL_ACTION editLibFpInFpEditor;
 
-    static TOOL_ACTION toggleExcludeFromBOM;
-    static TOOL_ACTION toggleExcludeFromPosFiles;
-
     static TOOL_ACTION showLayersManager;
     static TOOL_ACTION showNetInspector;
     static TOOL_ACTION showPythonConsole;

@@ -1304,7 +1304,6 @@ struct BLK_0x1C_PADSTACK
      *
      * V>=172 (21 fixed):
      *   Slot 14 = ~TSM (top solder mask)
-     *   Slot 15 = ~BSM (bottom solder mask)
      */
     enum SLOTS
     {
@@ -1313,15 +1312,8 @@ struct BLK_0x1C_PADSTACK
         PASTEMASK_TOP_V16X  = 5,
         FILMMASK_TOP_V16X   = 7,
 
-        SOLDERMASK_TOP_V165 = 1,
-        PASTEMASK_TOP_V165  = 6,
-        FILMMASK_TOP_V165   = 8,
-
         // V>=172 verified slots
         SOLDERMASK_TOP_V17X = 14,
-        SOLDERMASK_BOT_V17X = 15,
-        PASTEMASK_TOP_V17X  = 16,
-        PASTEMASK_BOT_V17X  = 17
     };
 
     /**
@@ -2156,9 +2148,8 @@ struct BLK_0x36_DEF_TABLE
     {
         std::array<uint8_t, 28> m_Unknown;
 
-        // The trailing word first appears in 17.5. On 17.4 the record is 28 bytes, and
-        // reading a phantom word here overruns every slot and desyncs the object stream.
-        COND_GE<FMT_VER::V_175, uint32_t> m_Unknown2;
+        // This is in Nvidia Jetson (17.4), not in EVK BaseBoard (17.2)
+        COND_GE<FMT_VER::V_174, uint32_t> m_Unknown2;
     };
 
     struct X06

@@ -61,9 +61,6 @@ MARGIN_OFFSET_BINDER::MARGIN_OFFSET_BINDER( UNITS_PROVIDER* aUnitsProvider,
         m_valueCtrl->Connect( wxEVT_KILL_FOCUS,
                               wxFocusEventHandler( MARGIN_OFFSET_BINDER::onKillFocus ),
                               nullptr, this );
-        m_valueCtrl->Connect( wxEVT_TEXT,
-                              wxCommandEventHandler( MARGIN_OFFSET_BINDER::onTextChanged ),
-                              nullptr, this );
     }
 
     if( m_eventSource )
@@ -88,9 +85,6 @@ MARGIN_OFFSET_BINDER::~MARGIN_OFFSET_BINDER()
                                  nullptr, this );
         m_valueCtrl->Disconnect( wxEVT_KILL_FOCUS,
                                  wxFocusEventHandler( MARGIN_OFFSET_BINDER::onKillFocus ),
-                                 nullptr, this );
-        m_valueCtrl->Disconnect( wxEVT_TEXT,
-                                 wxCommandEventHandler( MARGIN_OFFSET_BINDER::onTextChanged ),
                                  nullptr, this );
     }
 
@@ -211,15 +205,6 @@ void MARGIN_OFFSET_BINDER::Show( bool aShow, bool aResize )
 
 void MARGIN_OFFSET_BINDER::onSetFocus( wxFocusEvent& aEvent )
 {
-    m_needsParsing = true;
-    aEvent.Skip();
-}
-
-
-void MARGIN_OFFSET_BINDER::onTextChanged( wxCommandEvent& aEvent )
-{
-    // GetOffsetValue/GetRatioValue clear m_needsParsing after each parse, so any subsequent
-    // text edit within the same focus session must re-arm it.
     m_needsParsing = true;
     aEvent.Skip();
 }

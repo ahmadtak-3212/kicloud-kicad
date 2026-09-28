@@ -1098,12 +1098,6 @@ void SYMBOL_EDITOR_EDIT_TOOL::editSymbolProperties()
     m_frame->RebuildSymbolUnitAndBodyStyleLists();
     m_frame->OnModify();
 
-    // Update the library tree node so the description and other metadata reflect the changes
-    // immediately without requiring the editor to be reopened.
-    LIB_SYMBOL_LIBRARY_MANAGER& libMgr = m_frame->GetLibManager();
-    wxDataViewItem treeItem = libMgr.GetAdapter()->FindItem( symbol->GetLibId() );
-    m_frame->UpdateLibraryTree( treeItem, symbol );
-
     // if m_UnitSelectionLocked has changed, set some edit options or defaults
     // to the best value
     if( partLocked != symbol->UnitsLocked() )
@@ -1499,7 +1493,7 @@ int SYMBOL_EDITOR_EDIT_TOOL::UpdateSymbolFields( const TOOL_EVENT& aEvent )
     if( !symbol )
         return 0;
 
-    if( !symbol->CanUpdateFieldsFromParent() )
+    if( !symbol->IsDerived() )
     {
         m_frame->ShowInfoBarError( _( "Symbol is not derived from another symbol." ) );
     }

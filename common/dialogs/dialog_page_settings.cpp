@@ -48,7 +48,6 @@
 #include <wx/msgdlg.h>
 #include <confirm.h>
 #include <kiplatform/ui.h>
-#include <env_vars.h>
 
 #define MAX_PAGE_EXAMPLE_SIZE 200
 
@@ -687,7 +686,7 @@ void DIALOG_PAGES_SETTINGS::OnWksFileSelection( wxCommandEvent& event )
 {
     wxFileName fn = GetWksFileName();
     wxString   name = fn.GetFullName();
-    wxString   path = m_projectPath;
+    wxString   path;
     wxString   msg;
 
     if( fn.IsAbsolute() )
@@ -699,28 +698,13 @@ void DIALOG_PAGES_SETTINGS::OnWksFileSelection( wxCommandEvent& event )
         wxFileName expanded( ExpandEnvVarSubstitutions( GetWksFileName(), &m_parentFrame->Prj() ) );
 
         if( expanded.IsAbsolute() )
-        {
             path = expanded.GetPath();
-        }
         else
-        {
-            ENV_VAR_MAP_CITER itUser = Pgm().GetLocalEnvVariables().find( "KICAD_USER_TEMPLATE_DIR" );
-            if( itUser != Pgm().GetLocalEnvVariables().end() && itUser->second.GetValue() != wxEmptyString )
-            {
-                wxString resolved = ExpandEnvVarSubstitutions( itUser->second.GetValue(), &m_parentFrame->Prj() );
-                if( !resolved.Contains( wxT( "${" ) ) && !resolved.Contains( wxT( "$(" ) ) )
-                {
-                    wxFileName resolvedFn;
-                    resolvedFn.AssignDir( resolved );
-                    resolvedFn.Normalize( FN_NORMALIZE_FLAGS | wxPATH_NORM_ENV_VARS );
-                    path = resolvedFn.GetFullPath();
-                }
-            }
-        }
+            path = m_projectPath;
     }
 
     // Display a file picker dialog
-    FILEDLG_HOOK_EMBED_FILE customize( true, EMBED_FILE_CONTEXT::DRAWING_SHEET );
+    FILEDLG_HOOK_EMBED_FILE customize;
     wxFileDialog fileDialog( this, _( "Drawing Sheet File" ), path, name, FILEEXT::DrawingSheetFileWildcard(),
                              wxFD_DEFAULT_STYLE | wxFD_FILE_MUST_EXIST );
 

@@ -22,7 +22,6 @@
 
 // KiCAD includes
 #include <gal/graphics_abstraction_layer.h>
-#include <navlib_safe_init.h>
 #include <sch_base_frame.h>
 #include <bitmaps.h>
 #include <class_draw_panel_gal.h>
@@ -67,8 +66,7 @@ NL_SCHEMATIC_PLUGIN_IMPL::NL_SCHEMATIC_PLUGIN_IMPL() :
 
 NL_SCHEMATIC_PLUGIN_IMPL::~NL_SCHEMATIC_PLUGIN_IMPL()
 {
-    if( IsEnabled() )
-        EnableNavigation( false );
+    EnableNavigation( false );
 }
 
 
@@ -85,12 +83,14 @@ void NL_SCHEMATIC_PLUGIN_IMPL::SetCanvas( EDA_DRAW_PANEL_GAL* aViewport )
 
         if( init )
         {
-            SafeNavlibInit( [this]()
-            {
-                EnableNavigation( true );
-                PutFrameTimingSource( TimingSource::SpaceMouse );
-                exportCommandsAndImages();
-            } );
+            // Use the default settings for the connexion to the 3DMouse navigation
+            // They are use a single-threaded threading model and row vectors.
+            EnableNavigation( true );
+
+            // Use the SpaceMouse internal timing source for the frame rate.
+            PutFrameTimingSource( TimingSource::SpaceMouse );
+
+            exportCommandsAndImages();
         }
     }
 }

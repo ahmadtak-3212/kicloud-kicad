@@ -57,10 +57,6 @@ DIALOG_FIND::~DIALOG_FIND() {}
 
 void DIALOG_FIND::OnBoardChanged( wxCommandEvent& event ) {}
 
-void DIALOG_FIND::OnCharHook( wxKeyEvent& aEvent )
-{
-}
-
 void DIALOG_FIND::onFindNextClick( wxCommandEvent& aEvent )
 {
 }

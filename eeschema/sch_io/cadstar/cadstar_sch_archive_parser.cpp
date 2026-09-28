@@ -27,7 +27,6 @@
 #include <macros.h>
 #include <sch_io/cadstar/cadstar_sch_archive_parser.h>
 #include <progress_reporter.h>
-#include <wx/log.h>
 #include <wx/translation.h>
 
 
@@ -140,7 +139,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::Parse()
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), wxT( "[root]" ) );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), wxT( "[root]" ) );
         }
 
         checkPoint();
@@ -245,7 +244,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::TERMINAL_SHAPE::Parse( XNODE* aNode, PARSER_CON
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( aNode->GetChildren()->GetName(), aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( aNode->GetChildren()->GetName(), aNode->GetName() );
         }
 
         CheckNoNextNodes( aNode->GetChildren() );
@@ -272,7 +271,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::TERMINALCODE::Parse( XNODE* aNode, PARSER_CONTE
         else if( cNodeName == wxT( "FILLED" ) )
             Filled = true;
         else
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, location );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, location );
     }
 }
 
@@ -299,7 +298,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::CODEDEFS_SCM::Parse( XNODE* aNode, PARSER_CONTE
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( nodeName, aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( nodeName, aNode->GetName() );
         }
     }
 }
@@ -337,7 +336,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::ASSIGNMENTS_SCM::Parse( XNODE* aNode, PARSER_CO
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
         }
     }
 
@@ -368,7 +367,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::TERMINAL::Parse( XNODE* aNode, PARSER_CONTEXT* 
         else if( cNodeName == wxT( "PT" ) )
             Position.Parse( cNode, aContext );
         else
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, location );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, location );
     }
 }
 
@@ -389,7 +388,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::PIN_NUM_LABEL_LOC::Parse( XNODE* aNode, PARSER_
         if( ParseSubNode( cNode, aContext ) )
             continue;
         else
-            WARN_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
     }
 
     if( Position.x == UNDEFINED_VALUE || Position.y == UNDEFINED_VALUE )
@@ -433,7 +432,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::SYMDEF_SCM::Parse( XNODE* aNode, PARSER_CONTEXT
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
         }
     }
 
@@ -468,7 +467,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::LIBRARY_SCM::Parse( XNODE* aNode, PARSER_CONTEX
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
         }
 
         aContext->CheckPointCallback();
@@ -493,7 +492,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::SHEETS::Parse( XNODE* aNode, PARSER_CONTEXT* aC
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
         }
     }
 }
@@ -520,7 +519,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::COMP::Parse( XNODE* aNode, PARSER_CONTEXT* aCon
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
         }
     }
 }
@@ -547,7 +546,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::PARTREF::Parse( XNODE* aNode, PARSER_CONTEXT* a
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
         }
     }
 }
@@ -571,7 +570,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::TERMATTR::Parse( XNODE* aNode, PARSER_CONTEXT* 
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
         }
     }
 }
@@ -595,7 +594,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::SYMPINNAME_LABEL::Parse( XNODE* aNode, PARSER_C
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
         }
     }
 }
@@ -619,7 +618,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::SYMBOL::PIN_NUM::Parse( XNODE* aNode, PARSER_CO
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
         }
     }
 }
@@ -652,7 +651,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::SYMBOLVARIANT::Parse( XNODE* aNode, PARSER_CONT
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
         }
     }
 }
@@ -675,7 +674,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::SIGNALREFERENCELINK::Parse( XNODE* aNode, PARSE
         else if( cNode->GetName() == wxT( "SIGREFTEXT" ) )
             Text = GetXmlAttributeIDString( aNode, 0 );
         else
-            WARN_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
     }
 
     if( Position.x == UNDEFINED_VALUE || Position.y == UNDEFINED_VALUE )
@@ -797,7 +796,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::SYMBOL::Parse( XNODE* aNode, PARSER_CONTEXT* aC
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, location );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, location );
         }
     }
 
@@ -820,7 +819,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::SIGLOC::Parse( XNODE* aNode, PARSER_CONTEXT* aC
         if( ParseSubNode( cNode, aContext ) )
             continue;
         else
-            WARN_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
     }
 
     if( Position.x == UNDEFINED_VALUE || Position.y == UNDEFINED_VALUE )
@@ -861,13 +860,13 @@ void CADSTAR_SCH_ARCHIVE_PARSER::BUS::Parse( XNODE* aNode, PARSER_CONTEXT* aCont
                 }
                 else
                 {
-                    WARN_UNKNOWN_NODE_IO_ERROR( subNode->GetName(), cNode->GetName() );
+                    THROW_UNKNOWN_NODE_IO_ERROR( subNode->GetName(), cNode->GetName() );
                 }
             }
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
         }
     }
 }
@@ -914,7 +913,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::BLOCK::Parse( XNODE* aNode, PARSER_CONTEXT* aCo
                 }
                 else
                 {
-                    WARN_UNKNOWN_NODE_IO_ERROR( subNode->GetName(), cNode->GetName() );
+                    THROW_UNKNOWN_NODE_IO_ERROR( subNode->GetName(), cNode->GetName() );
                 }
             }
         }
@@ -932,7 +931,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::BLOCK::Parse( XNODE* aNode, PARSER_CONTEXT* aCo
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
         }
     }
 }
@@ -960,7 +959,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::NET_SCH::SYM_TERM::Parse( XNODE* aNode, PARSER_
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
         }
     }
 }
@@ -1001,12 +1000,12 @@ void CADSTAR_SCH_ARCHIVE_PARSER::NET_SCH::BUS_TERM::Parse( XNODE* aNode, PARSER_
             }
             else
             {
-                WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
+                THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
             }
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
         }
     }
 
@@ -1036,7 +1035,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::NET_SCH::BLOCK_TERM::Parse( XNODE* aNode, PARSE
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
         }
     }
 }
@@ -1059,7 +1058,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::NET_SCH::CONNECTION_SCH::Parse( XNODE* aNode, P
         }
         else if( cNodeName == wxT( "PATH" ) )
         {
-            Path = ParseAllChildVertices( cNode, aContext, true );
+            Path = ParseAllChildPoints( cNode, aContext, true );
         }
         else if( cNodeName == wxT( "GROUPREF" ) )
         {
@@ -1075,7 +1074,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::NET_SCH::CONNECTION_SCH::Parse( XNODE* aNode, P
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, wxT( "CONN" ) );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, wxT( "CONN" ) );
         }
     }
 }
@@ -1134,7 +1133,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::NET_SCH::Parse( XNODE* aNode, PARSER_CONTEXT* a
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, wxT( "NET" ) );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, wxT( "NET" ) );
         }
     }
 }
@@ -1210,7 +1209,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::CADSTAR_SCHEMATIC::Parse( XNODE* aNode, PARSER_
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
         }
 
         aContext->CheckPointCallback();
@@ -1240,7 +1239,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::NET_SCH::JUNCTION_SCH::Parse( XNODE* aNode, PAR
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNode->GetName(), aNode->GetName() );
         }
     }
 
@@ -1274,7 +1273,7 @@ void CADSTAR_SCH_ARCHIVE_PARSER::NET_SCH::DANGLER::Parse( XNODE* aNode, PARSER_C
         }
         else
         {
-            WARN_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
+            THROW_UNKNOWN_NODE_IO_ERROR( cNodeName, aNode->GetName() );
         }
     }
 }

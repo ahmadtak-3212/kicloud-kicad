@@ -25,7 +25,6 @@
 #include <widgets/wx_grid.h>
 #include <sch_reference_list.h>
 #include <schematic_settings.h>
-#include <template_fieldnames.h>
 #include "string_utils.h"
 #include <trace_helpers.h>
 
@@ -64,7 +63,7 @@ void LIB_FIELDS_EDITOR_GRID_DATA_MODEL::updateDataStoreSymbolField( const LIB_SY
         dataElement.m_currentlyEmpty = false;
         dataElement.m_isModified = false;
     }
-    else if( const SCH_FIELD* field = aSymbol->GetField( aFieldName ) )
+    else if( const SCH_FIELD* field = aSymbol->FindFieldCaseInsensitive( aFieldName ) )
     {
         dataElement.m_originalData = field->GetText();
         dataElement.m_currentData = field->GetText();
@@ -172,7 +171,7 @@ int LIB_FIELDS_EDITOR_GRID_DATA_MODEL::GetFieldNameCol( const wxString& aFieldNa
 {
     for( size_t i = 0; i < m_cols.size(); i++ )
     {
-        if( FieldNamesAreDuplicates( m_cols[i].m_fieldName, aFieldName ) )
+        if( m_cols[i].m_fieldName.CmpNoCase( aFieldName ) == 0 )
             return (int) i;
     }
 
@@ -1001,7 +1000,10 @@ void LIB_FIELDS_EDITOR_GRID_DATA_MODEL::ApplyData( std::function<void( LIB_SYMBO
                 continue;
             }
 
-            SCH_FIELD* destField = symbol->GetField( srcName );
+            SCH_FIELD* destField = symbol->FindFieldCaseInsensitive( srcName );
+
+            if( destField && !destField->IsMandatory() && destField->GetName() != srcName )
+                destField->SetName( srcName );
 
             bool       userAdded = ( col != -1 && m_cols[col].m_userAdded );
 
@@ -1058,7 +1060,7 @@ void LIB_FIELDS_EDITOR_GRID_DATA_MODEL::ApplyData( std::function<void( LIB_SYMBO
             bool stillTracked = std::any_of( fieldStore.begin(), fieldStore.end(),
                                              [&]( const auto& kv )
                                              {
-                                                 return kv.first == existingName;
+                                                 return kv.first.IsSameAs( existingName, false );
                                              } );
 
             if( !stillTracked )

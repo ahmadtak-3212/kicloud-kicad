@@ -1067,14 +1067,9 @@ void GERBVIEW_FRAME::ActivateGalCanvas()
 
         m_spaceMouse->SetCanvas( galCanvas );
     }
-    catch( const std::exception& e )
+    catch( const std::system_error& e )
     {
-        wxLogTrace( wxT( "KI_TRACE_NAVLIB" ), wxS( "%s" ), e.what() );
-    }
-    catch( ... )
-    {
-        wxLogTrace( wxT( "KI_TRACE_NAVLIB" ),
-                    wxT( "Unknown exception during SpaceMouse initialization" ) );
+        wxLogTrace( wxT( "KI_TRACE_NAVLIB" ), e.what() );
     }
 }
 

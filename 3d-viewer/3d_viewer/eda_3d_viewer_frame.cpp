@@ -198,20 +198,17 @@ EDA_3D_VIEWER_FRAME::EDA_3D_VIEWER_FRAME( KIWAY* aKiway, PCB_BASE_FRAME* aParent
 
     try
     {
-#if defined(__linux__) || defined(__FreeBSD__)
+#ifdef __EMSCRIPTEN__
+        // SpaceMouse not supported in WASM
+#elif defined( __linux__ ) || defined( __FreeBSD__ )
         m_spaceMouse = std::make_unique<SPNAV_VIEWER_PLUGIN>( m_canvas );
 #else
         m_spaceMouse = std::make_unique<NL_3D_VIEWER_PLUGIN>( m_canvas );
 #endif
     }
-    catch( const std::exception& e )
+    catch( const std::system_error& e )
     {
-        wxLogTrace( wxT( "KI_TRACE_NAVLIB" ), wxS( "%s" ), e.what() );
-    }
-    catch( ... )
-    {
-        wxLogTrace( wxT( "KI_TRACE_NAVLIB" ),
-                    wxT( "Unknown exception during SpaceMouse initialization" ) );
+        wxLogTrace( wxT( "KI_TRACE_NAVLIB" ), e.what() );
     }
 
     // Fixes bug in Windows (XP and possibly others) where the canvas requires the focus
@@ -232,12 +229,6 @@ EDA_3D_VIEWER_FRAME::~EDA_3D_VIEWER_FRAME()
     m_canvas->SetEventDispatcher( nullptr );
 
     m_auimgr.UnInit();
-}
-
-
-APP_SETTINGS_BASE* EDA_3D_VIEWER_FRAME::config() const
-{
-    return GetAppSettings<EDA_3D_VIEWER_SETTINGS>( "3d_viewer" );
 }
 
 
@@ -412,8 +403,10 @@ void EDA_3D_VIEWER_FRAME::handleIconizeEvent( wxIconizeEvent& aEvent )
 {
     KIWAY_PLAYER::handleIconizeEvent( aEvent );
 
+#ifndef __EMSCRIPTEN__
     if( m_spaceMouse && aEvent.IsIconized() )
         m_spaceMouse->SetFocus( false );
+#endif
 }
 
 
@@ -536,8 +529,10 @@ void EDA_3D_VIEWER_FRAME::OnActivate( wxActivateEvent &aEvent )
         m_canvas->SetFocus();
     }
 
+#ifndef __EMSCRIPTEN__
     if( m_spaceMouse )
         m_spaceMouse->SetFocus( aEvent.GetActive() );
+#endif
 
     aEvent.Skip(); // required under wxMAC
 }

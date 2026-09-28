@@ -97,26 +97,15 @@ void FEATURES_MANAGER::AddShape( const PCB_SHAPE& aShape, PCB_LAYER_ID aLayer )
     {
     case SHAPE_T::CIRCLE:
     {
-        // GetRadius() can reach INT_MAX / 2 rounded up, which overflows a signed int when doubled
-        int64_t  diameter = static_cast<int64_t>( aShape.GetRadius() ) * 2;
+        int      diameter = aShape.GetRadius() * 2;
         VECTOR2I center = ODB::GetShapePosition( aShape );
+        wxString innerDim = ODB::SymDouble2String( ( diameter - stroke_width / 2 ) );
+        wxString outerDim = ODB::SymDouble2String( ( stroke_width + diameter ) );
 
-        // The stroke straddles the radius, so in diameter terms the whole width comes off the
-        // inner edge and goes onto the outer
-        int64_t  innerDiameter = diameter - stroke_width;
-        wxString outerDim = ODB::SymDouble2String( diameter + stroke_width );
-
-        // donut_r has no spelling for a hole closed by its own stroke
-        if( aShape.IsSolidFill() || innerDiameter <= 0 )
-        {
+        if( aShape.IsSolidFill() )
             AddFeature<ODB_PAD>( ODB::AddXY( center ), AddCircleSymbol( outerDim ) );
-        }
         else
-        {
-            AddFeature<ODB_PAD>( ODB::AddXY( center ),
-                                 AddRoundDonutSymbol( outerDim,
-                                                      ODB::SymDouble2String( innerDiameter ) ) );
-        }
+            AddFeature<ODB_PAD>( ODB::AddXY( center ), AddRoundDonutSymbol( outerDim, innerDim ) );
 
         break;
     }
@@ -632,20 +621,12 @@ void FEATURES_MANAGER::InitFeatureList( PCB_LAYER_ID aLayer, std::vector<BOARD_I
                 push_pts();
         };
 
-        PCB_TEXT*    text = nullptr;
-        PCB_TEXTBOX* textbox = nullptr;
-        bool         isKnockout = false;
+        bool isKnockout = false;
 
         if( item->Type() == PCB_TEXT_T || item->Type() == PCB_FIELD_T )
-        {
-            text = static_cast<PCB_TEXT*>( item );
-            isKnockout = text->IsKnockout();
-        }
+            isKnockout = static_cast<PCB_TEXT*>( item )->IsKnockout();
         else if( item->Type() == PCB_TEXTBOX_T )
-        {
-            textbox = static_cast<PCB_TEXTBOX*>( item );
-            isKnockout = textbox->IsKnockout();
-        }
+            isKnockout = static_cast<PCB_TEXTBOX*>( item )->IsKnockout();
 
         const KIFONT::METRICS& fontMetrics = item->GetFontMetrics();
         KIFONT::FONT*          font = text_item->GetDrawFont( nullptr );
@@ -663,14 +644,11 @@ void FEATURES_MANAGER::InitFeatureList( PCB_LAYER_ID aLayer, std::vector<BOARD_I
 
         if( isKnockout )
         {
+            PCB_TEXT*      text = static_cast<PCB_TEXT*>( item );
             SHAPE_POLY_SET finalpolyset;
-            int            maxError = m_board->GetDesignSettings().m_MaxError;
 
-            if( text )
-                text->TransformTextToPolySet( finalpolyset, 0, maxError, ERROR_INSIDE );
-            else if( textbox )
-                textbox->TransformTextToPolySet( finalpolyset, 0, maxError, ERROR_INSIDE );
-
+            text->TransformTextToPolySet( finalpolyset, 0, m_board->GetDesignSettings().m_MaxError,
+                                          ERROR_INSIDE );
             finalpolyset.Fracture();
 
             for( int ii = 0; ii < finalpolyset.OutlineCount(); ++ii )

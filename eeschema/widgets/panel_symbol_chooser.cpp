@@ -42,7 +42,6 @@
 #include <algorithm>
 #include <wx/button.h>
 #include <wx/clipbrd.h>
-#include <wx/display.h>
 #include <wx/panel.h>
 #include <wx/sizer.h>
 #include <wx/splitter.h>
@@ -307,8 +306,8 @@ PANEL_SYMBOL_CHOOSER::~PANEL_SYMBOL_CHOOSER()
         // Save any changes to column widths, etc.
         m_adapter->SaveSettings();
 
-        cfg->m_SymChooserPanel.width = GetParent()->ToDIP( GetParent()->GetSize().x );
-        cfg->m_SymChooserPanel.height = GetParent()->ToDIP( GetParent()->GetSize().y );
+        cfg->m_SymChooserPanel.width = GetParent()->GetSize().x;
+        cfg->m_SymChooserPanel.height = GetParent()->GetSize().y;
 
         cfg->m_SymChooserPanel.sash_pos_h = m_hsplitter->GetSashPosition();
 
@@ -416,19 +415,8 @@ void PANEL_SYMBOL_CHOOSER::FinishSetup()
 
         EESCHEMA_SETTINGS::PANEL_SYM_CHOOSER& panelCfg = cfg->m_SymChooserPanel;
 
-        // The persisted size is stored in DIP so it is independent of the monitor it was saved
-        // on. Restoring raw pixels would scale the window by the DPI ratio when reopened on a
-        // different-scale display, producing a window that spills across monitors.
-        int w = panelCfg.width > 40 ? GetParent()->FromDIP( panelCfg.width ) : horizPixelsFromDU( 440 );
-        int h = panelCfg.height > 40 ? GetParent()->FromDIP( panelCfg.height ) : horizPixelsFromDU( 340 );
-
-        // Cap to the work area so a stale pre-DIP setting cannot reopen the window across monitors.
-        if( int display = wxDisplay::GetFromWindow( GetParent() ); display != wxNOT_FOUND )
-        {
-            wxRect workArea = wxDisplay( display ).GetClientArea();
-            w = std::min( w, workArea.GetWidth() );
-            h = std::min( h, workArea.GetHeight() );
-        }
+        int w = panelCfg.width > 40 ? panelCfg.width : horizPixelsFromDU( 440 );
+        int h = panelCfg.height > 40 ? panelCfg.height : horizPixelsFromDU( 340 );
 
         GetParent()->SetSize( wxSize( w, h ) );
         GetParent()->Layout();
@@ -563,7 +551,6 @@ void PANEL_SYMBOL_CHOOSER::showFootprintFor( LIB_ID const& aLibId )
     SCH_FIELD* fp_field = symbol->GetField( FIELD_T::FOOTPRINT );
     wxString   fp_name = fp_field ? fp_field->GetFullText() : wxString( "" );
 
-    m_fp_override.Empty();
     showFootprint( fp_name );
 }
 
@@ -620,12 +607,9 @@ void PANEL_SYMBOL_CHOOSER::populateFootprintSelector( LIB_ID const& aLibId )
 
     if( symbol != nullptr )
     {
-        int        pinCount = symbol->GetGraphicalPins( 0 /* all units */, 1 /* single bodyStyle */ ).size();
+    int        pinCount = symbol->GetGraphicalPins( 0 /* all units */, 1 /* single bodyStyle */ ).size();
         SCH_FIELD* fp_field = symbol->GetField( FIELD_T::FOOTPRINT );
         wxString   fp_name = fp_field ? fp_field->GetFullText() : wxString( "" );
-
-        if( !m_fp_override.IsEmpty() )
-            fp_name = m_fp_override;
 
         m_fp_sel_ctrl->FilterByPinCount( pinCount );
         m_fp_sel_ctrl->FilterByFootprintFilters( symbol->GetFPFilters(), true );
@@ -645,11 +629,10 @@ void PANEL_SYMBOL_CHOOSER::onFootprintSelected( wxCommandEvent& aEvent )
 {
     m_fp_override = aEvent.GetString();
 
-    std::erase_if( m_field_edits,
-            []( std::pair<FIELD_T, wxString> const& i )
-            {
-                return i.first == FIELD_T::FOOTPRINT;
-            } );
+    std::erase_if( m_field_edits, []( std::pair<FIELD_T, wxString> const& i )
+                                   {
+                                       return i.first == FIELD_T::FOOTPRINT;
+                                   } );
 
     m_field_edits.emplace_back( std::make_pair( FIELD_T::FOOTPRINT, m_fp_override ) );
 
@@ -666,15 +649,9 @@ void PANEL_SYMBOL_CHOOSER::onSymbolSelected( wxCommandEvent& aEvent )
         m_symbol_preview->DisplaySymbol( node->m_LibId, node->m_Unit );
 
         if( !node->m_Footprint.IsEmpty() )
-        {
-            wxCommandEvent evt( EVT_FOOTPRINT_SELECTED );
-            evt.SetString( node->m_Footprint);
-            onFootprintSelected( evt );
-        }
+            showFootprint( node->m_Footprint );
         else
-        {
             showFootprintFor( node->m_LibId );
-        }
 
         populateFootprintSelector( node->m_LibId );
     }

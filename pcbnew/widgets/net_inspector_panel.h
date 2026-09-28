@@ -21,7 +21,6 @@
 
 #include <bitmaps.h>
 #include <widgets/bitmap_button.h>
-#include <widgets/wx_dataviewctrl.h>
 
 #include <wx/dataview.h>
 #include <wx/gbsizer.h>
@@ -89,5 +88,5 @@ protected:
     wxGridBagSizer* m_sizerOuter;
     wxSearchCtrl*   m_searchCtrl;
     BITMAP_BUTTON*  m_configureBtn;
-    WX_DATAVIEWCTRL* m_netsList;
+    wxDataViewCtrl* m_netsList;
 };

@@ -604,7 +604,6 @@ protected:
 
     wxChoice*            m_gridSelectBox;
     wxChoice*            m_zoomSelectBox;
-    int                  m_zoomCustomEntry; // index of the non-preset zoom entry, or wxNOT_FOUND
     wxCheckBox*          m_overrideLocksCb;
 
     std::unique_ptr<EDA_SEARCH_DATA> m_findReplaceData;

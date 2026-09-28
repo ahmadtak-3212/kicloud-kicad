@@ -684,8 +684,6 @@ public:
     EDA_ITEM* Clone() const override;
     ZONE* Clone( PCB_LAYER_ID aLayer ) const;
 
-    BOARD_ITEM* Duplicate( bool addToParentGroup, BOARD_COMMIT* aCommit = nullptr ) const override;
-
     /**
      * @return true if the zone is a teardrop area
      */
@@ -937,11 +935,6 @@ protected:
 
     double                    m_area;              // The filled zone area
     double                    m_outlinearea;       // The outline zone area
-
-    /// Lock-free bbox cache populated by CacheBoundingBox() and valid while its timestamp matches
-    /// the board timestamp.
-    mutable BOX2I             m_bboxCache;
-    mutable std::atomic<int>  m_bboxCacheTimeStamp{ -1 };
 
 };
 

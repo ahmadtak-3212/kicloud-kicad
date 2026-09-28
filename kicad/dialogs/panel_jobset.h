@@ -62,7 +62,6 @@ protected:
 protected:
     PANEL_JOBSET* m_parent;
     int           m_doubleClickRow;
-    wxArrayInt    m_selectedRows;
 };
 
 

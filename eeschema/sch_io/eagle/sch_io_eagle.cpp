@@ -1254,8 +1254,8 @@ void SCH_IO_EAGLE::loadModuleInstance( const std::unique_ptr<EMODULEINST>& aModu
 }
 
 
-void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame, std::vector<SCH_ITEM*>& aItems,
-                              SCH_LAYER_ID aLayer )
+void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame,
+                              std::vector<SCH_ITEM*>& aItems )
 {
     int xMin = aFrame->x1.ToSchUnits();
     int xMax = aFrame->x2.ToSchUnits();
@@ -1268,7 +1268,7 @@ void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame, std::vector
     if( yMin > yMax )
         std::swap( yMin, yMax );
 
-    SCH_SHAPE* lines = new SCH_SHAPE( SHAPE_T::POLY, aLayer );
+    SCH_SHAPE* lines = new SCH_SHAPE( SHAPE_T::POLY );
     lines->AddPoint( VECTOR2I( xMin, yMin ) );
     lines->AddPoint( VECTOR2I( xMax, yMin ) );
     lines->AddPoint( VECTOR2I( xMax, yMax ) );
@@ -1278,7 +1278,7 @@ void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame, std::vector
 
     if( !( aFrame->border_left == false ) )
     {
-        lines = new SCH_SHAPE( SHAPE_T::POLY, aLayer );
+        lines = new SCH_SHAPE( SHAPE_T::POLY );
         lines->AddPoint( VECTOR2I( xMin + schIUScale.MilsToIU( 150 ),
                                    yMin + schIUScale.MilsToIU( 150 ) ) );
         lines->AddPoint( VECTOR2I( xMin + schIUScale.MilsToIU( 150 ),
@@ -1296,7 +1296,7 @@ void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame, std::vector
         for( i = 1; i < aFrame->rows; i++ )
         {
             int newY = KiROUND( yMin + ( rowSpacing * (double) i ) );
-            lines = new SCH_SHAPE( SHAPE_T::POLY, aLayer );
+            lines = new SCH_SHAPE( SHAPE_T::POLY );
             lines->AddPoint( VECTOR2I( x1, newY ) );
             lines->AddPoint( VECTOR2I( x2, newY ) );
             aItems.push_back( lines );
@@ -1307,7 +1307,6 @@ void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame, std::vector
         for( i = 0; i < aFrame->rows; i++ )
         {
             SCH_TEXT* legendText = new SCH_TEXT();
-            legendText->SetLayer( aLayer );
             legendText->SetPosition( VECTOR2I( legendPosX, KiROUND( legendPosY ) ) );
             legendText->SetHorizJustify( GR_TEXT_H_ALIGN_CENTER );
             legendText->SetVertJustify( GR_TEXT_V_ALIGN_CENTER );
@@ -1322,7 +1321,7 @@ void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame, std::vector
 
     if( !( aFrame->border_right == false ) )
     {
-        lines = new SCH_SHAPE( SHAPE_T::POLY, aLayer );
+        lines = new SCH_SHAPE( SHAPE_T::POLY );
         lines->AddPoint( VECTOR2I( xMax - schIUScale.MilsToIU( 150 ),
                                    yMin + schIUScale.MilsToIU( 150 ) ) );
         lines->AddPoint( VECTOR2I( xMax - schIUScale.MilsToIU( 150 ),
@@ -1340,7 +1339,7 @@ void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame, std::vector
         for( i = 1; i < aFrame->rows; i++ )
         {
             int newY = KiROUND( yMin + ( rowSpacing * (double) i ) );
-            lines = new SCH_SHAPE( SHAPE_T::POLY, aLayer );
+            lines = new SCH_SHAPE( SHAPE_T::POLY );
             lines->AddPoint( VECTOR2I( x1, newY ) );
             lines->AddPoint( VECTOR2I( x2, newY ) );
             aItems.push_back( lines );
@@ -1351,7 +1350,6 @@ void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame, std::vector
         for( i = 0; i < aFrame->rows; i++ )
         {
             SCH_TEXT* legendText = new SCH_TEXT();
-            legendText->SetLayer( aLayer );
             legendText->SetPosition( VECTOR2I( legendPosX, KiROUND( legendPosY ) ) );
             legendText->SetHorizJustify( GR_TEXT_H_ALIGN_CENTER );
             legendText->SetVertJustify( GR_TEXT_V_ALIGN_CENTER );
@@ -1366,7 +1364,7 @@ void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame, std::vector
 
     if( !( aFrame->border_top == false ) )
     {
-        lines = new SCH_SHAPE( SHAPE_T::POLY, aLayer );
+        lines = new SCH_SHAPE( SHAPE_T::POLY );
         lines->AddPoint( VECTOR2I( xMax - schIUScale.MilsToIU( 150 ),
                                    yMin + schIUScale.MilsToIU( 150 ) ) );
         lines->AddPoint( VECTOR2I( xMin + schIUScale.MilsToIU( 150 ),
@@ -1384,7 +1382,7 @@ void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame, std::vector
         for( i = 1; i < aFrame->columns; i++ )
         {
             int newX = KiROUND( xMin + ( columnSpacing * (double) i ) );
-            lines = new SCH_SHAPE( SHAPE_T::POLY, aLayer );
+            lines = new SCH_SHAPE( SHAPE_T::POLY );
             lines->AddPoint( VECTOR2I( newX, y1 ) );
             lines->AddPoint( VECTOR2I( newX, y2 ) );
             aItems.push_back( lines );
@@ -1395,7 +1393,6 @@ void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame, std::vector
         for( i = 0; i < aFrame->columns; i++ )
         {
             SCH_TEXT* legendText = new SCH_TEXT();
-            legendText->SetLayer( aLayer );
             legendText->SetPosition( VECTOR2I( KiROUND( legendPosX ), legendPosY ) );
             legendText->SetHorizJustify( GR_TEXT_H_ALIGN_CENTER );
             legendText->SetVertJustify( GR_TEXT_V_ALIGN_CENTER );
@@ -1410,7 +1407,7 @@ void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame, std::vector
 
     if( !( aFrame->border_bottom == false ) )
     {
-        lines = new SCH_SHAPE( SHAPE_T::POLY, aLayer );
+        lines = new SCH_SHAPE( SHAPE_T::POLY );
         lines->AddPoint( VECTOR2I( xMax - schIUScale.MilsToIU( 150 ),
                                    yMax - schIUScale.MilsToIU( 150 ) ) );
         lines->AddPoint( VECTOR2I( xMin + schIUScale.MilsToIU( 150 ),
@@ -1428,7 +1425,7 @@ void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame, std::vector
         for( i = 1; i < aFrame->columns; i++ )
         {
             int newX = KiROUND( xMin + ( columnSpacing * (double) i ) );
-            lines = new SCH_SHAPE( SHAPE_T::POLY, aLayer );
+            lines = new SCH_SHAPE( SHAPE_T::POLY );
             lines->AddPoint( VECTOR2I( newX, y1 ) );
             lines->AddPoint( VECTOR2I( newX, y2 ) );
             aItems.push_back( lines );
@@ -1439,7 +1436,6 @@ void SCH_IO_EAGLE::loadFrame( const std::unique_ptr<EFRAME>& aFrame, std::vector
         for( i = 0; i < aFrame->columns; i++ )
         {
             SCH_TEXT* legendText = new SCH_TEXT();
-            legendText->SetLayer( aLayer );
             legendText->SetPosition( VECTOR2I( KiROUND( legendPosX ), legendPosY ) );
             legendText->SetHorizJustify( GR_TEXT_H_ALIGN_CENTER );
             legendText->SetVertJustify( GR_TEXT_V_ALIGN_CENTER );
@@ -1827,13 +1823,30 @@ SCH_IO_EAGLE::findNearestLinePoint( const VECTOR2I&         aPoint,
 
     double d, mindistance = std::numeric_limits<double>::max();
 
-    // Project the label onto the closest wire.  Snapping to the perpendicular foot keeps a
-    // detached Eagle label at its position along the wire; snapping only to the wire's
-    // endpoints or midpoint would slide it far along a long wire and pile parallel labels
-    // onto the same point.
+    // Find the nearest start, middle or end of a line from the list of lines.
     for( const SEG& line : aLines )
     {
-        VECTOR2I testpoint = line.NearestPoint( aPoint );
+        VECTOR2I testpoint = line.A;
+        d = aPoint.Distance( testpoint );
+
+        if( d < mindistance )
+        {
+            mindistance  = d;
+            nearestPoint = testpoint;
+            nearestLine  = &line;
+        }
+
+        testpoint = line.Center();
+        d = aPoint.Distance( testpoint );
+
+        if( d < mindistance )
+        {
+            mindistance  = d;
+            nearestPoint = testpoint;
+            nearestLine  = &line;
+        }
+
+        testpoint = line.B;
         d = aPoint.Distance( testpoint );
 
         if( d < mindistance )
@@ -2623,7 +2636,7 @@ SCH_SHAPE* SCH_IO_EAGLE::loadSymbolCircle( std::unique_ptr<LIB_SYMBOL>& aSymbol,
     wxCHECK( aSymbol && aCircle, nullptr );
 
     // Parse the circle properties
-    SCH_SHAPE* circle = new SCH_SHAPE( SHAPE_T::CIRCLE, LAYER_DEVICE );
+    SCH_SHAPE* circle = new SCH_SHAPE( SHAPE_T::CIRCLE );
     VECTOR2I   center( aCircle->x.ToSchUnits(), -aCircle->y.ToSchUnits() );
 
     circle->SetParent( aSymbol.get() );
@@ -2652,7 +2665,7 @@ SCH_SHAPE* SCH_IO_EAGLE::loadSymbolRectangle( std::unique_ptr<LIB_SYMBOL>& aSymb
 {
     wxCHECK( aSymbol && aRectangle, nullptr );
 
-    SCH_SHAPE* rectangle = new SCH_SHAPE( SHAPE_T::RECTANGLE, LAYER_DEVICE );
+    SCH_SHAPE* rectangle = new SCH_SHAPE( SHAPE_T::RECTANGLE );
 
     rectangle->SetParent( aSymbol.get() );
     rectangle->SetPosition( VECTOR2I( aRectangle->x1.ToSchUnits(), -aRectangle->y1.ToSchUnits() ) );
@@ -2750,7 +2763,7 @@ SCH_SHAPE* SCH_IO_EAGLE::loadSymbolPolyLine( std::unique_ptr<LIB_SYMBOL>& aSymbo
 {
     wxCHECK( aSymbol && aPolygon, nullptr );
 
-    SCH_SHAPE* poly = new SCH_SHAPE( SHAPE_T::POLY, LAYER_DEVICE );
+    SCH_SHAPE* poly = new SCH_SHAPE( SHAPE_T::POLY );
     VECTOR2I   pt, prev_pt;
     opt_double prev_curve;
     std::optional<VECTOR2I> first_pt;
@@ -2884,7 +2897,6 @@ SCH_TEXT* SCH_IO_EAGLE::loadSymbolText( std::unique_ptr<LIB_SYMBOL>& aSymbol,
 
     std::unique_ptr<SCH_TEXT> libtext = std::make_unique<SCH_TEXT>();
 
-    libtext->SetLayer( LAYER_DEVICE );
     libtext->SetParent( aSymbol.get() );
     libtext->SetUnit( aGateNumber );
     libtext->SetPosition( VECTOR2I( aText->x.ToSchUnits(), -aText->y.ToSchUnits() ) );

@@ -33,8 +33,6 @@
 #include <wx/txtstrm.h>
 #include <wx/sstream.h>
 #include <wx/wfstream.h>
-#include <wx/mstream.h>
-#include <wx/tokenzr.h>
 #include <gestfich.h>
 
 JOBS_RUNNER::JOBS_RUNNER( KIWAY* aKiway, JOBSET* aJobsFile, PROJECT* aProject,
@@ -70,46 +68,37 @@ int JOBS_RUNNER::runSpecialExecute( const JOBSET_JOB* aJob, REPORTER* aReporter,
     wxProcess process;
     process.Redirect();
 
-    int result = ExecuteCommandThroughShell( cmd, &process );
+    // wxExecute with a string argument calls execvp() directly on Unix, bypassing the shell.
+    // This means glob expansion, pipes, and other shell features don't work for direct binaries.
+    // Use the array form of wxExecute to invoke a shell, passing the command as a single argument
+    // to avoid any quoting issues with shell metacharacters in the command string.
+#ifdef __WXMSW__
+    const wxString shell = wxS( "cmd.exe" );
+    const wxString shellFlag = wxS( "/c" );
+#else
+    const wxString shell = wxS( "/bin/sh" );
+    const wxString shellFlag = wxS( "-c" );
+#endif
+
+    const wchar_t* argv[] = { shell.wc_str(), shellFlag.wc_str(), cmd.wc_str(), nullptr };
+
+    // static cast required because wx uses `long` which is 64-bit on Linux but 32-bit on Windows
+    int result = static_cast<int>(
+            wxExecute( argv, wxEXEC_SYNC, &process ) );
 
     wxInputStream* inputStream = process.GetInputStream();
     wxInputStream* errorStream = process.GetErrorStream();
 
-    // Reads wxInputStream into a wxMemoryBuffer
-    auto streamToBuf = []( wxInputStream& aIs )
-    {
-        wxMemoryOutputStream memOut;
-        aIs >> memOut;
-
-        wxMemoryBuffer buf;
-        buf.AppendData( memOut.GetOutputStreamBuffer()->GetBufferStart(),
-                        memOut.GetOutputStreamBuffer()->GetIntPosition() );
-
-        return buf;
-    };
-
     if( inputStream && errorStream )
     {
-        wxMemoryBuffer memInBuf = streamToBuf( *inputStream );
-        wxMemoryBuffer memErrBuf = streamToBuf( *errorStream );
+        wxTextInputStream inputTextStream( *inputStream );
+        wxTextInputStream errorTextStream( *errorStream );
 
-        if( !memInBuf.IsEmpty() )
-        {
-            wxString          str = wxString::FromUTF8( memInBuf, memInBuf.GetDataLen() );
-            wxStringTokenizer tokenizer( str, "\r\n" );
+        while( !inputStream->Eof() )
+            aReporter->Report( inputTextStream.ReadLine(), RPT_SEVERITY_INFO );
 
-            while( tokenizer.HasMoreTokens() )
-                aReporter->Report( tokenizer.GetNextToken(), RPT_SEVERITY_INFO );
-        }
-
-        if( !memErrBuf.IsEmpty() )
-        {
-            wxString          str = wxString::FromUTF8( memErrBuf, memErrBuf.GetDataLen() );
-            wxStringTokenizer tokenizer( str, "\r\n" );
-
-            while( tokenizer.HasMoreTokens() )
-                aReporter->Report( tokenizer.GetNextToken(), RPT_SEVERITY_ERROR );
-        }
+        while( !errorStream->Eof() )
+            aReporter->Report( errorTextStream.ReadLine(), RPT_SEVERITY_ERROR );
 
         if( specialJob->m_recordOutput )
         {
@@ -125,7 +114,8 @@ int JOBS_RUNNER::runSpecialExecute( const JOBSET_JOB* aJob, REPORTER* aReporter,
             if( !procOutput.IsOk() )
                 return CLI::EXIT_CODES::ERR_INVALID_OUTPUT_CONFLICT;
 
-            procOutput.WriteAll( memInBuf, memInBuf.GetDataLen() );
+            inputStream->Reset();
+            *inputStream >> procOutput;
         }
     }
 
@@ -151,7 +141,7 @@ int JOBS_RUNNER::runSpecialCopyFiles( const JOB_SPECIAL_COPYFILES* aJob, PROJECT
     wxFileName destFn( aJob->GetFullOutputPath( aProject ) );
 
     if( !aJob->m_dest.IsEmpty() )
-        destFn.AppendDir( ExpandEnvVarSubstitutions( aJob->m_dest, aProject ) );
+        destFn.AppendDir( aJob->m_dest );
 
     wxString errors;
     bool     success = CopyFilesOrDirectory( sourceFn.GetFullPath(), destFn.GetFullPath(), aJob->m_overwriteDest,

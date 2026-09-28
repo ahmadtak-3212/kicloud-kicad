@@ -170,8 +170,10 @@ int UPDATE_MANAGER::PostRequest( const wxString& aUrl, std::string aRequestBody,
 
 void UPDATE_MANAGER::CheckForUpdate( wxWindow* aNoticeParent )
 {
-    if( m_working.exchange( true ) )
+    if( m_working )
         return;
+
+    m_working = false;
 
     m_updateBackgroundJob = Pgm().GetBackgroundJobMonitor().Create( _( "Update Check" ) );
 

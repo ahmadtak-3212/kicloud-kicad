@@ -42,7 +42,6 @@
 #include <pcb_shape.h>
 #include <macros.h>
 #include <algorithm>
-#include <cstdlib>
 #include <widgets/unit_binder.h>
 
 #include <tools/drawing_tool.h>
@@ -201,10 +200,6 @@ public:
 
         return true;
     }
-
-    int GetRectangleWidth() const { return std::abs( GetIntValue( END_X ) - GetIntValue( START_X ) ); }
-
-    int GetRectangleHeight() const { return std::abs( GetIntValue( END_Y ) - GetIntValue( START_Y ) ); }
 
     void updateAll() override
     {
@@ -918,6 +913,9 @@ DIALOG_SHAPE_PROPERTIES::DIALOG_SHAPE_PROPERTIES( PCB_BASE_EDIT_FRAME* aParent, 
         showPage( *m_gbsLineByEnds, true );
         showPage( *m_gbsLineByLengthAngle );
         showPage( *m_gbsLineByStartMid );
+
+        m_cbRoundRect->Show( false );
+        m_cornerRadius.Show( false );
         break;
 
     case SHAPE_T::ARC:
@@ -933,6 +931,9 @@ DIALOG_SHAPE_PROPERTIES::DIALOG_SHAPE_PROPERTIES( PCB_BASE_EDIT_FRAME* aParent, 
 
         showPage( *m_gbsArcByCSA, true );
         showPage( *m_gbsArcBySME );
+
+        m_cbRoundRect->Show( false );
+        m_cornerRadius.Show( false );
         break;
 
     case SHAPE_T::CIRCLE:
@@ -946,6 +947,9 @@ DIALOG_SHAPE_PROPERTIES::DIALOG_SHAPE_PROPERTIES( PCB_BASE_EDIT_FRAME* aParent, 
 
         showPage( *m_gbsCircleCenterRadius, true );
         showPage( *m_gbsCircleCenterPoint );
+
+        m_cbRoundRect->Show( false );
+        m_cornerRadius.Show( false );
         break;
 
     case SHAPE_T::BEZIER:
@@ -962,6 +966,9 @@ DIALOG_SHAPE_PROPERTIES::DIALOG_SHAPE_PROPERTIES( PCB_BASE_EDIT_FRAME* aParent, 
     case SHAPE_T::POLY:
         m_notebookShapeDefs->Hide();
         // Nothing to do here...yet
+
+        m_cbRoundRect->Show( false );
+        m_cornerRadius.Show( false );
         break;
 
     case SHAPE_T::UNDEFINED:
@@ -1030,12 +1037,6 @@ DIALOG_SHAPE_PROPERTIES::DIALOG_SHAPE_PROPERTIES( PCB_BASE_EDIT_FRAME* aParent, 
     {
         m_fillLabel->Show( false );
         m_fillCtrl->Show( false );
-    }
-
-    if( m_item->GetShape() != SHAPE_T::RECTANGLE )
-    {
-        m_cbRoundRect->Show( false );
-        m_cornerRadius.Show( false );
     }
 
     SetupStandardButtons();
@@ -1255,8 +1256,7 @@ bool DIALOG_SHAPE_PROPERTIES::Validate()
         if( m_fillCtrl->GetSelection() != UI_FILL_MODE::SOLID && m_thickness.GetValue() <= 0 )
             errors.Add( _( "Line width must be greater than zero for an unfilled rectangle." ) );
 
-        const RECTANGLE_GEOM_SYNCER* rectGeomSync = static_cast<RECTANGLE_GEOM_SYNCER*>( m_geomSync.get() );
-        int shortSide = std::min( rectGeomSync->GetRectangleWidth(), rectGeomSync->GetRectangleHeight() );
+        int shortSide = std::min( m_item->GetRectangleWidth(), m_item->GetRectangleHeight() );
 
         if( m_cbRoundRect->GetValue() && m_cornerRadius.GetIntValue() * 2 > shortSide )
         {

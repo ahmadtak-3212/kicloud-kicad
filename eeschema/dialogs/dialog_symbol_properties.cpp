@@ -33,7 +33,6 @@
 #include <kiface_base.h>
 #include <pin_numbers.h>
 #include <string_utils.h>
-#include <template_fieldnames.h>
 #include <kiplatform/ui.h>
 #include <widgets/grid_icon_text_helpers.h>
 #include <widgets/grid_combobox.h>
@@ -884,7 +883,7 @@ void DIALOG_SYMBOL_PROPERTIES::OnGridCellChanging( wxGridEvent& event )
             if( i == event.GetRow() )
                 continue;
 
-            if( FieldNamesAreDuplicates( newName, m_fieldsGrid->GetCellValue( i, FDC_NAME ) ) )
+            if( newName.CmpNoCase( m_fieldsGrid->GetCellValue( i, FDC_NAME ) ) == 0 )
             {
                 DisplayError( this, wxString::Format( _( "Field name '%s' already in use." ),
                                                       newName ) );

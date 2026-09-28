@@ -33,7 +33,6 @@
 #include <general.h>
 #include <grid_tricks.h>
 #include <string_utils.h>
-#include <template_fieldnames.h>
 #include <kiface_base.h>
 #include <sch_edit_frame.h>
 #include <widgets/wx_infobar.h>
@@ -272,17 +271,9 @@ DIALOG_SYMBOL_FIELDS_TABLE::DIALOG_SYMBOL_FIELDS_TABLE( SCH_EDIT_FRAME* parent, 
 
     m_variantListBox->Set( parent->Schematic().GetVariantNamesForUI() );
 
-    // A job keeps its own variant, otherwise follow the schematic.
-    wxString variantToSelect;
-
-    if( m_job )
-        variantToSelect = m_job->GetSelectedVariant();
-    else
-        variantToSelect = m_parent->Schematic().GetCurrentVariant();
-
-    if( !variantToSelect.IsEmpty() )
+    if( !m_parent->Schematic().GetCurrentVariant().IsEmpty() )
     {
-        int toSelect = m_variantListBox->FindString( variantToSelect );
+        int toSelect = m_variantListBox->FindString( m_parent->Schematic().GetCurrentVariant() );
 
         if( toSelect == wxNOT_FOUND )
             m_variantListBox->SetSelection( 0 );
@@ -304,7 +295,7 @@ DIALOG_SYMBOL_FIELDS_TABLE::DIALOG_SYMBOL_FIELDS_TABLE( SCH_EDIT_FRAME* parent, 
     m_hash_key = TO_UTF8( GetTitle() );
 
     // Set the current variant for highlighting variant-specific field values
-    m_dataModel->SetCurrentVariant( resolveVariant() );
+    m_dataModel->SetCurrentVariant( m_parent->Schematic().GetCurrentVariant() );
 
     SetInitialFocus( m_grid );
     m_grid->ClearSelection();
@@ -364,6 +355,7 @@ DIALOG_SYMBOL_FIELDS_TABLE::DIALOG_SYMBOL_FIELDS_TABLE( SCH_EDIT_FRAME* parent, 
 DIALOG_SYMBOL_FIELDS_TABLE::~DIALOG_SYMBOL_FIELDS_TABLE()
 {
     savePresetsToSchematic();
+    m_schSettings.m_BomExportFileName = m_outputFileName->GetValue();
 
     EESCHEMA_SETTINGS::PANEL_SYMBOL_FIELDS_TABLE& cfg = m_parent->eeconfig()->m_FieldEditorPanel;
 
@@ -708,14 +700,11 @@ void DIALOG_SYMBOL_FIELDS_TABLE::AddField( const wxString& aFieldName, const wxS
     // e.g. ${QUANTITY} so make sure we don't add them twice
     for( int row = 0; row < m_viewControlsDataModel->GetNumberRows(); row++ )
     {
-        if( FieldNamesAreDuplicates( m_viewControlsDataModel->GetCanonicalFieldName( row ),
-                                     aFieldName ) )
-        {
+        if( m_viewControlsDataModel->GetCanonicalFieldName( row ).CmpNoCase( aFieldName ) == 0 )
             return;
-        }
     }
 
-    m_dataModel->AddColumn( aFieldName, aLabelValue, addedByUser );
+    m_dataModel->AddColumn( aFieldName, aLabelValue, addedByUser, m_parent->Schematic().GetCurrentVariant() );
 
     wxGridTableMessage msg( m_dataModel, wxGRIDTABLE_NOTIFY_COLS_APPENDED, 1 );
     m_grid->ProcessTableMessage( msg );
@@ -752,9 +741,13 @@ void DIALOG_SYMBOL_FIELDS_TABLE::LoadFieldNames()
     AddField( FIELDS_EDITOR_GRID_DATA_MODEL::QUANTITY_VARIABLE, _( "Qty" ), true, false );
     AddField( FIELDS_EDITOR_GRID_DATA_MODEL::ITEM_NUMBER_VARIABLE, _( "#" ), true, false );
 
-    // User field names are stored and matched case-sensitively (see issue #24021), so each
-    // distinct name gets its own column rather than collapsing case variants together.
-    std::set<wxString> userFieldNames;
+    // User fields next
+    auto caseInsensitiveLess = []( const wxString& a, const wxString& b )
+    {
+        return a.CmpNoCase( b ) < 0;
+    };
+
+    std::map<wxString, std::map<wxString, int>, decltype( caseInsensitiveLess )> userFieldGroups( caseInsensitiveLess );
 
     for( int ii = 0; ii < (int) m_symbolsList.GetCount(); ++ii )
     {
@@ -763,17 +756,39 @@ void DIALOG_SYMBOL_FIELDS_TABLE::LoadFieldNames()
         for( const SCH_FIELD& field : symbol->GetFields() )
         {
             if( !field.IsMandatory() && !field.IsPrivate() )
-                userFieldNames.insert( field.GetName() );
+                userFieldGroups[field.GetName()][field.GetName()]++;
         }
     }
 
-    for( const wxString& fieldName : userFieldNames )
-        AddField( fieldName, GetGeneratedFieldDisplayName( fieldName ), true, false );
+    for( const auto& [groupKey, exactCounts] : userFieldGroups )
+    {
+        wxString canonicalName;
+
+        if( const TEMPLATE_FIELDNAME* tfn = m_schSettings.m_TemplateFieldNames.GetFieldName( groupKey ) )
+        {
+            canonicalName = tfn->m_Name;
+        }
+        else
+        {
+            int bestCount = -1;
+
+            for( const auto& [name, count] : exactCounts )
+            {
+                if( count > bestCount )
+                {
+                    bestCount = count;
+                    canonicalName = name;
+                }
+            }
+        }
+
+        AddField( canonicalName, GetGeneratedFieldDisplayName( canonicalName ), true, false );
+    }
 
     // Add any templateFieldNames which aren't already present.
     for( const TEMPLATE_FIELDNAME& tfn : m_schSettings.m_TemplateFieldNames.GetTemplateFieldNames() )
     {
-        if( userFieldNames.count( tfn.m_Name ) == 0 )
+        if( userFieldGroups.count( tfn.m_Name ) == 0 )
             AddField( tfn.m_Name, GetGeneratedFieldDisplayName( tfn.m_Name ), false, false );
     }
 }
@@ -796,7 +811,7 @@ void DIALOG_SYMBOL_FIELDS_TABLE::OnAddField( wxCommandEvent& event )
 
     for( int i = 0; i < m_dataModel->GetNumberCols(); ++i )
     {
-        if( FieldNamesAreDuplicates( fieldName, m_dataModel->GetColFieldName( i ) ) )
+        if( fieldName.CmpNoCase( m_dataModel->GetColFieldName( i ) ) == 0 )
         {
             DisplayError( this, wxString::Format( _( "Field name '%s' already in use." ), fieldName ) );
             return;
@@ -1372,7 +1387,6 @@ void DIALOG_SYMBOL_FIELDS_TABLE::OnSaveAndContinue( wxCommandEvent& aEvent )
 {
     if( TransferDataFromWindow() )
     {
-        m_schSettings.m_BomExportFileName = m_outputFileName->GetValue();
         m_parent->SaveProject();
         ClearModify();
     }
@@ -1562,13 +1576,6 @@ void DIALOG_SYMBOL_FIELDS_TABLE::OnExport( wxCommandEvent& aEvent )
 
     // close the file before we tell the user it's done with the info modal :workflow meme:
     out.Close();
-
-    if( m_schSettings.m_BomExportFileName != m_outputFileName->GetValue() )
-    {
-        m_schSettings.m_BomExportFileName = m_outputFileName->GetValue();
-        m_parent->OnModify();
-    }
-
     msg.Printf( _( "Wrote BOM output to '%s'" ), outputFile.GetFullPath() );
     DisplayInfoMessage( this, msg );
 }
@@ -1577,15 +1584,9 @@ void DIALOG_SYMBOL_FIELDS_TABLE::OnExport( wxCommandEvent& aEvent )
 void DIALOG_SYMBOL_FIELDS_TABLE::OnCancel( wxCommandEvent& aEvent )
 {
     if( m_job )
-    {
         EndModal( wxID_CANCEL );
-    }
     else
-    {
-        // Discard any unsaved edit in the output filename field
-        m_outputFileName->SetValue( m_schSettings.m_BomExportFileName );
         Close();
-    }
 }
 
 
@@ -1639,18 +1640,15 @@ void DIALOG_SYMBOL_FIELDS_TABLE::OnOk( wxCommandEvent& aEvent )
                 m_job->m_fieldsGroupBy.emplace_back( modelField.name );
         }
 
-        m_job->SetSelectedVariant( getSelectedVariant() );
+        wxString selectedVariant = getSelectedVariant();
+
+        if( !selectedVariant.IsEmpty() )
+            m_job->m_variantNames.push_back( selectedVariant );
 
         EndModal( wxID_OK );
     }
     else
     {
-        if( m_schSettings.m_BomExportFileName != m_outputFileName->GetValue() )
-        {
-            m_schSettings.m_BomExportFileName = m_outputFileName->GetValue();
-            m_parent->OnModify();
-        }
-
         Close();
     }
 }
@@ -2044,8 +2042,7 @@ void DIALOG_SYMBOL_FIELDS_TABLE::doApplyBomPreset( const BOM_PRESET& aPreset )
 
     // Basically, we apply the BOM preset to the data model and then
     // update our UI to reflect resulting the data model state, not the preset.
-    m_dataModel->SetCurrentVariant( resolveVariant() );
-    m_dataModel->ApplyBomPreset( aPreset );
+    m_dataModel->ApplyBomPreset( aPreset, m_parent->Schematic().GetCurrentVariant() );
 
     // BOM Presets can add, but not remove, columns, so make sure the view controls
     // grid has all of them before starting
@@ -2594,7 +2591,8 @@ void DIALOG_SYMBOL_FIELDS_TABLE::OnSchItemsChanged( SCHEMATIC& aSch, std::vector
             for( SCH_FIELD& field : symbol->GetFields() )
                 AddField( field.GetCanonicalName(), field.GetName(), true, false, true );
 
-            m_dataModel->UpdateReferences( getSymbolReferences( symbol, allRefs ) );
+            m_dataModel->UpdateReferences( getSymbolReferences( symbol, allRefs ),
+                                           m_parent->Schematic().GetCurrentVariant() );
         }
         else if( item->Type() == SCH_SHEET_T )
         {
@@ -2611,7 +2609,7 @@ void DIALOG_SYMBOL_FIELDS_TABLE::OnSchItemsChanged( SCHEMATIC& aSch, std::vector
                     AddField( field.GetCanonicalName(), field.GetName(), true, false, true );
             }
 
-            m_dataModel->UpdateReferences( refs );
+            m_dataModel->UpdateReferences( refs, m_parent->Schematic().GetCurrentVariant() );
         }
     }
 
@@ -2790,7 +2788,7 @@ SCH_REFERENCE_LIST DIALOG_SYMBOL_FIELDS_TABLE::getSheetSymbolReferences( SCH_SHE
 
 void DIALOG_SYMBOL_FIELDS_TABLE::onAddVariant( wxCommandEvent& aEvent )
 {
-    if( !m_parent->ShowAddVariantDialog( this ) )
+    if( !m_parent->ShowAddVariantDialog() )
         return;
 
     wxArrayString ctrlContents;
@@ -2827,14 +2825,7 @@ void DIALOG_SYMBOL_FIELDS_TABLE::onDeleteVariant( wxCommandEvent& aEvent )
 
     wxString variantName = m_variantListBox->GetString( selection );
     m_variantListBox->Delete( selection );
-
-    SCH_COMMIT commit( m_parent );
-
-    m_parent->Schematic().DeleteVariant( variantName, &commit );
-
-    if( !commit.Empty() )
-        commit.Push( wxString::Format( wxS( "Delete Variant '%s'" ), variantName ) );
-
+    m_parent->Schematic().DeleteVariant( variantName );
     m_parent->OnModify();
 
     int newSelection = std::max( 0, selection - 1 );
@@ -2846,7 +2837,7 @@ void DIALOG_SYMBOL_FIELDS_TABLE::onDeleteVariant( wxCommandEvent& aEvent )
     if( m_grid->CommitPendingChanges( true ) )
     {
         m_dataModel->SetCurrentVariant( selectedVariant );
-        m_dataModel->UpdateReferences( m_dataModel->GetReferenceList() );
+        m_dataModel->UpdateReferences( m_dataModel->GetReferenceList(), selectedVariant );
         m_dataModel->RebuildRows();
 
         if( m_nbPages->GetSelection() == 1 )
@@ -3074,22 +3065,19 @@ void DIALOG_SYMBOL_FIELDS_TABLE::syncVariantSelection( const wxString& aVariantN
     {
         m_grid->CommitPendingChanges( true );
 
-        if( !m_job )
+        SCH_COMMIT     commit( m_parent );
+
+        m_dataModel->ApplyData( commit, m_schSettings.m_TemplateFieldNames, currentVariant );
+
+        if( !commit.Empty() )
         {
-            SCH_COMMIT commit( m_parent );
-
-            m_dataModel->ApplyData( commit, m_schSettings.m_TemplateFieldNames, currentVariant );
-
-            if( !commit.Empty() )
-            {
-                commit.Push( wxS( "Symbol Fields Table Edit" ) ); // Push clears the commit buffer.
-                m_parent->OnModify();
-            }
+            commit.Push( wxS( "Symbol Fields Table Edit" ) );  // Push clears the commit buffer.
+            m_parent->OnModify();
         }
 
         // Update the data model's current variant for field highlighting
         m_dataModel->SetCurrentVariant( selectedVariant );
-        m_dataModel->UpdateReferences( m_dataModel->GetReferenceList() );
+        m_dataModel->UpdateReferences( m_dataModel->GetReferenceList(), selectedVariant );
         m_dataModel->RebuildRows();
 
         if( m_nbPages->GetSelection() == 1 )
@@ -3126,14 +3114,4 @@ wxString DIALOG_SYMBOL_FIELDS_TABLE::getSelectedVariant() const
         return retv;
 
     return m_variantListBox->GetString( selection );
-}
-
-
-wxString DIALOG_SYMBOL_FIELDS_TABLE::resolveVariant() const
-{
-    // A job keeps its own variant, otherwise follow the schematic.
-    if( m_job )
-        return getSelectedVariant();
-
-    return m_parent->Schematic().GetCurrentVariant();
 }

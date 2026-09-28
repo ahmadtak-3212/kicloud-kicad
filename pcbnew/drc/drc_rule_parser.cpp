@@ -85,26 +85,13 @@ void DRC_RULES_PARSER::reportDeprecation( const wxString& oldToken, const wxStri
 
 bool DRC_RULES_PARSER::checkUnresolvedTextVariable()
 {
-    for( size_t pos = curText.find( "${" ); pos != std::string::npos;
-         pos = curText.find( "${", pos + 2 ) )
-    {
-        size_t end = curText.find( '}', pos + 2 );
+    size_t pos = curText.find( "${" );
 
-        if( end != std::string::npos )
-        {
-            wxString token = wxString::FromUTF8( curText.substr( pos + 2, end - ( pos + 2 ) ) );
+    if( pos == std::string::npos )
+        return false;
 
-            // ${Class:X} is a DRC expression directive handled by testFootprintSelector(), so it is
-            // left unexpanded on purpose and must not be reported as unresolved.
-            if( IsComponentClassSelector( token ) )
-                continue;
-        }
-
-        reportError( _( "Unresolved text variable" ), (int) pos );
-        return true;
-    }
-
-    return false;
+    reportError( _( "Unresolved text variable" ), (int) pos );
+    return true;
 }
 
 

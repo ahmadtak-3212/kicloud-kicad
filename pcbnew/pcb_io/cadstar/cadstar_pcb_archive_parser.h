@@ -99,7 +99,7 @@ public:
     {
         MATERIAL_ID         ID;
         wxString            Name;
-        MATERIAL_LAYER_TYPE Type = MATERIAL_LAYER_TYPE::NON_ELECTRICAL;
+        MATERIAL_LAYER_TYPE Type;
         EVALUE              Permittivity;
         EVALUE              LossTangent;
         EVALUE              Resistivity; ///< x10^-8 ohm*metre
@@ -281,7 +281,7 @@ public:
 
     struct CADSTAR_PAD_SHAPE : PARSER
     {
-        PAD_SHAPE_TYPE ShapeType       = PAD_SHAPE_TYPE::CIRCLE;
+        PAD_SHAPE_TYPE ShapeType;
         long           Size            = UNDEFINED_VALUE;
         long           LeftLength      = UNDEFINED_VALUE;
         long           RightLength     = UNDEFINED_VALUE;
@@ -297,7 +297,6 @@ public:
     {
         LAYER_ID  LayerID;
         CADSTAR_PAD_SHAPE Shape;
-        bool      HasShape = false; ///< False when the shape node was unknown and skipped
 
         void Parse( XNODE* aNode, PARSER_CONTEXT* aContext ) override;
     };
@@ -328,7 +327,6 @@ public:
     {
         LAYER_ID  LayerID;
         CADSTAR_PAD_SHAPE Shape;
-        bool      HasShape = false; ///< False when the shape node was unknown and skipped
 
         void Parse( XNODE* aNode, PARSER_CONTEXT* aContext ) override;
     };
@@ -608,7 +606,7 @@ public:
                               ///< "DIMENSION_ARROWCLOSEDFILLED"
             };
 
-            STYLE ArrowStyle = STYLE::OPEN;  ///< Subnode="ARROWSTYLE"
+            STYLE ArrowStyle;  ///< Subnode="ARROWSTYLE"
             long  UpperAngle = 0;  ///< token="ARROWANGLEA"
             long  LowerAngle = 0;  ///< token="ARROWANGLEB"
             long  ArrowLength = 0; ///< The length of the angled lines that make up the arrow head
@@ -640,7 +638,7 @@ public:
                         ///< the text is) DIMENSION_EXTERNAL
             };
 
-            STYLE Style = STYLE::INSIDE;
+            STYLE Style;
             long  TextGap;    ///< Specifies the gap between the text and the end of the line
             long  TextOffset; ///< Specifies how far above the line the text is (doesn't have
                               ///< an effect on actual position!)
@@ -684,8 +682,8 @@ public:
             };
 
             TYPE        Type;
-            LINECODE_ID LineCodeID;            ///< param0
-            STYLE       Style = STYLE::INTERNAL; ///< Subnode="DIMLINETYPE"
+            LINECODE_ID LineCodeID; ///< param0
+            STYLE       Style;      ///< Subnode="DIMLINETYPE"
 
             POINT Start;  ///< [point1]
             POINT End;    ///< [point2]
@@ -991,11 +989,9 @@ public:
         };
 
         struct ROUTE_VERTEX ///< Two sibbling nodes: first node being "ROUTEWIDTH" and
-                            ///< next node being a VERTEX (e.g. PT, CWARC, etc.). In older
-                            ///< CADSTAR formats (e.g. Revision 7), ROUTEWIDTH may be omitted.
+                            ///< next node being a VERTEX (e.g. PT, CWARC, etc.)
         {
-            long   RouteWidth = 0;
-            bool   RouteWidthIsExplicit = true; ///< False if ROUTEWIDTH was not specified in file
+            long   RouteWidth;
             bool   TeardropAtStart = false;
             bool   TeardropAtEnd = false;
             long   TeardropAtStartAngle = 0;

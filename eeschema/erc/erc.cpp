@@ -198,60 +198,48 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
             []( const SCH_ITEM* item, const SCH_SHEET_PATH& sheet, SCH_SCREEN* screen,
                 const wxString& text, const VECTOR2I& pos )
             {
-                // Match anywhere in the text so users can embed ${ERC_ERROR ...}
-                // or ${ERC_WARNING ...} inside placeholder strings rather than
-                // only at the start of the field.  The leading "(^|[^\\\\])"
-                // group requires the marker to start the string or follow a
-                // non-backslash, so `\${ERC_ERROR ...}` stays inert; the
-                // captured message is group 2.
-                static wxRegEx warningExpr( wxS( "(^|[^\\\\])\\$\\{ERC_WARNING\\s*([^}]*)\\}" ) );
-                static wxRegEx errorExpr( wxS( "(^|[^\\\\])\\$\\{ERC_ERROR\\s*([^}]*)\\}" ) );
+                static wxRegEx warningExpr( wxS( "^\\$\\{ERC_WARNING\\s*([^}]*)\\}(.*)$" ) );
+                static wxRegEx errorExpr( wxS( "^\\$\\{ERC_ERROR\\s*([^}]*)\\}(.*)$" ) );
 
-                auto reportEach =
-                        [&]( wxRegEx& aExpr, int aErrorCode )
-                        {
-                            // Return true on any *match*, not only when a marker is appended,
-                            // so the caller-side unresolved-variable suppression stays
-                            // correct even if the limit-exceeded short-circuit lands here in
-                            // the future.
-                            bool     found = false;
-                            wxString remaining = text;
+                if( warningExpr.Matches( text ) )
+                {
+                    std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( ERCE_GENERIC_WARNING );
+                    wxString                  ercText = warningExpr.GetMatch( text, 1 );
 
-                            while( aExpr.Matches( remaining ) )
-                            {
-                                found = true;
+                    if( item )
+                        ercItem->SetItems( item );
+                    else
+                        ercText += _( " (in drawing sheet)" );
 
-                                wxString ercText = aExpr.GetMatch( remaining, 2 );
+                    ercItem->SetSheetSpecificPath( sheet );
+                    ercItem->SetErrorMessage( ercText );
 
-                                std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( aErrorCode );
+                    SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ), pos );
+                    screen->Append( marker );
 
-                                if( item )
-                                    ercItem->SetItems( item );
-                                else
-                                    ercText += _( " (in drawing sheet)" );
+                    return true;
+                }
 
-                                ercItem->SetSheetSpecificPath( sheet );
-                                ercItem->SetErrorMessage( ercText );
+                if( errorExpr.Matches( text ) )
+                {
+                    std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( ERCE_GENERIC_ERROR );
+                    wxString                  ercText = errorExpr.GetMatch( text, 1 );
 
-                                SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ), pos );
-                                screen->Append( marker );
+                    if( item )
+                        ercItem->SetItems( item );
+                    else
+                        ercText += _( " (in drawing sheet)" );
 
-                                size_t start = 0;
-                                size_t len = 0;
+                    ercItem->SetSheetSpecificPath( sheet );
+                    ercItem->SetErrorMessage( ercText );
 
-                                if( !aExpr.GetMatch( &start, &len, 0 ) || len == 0 )
-                                    break;
+                    SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ), pos );
+                    screen->Append( marker );
 
-                                remaining = remaining.Mid( start + len );
-                            }
+                    return true;
+                }
 
-                            return found;
-                        };
-
-                bool foundWarning = reportEach( warningExpr, ERCE_GENERIC_WARNING );
-                bool foundError = reportEach( errorExpr, ERCE_GENERIC_ERROR );
-
-                return foundWarning || foundError;
+                return false;
             };
 
     if( aDrawingSheet )
@@ -269,13 +257,7 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
     {
         SCH_SCREEN* screen = sheet.LastScreen();
 
-        // Snapshot before iterating: the loop body appends SCH_MARKERs to this same screen,
-        // and screen->Items() is a live view over the screen's RTree, so mutating it while
-        // the range-for above walks it can reorder nodes and skip not-yet-visited items.
-        std::vector<SCH_ITEM*> items( screen->Items().OfType( SCH_LOCATE_ANY_T ).begin(),
-                                      screen->Items().OfType( SCH_LOCATE_ANY_T ).end() );
-
-        for( SCH_ITEM* item : items )
+        for( SCH_ITEM* item : screen->Items().OfType( SCH_LOCATE_ANY_T ) )
         {
             if( item->Type() == SCH_SYMBOL_T )
             {
@@ -283,11 +265,7 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
 
                 for( SCH_FIELD& field : symbol->GetFields() )
                 {
-                    if( testAssertion( &field, sheet, screen, field.GetText(), field.GetPosition() ) )
-                    {
-                        // Don't run unresolved test
-                    }
-                    else if( unresolved( field.GetShownText( &sheet, true ) ) )
+                    if( unresolved( field.GetShownText( &sheet, true ) ) )
                     {
                         auto ercItem = ERC_ITEM::Create( ERCE_UNRESOLVED_VARIABLE );
                         ercItem->SetItems( symbol );
@@ -296,6 +274,8 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
                         SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ), field.GetPosition() );
                         screen->Append( marker );
                     }
+
+                    testAssertion( &field, sheet, screen, field.GetText(), field.GetPosition() );
                 }
 
                 if( symbol->GetLibSymbolRef() )
@@ -311,12 +291,7 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
                                 {
                                     SCH_TEXT* textItem = static_cast<SCH_TEXT*>( child );
 
-                                    if( testAssertion( symbol, sheet, screen, textItem->GetText(),
-                                                       textItem->GetPosition() ) )
-                                    {
-                                        // Don't run unresolved test
-                                    }
-                                    else if( unresolved( textItem->GetShownText( &sheet, true ) ) )
+                                    if( unresolved( textItem->GetShownText( &sheet, true ) ) )
                                     {
                                         auto ercItem = ERC_ITEM::Create( ERCE_UNRESOLVED_VARIABLE );
                                         ercItem->SetItems( symbol );
@@ -329,18 +304,15 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
                                         SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ), pos );
                                         screen->Append( marker );
                                     }
+
+                                    testAssertion( symbol, sheet, screen, textItem->GetText(),
+                                                   textItem->GetPosition() );
                                 }
                                 else if( child->Type() == SCH_TEXTBOX_T )
                                 {
                                     SCH_TEXTBOX* textboxItem = static_cast<SCH_TEXTBOX*>( child );
 
-                                    if( testAssertion( symbol, sheet, screen, textboxItem->GetText(),
-                                                       textboxItem->GetPosition() ) )
-                                    {
-                                        // Don't run unresolved test
-                                    }
-                                    else if( unresolved( textboxItem->GetShownText( nullptr, &sheet,
-                                                                                    true ) ) )
+                                    if( unresolved( textboxItem->GetShownText( nullptr, &sheet, true ) ) )
                                     {
                                         auto ercItem = ERC_ITEM::Create( ERCE_UNRESOLVED_VARIABLE );
                                         ercItem->SetItems( symbol );
@@ -353,6 +325,9 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
                                         SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ), pos );
                                         screen->Append( marker );
                                     }
+
+                                    testAssertion( symbol, sheet, screen, textboxItem->GetText(),
+                                                   textboxItem->GetPosition() );
                                 }
                             },
                             RECURSE_MODE::NO_RECURSE );
@@ -362,11 +337,7 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
             {
                 for( SCH_FIELD& field : label->GetFields() )
                 {
-                    if( testAssertion( &field, sheet, screen, field.GetText(), field.GetPosition() ) )
-                    {
-                        // Don't run unresolved test
-                    }
-                    else if( unresolved( field.GetShownText( &sheet, true ) ) )
+                    if( unresolved( field.GetShownText( &sheet, true ) ) )
                     {
                         auto ercItem = ERC_ITEM::Create( ERCE_UNRESOLVED_VARIABLE );
                         ercItem->SetItems( label );
@@ -375,6 +346,8 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
                         SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ), field.GetPosition() );
                         screen->Append( marker );
                     }
+
+                    testAssertion( &field, sheet, screen, field.GetText(), field.GetPosition() );
                 }
             }
             else if( item->Type() == SCH_SHEET_T )
@@ -383,11 +356,7 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
 
                 for( SCH_FIELD& field : subSheet->GetFields() )
                 {
-                    if( testAssertion( &field, sheet, screen, field.GetText(), field.GetPosition() ) )
-                    {
-                        // Don't run unresolved test
-                    }
-                    else if( unresolved( field.GetShownText( &sheet, true ) ) )
+                    if( unresolved( field.GetShownText( &sheet, true ) ) )
                     {
                         auto ercItem = ERC_ITEM::Create( ERCE_UNRESOLVED_VARIABLE );
                         ercItem->SetItems( subSheet );
@@ -396,6 +365,8 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
                         SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ), field.GetPosition() );
                         screen->Append( marker );
                     }
+
+                    testAssertion( &field, sheet, screen, field.GetText(), field.GetPosition() );
                 }
 
                 SCH_SHEET_PATH subSheetPath = sheet;
@@ -416,11 +387,7 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
             }
             else if( SCH_TEXT* text = dynamic_cast<SCH_TEXT*>( item ) )
             {
-                if( testAssertion( text, sheet, screen, text->GetText(), text->GetPosition() ) )
-                {
-                    // Don't run unresolved test
-                }
-                else if( text->GetShownText( &sheet, true ).Matches( wxS( "*${*}*" ) ) )
+                if( text->GetShownText( &sheet, true ).Matches( wxS( "*${*}*" ) ) )
                 {
                     auto ercItem = ERC_ITEM::Create( ERCE_UNRESOLVED_VARIABLE );
                     ercItem->SetItems( text );
@@ -429,15 +396,12 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
                     SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ), text->GetPosition() );
                     screen->Append( marker );
                 }
+
+                testAssertion( text, sheet, screen, text->GetText(), text->GetPosition() );
             }
             else if( SCH_TEXTBOX* textBox = dynamic_cast<SCH_TEXTBOX*>( item ) )
             {
-                if( testAssertion( textBox, sheet, screen, textBox->GetText(),
-                                   textBox->GetPosition() ) )
-                {
-                    // Don't run unresolved test
-                }
-                else if( textBox->GetShownText( nullptr, &sheet, true ).Matches( wxS( "*${*}*" ) ) )
+                if( textBox->GetShownText( nullptr, &sheet, true ).Matches( wxS( "*${*}*" ) ) )
                 {
                     auto ercItem = ERC_ITEM::Create( ERCE_UNRESOLVED_VARIABLE );
                     ercItem->SetItems( textBox );
@@ -446,6 +410,8 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
                     SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ), textBox->GetPosition() );
                     screen->Append( marker );
                 }
+
+                testAssertion( textBox, sheet, screen, textBox->GetText(), textBox->GetPosition() );
             }
         }
 
@@ -1426,10 +1392,7 @@ int ERC_TESTER::TestGroundPins()
             []( const wxString& txt )
             {
                 wxString upper = txt.Upper();
-
-                return upper.Contains( wxT( "GND" ) )
-                       || upper == wxT( "EARTH" ) || upper.StartsWith( wxT( "EARTH_" ) )
-                       || upper == wxT( "VSS" ) || upper == wxT( "VSSA" );
+                return upper.Contains( wxT( "GND" ) );
             };
 
     for( const SCH_SHEET_PATH& sheet : m_sheetList )
@@ -1948,7 +1911,7 @@ int ERC_TESTER::TestFootprintFilters()
 
             if( !found )
             {
-                std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( ERCE_FOOTPRINT_FILTERS );
+                std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( ERCE_FOOTPRINT_LINK_ISSUES );
                 msg.Printf( _( "Assigned footprint (%s) doesn't match footprint filters (%s)" ),
                             footprint.GetUniStringLibItemName(),
                             wxJoin( filters, ' ' ) );

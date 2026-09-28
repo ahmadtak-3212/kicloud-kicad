@@ -127,12 +127,6 @@ double PANEL_IMAGE_EDITOR::GetScale() const
 void PANEL_IMAGE_EDITOR::SetScale( double aScale )
 {
     m_scale.ChangeDoubleValue( aScale );
-    UpdateImageScale( aScale );
-}
-
-
-void PANEL_IMAGE_EDITOR::UpdateImageScale( double aScale )
-{
     m_workingImage->SetScale( aScale );
     m_panelDraw->Refresh();
 }

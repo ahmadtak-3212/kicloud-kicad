@@ -501,10 +501,7 @@ int EDA_COMBINED_MATCHER::ScoreTerms( std::vector<SEARCH_TERM>& aWeightedTerms, 
         {
             score += 8 * term.Score;
 
-            // Only the item's own name/LIB_ID can promote it into the exact-match tier; an
-            // incidental keyword or description field equalling the query shouldn't tie with
-            // an item whose actual name is the query.
-            if( aExactMatch && term.IsName )
+            if( aExactMatch )
                 *aExactMatch = true;
         }
         else if( Find( term.Text, matchers_fired, found_pos ) )

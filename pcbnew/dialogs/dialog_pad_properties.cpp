@@ -794,41 +794,50 @@ void DIALOG_PAD_PROPERTIES::initValues()
     else
         m_holeShapeCtrl->SetSelection( 1 );
 
-    // Backdrills are read through the PADSTACK accessors, which key the top/bottom side on the
-    // drill's start layer, so a pad written by KiCad 10.0 (top backdrill in the tertiary slot)
-    // loads correctly.
-    const PADSTACK&    padstack = m_previewPad->Padstack();
-    std::optional<int> topBackdrillSize = padstack.GetBackdrillSize( true );
-    std::optional<int> bottomBackdrillSize = padstack.GetBackdrillSize( false );
+    // Backdrill properties
+    const PADSTACK::DRILL_PROPS& secondaryDrill = m_previewPad->Padstack().SecondaryDrill();
+    const PADSTACK::DRILL_PROPS& tertiaryDrill = m_previewPad->Padstack().TertiaryDrill();
+    bool hasBackdrill = secondaryDrill.start != UNDEFINED_LAYER;
+    bool hasTertiaryDrill = tertiaryDrill.start != UNDEFINED_LAYER;
 
-    m_backDrillChoice->SetSelection( topBackdrillSize ? ( bottomBackdrillSize ? 3 : 1 )
-                                                      : ( bottomBackdrillSize ? 2 : 0 ) );
+    m_backDrillChoice->SetSelection( hasBackdrill ? ( hasTertiaryDrill ? 3 : 1 )
+                                                  : ( hasTertiaryDrill ? 2 : 0 ) );
 
-    auto loadBackdrill = [&]( const std::optional<int>& aSize, PCB_LAYER_ID aEndLayer, UNIT_BINDER& aSizeBinder,
-                              wxBitmapComboBox* aLayerCtrl )
+    if( !hasBackdrill )
     {
-        if( !aSize )
-        {
-            aSizeBinder.SetValue( 0 );
-            return;
-        }
+        m_backDrillBottomSizeBinder.SetValue( 0 );
+    }
+    else
+    {
+        m_backDrillBottomSizeBinder.SetValue( secondaryDrill.size.x );
 
-        aSizeBinder.SetValue( *aSize );
-
-        for( unsigned int i = 0; i < aLayerCtrl->GetCount(); ++i )
+        for( unsigned int i = 0; i < m_backDrillBottomLayer->GetCount(); ++i )
         {
-            if( ToLAYER_ID( (intptr_t) aLayerCtrl->GetClientData( i ) ) == aEndLayer )
+            if( ToLAYER_ID( (intptr_t)m_backDrillBottomLayer->GetClientData( i ) ) == secondaryDrill.end )
             {
-                aLayerCtrl->SetSelection( i );
+                m_backDrillBottomLayer->SetSelection( i );
                 break;
             }
         }
-    };
+    }
 
-    loadBackdrill( topBackdrillSize, padstack.GetBackdrillEndLayer( true ), m_backDrillTopSizeBinder,
-                   m_backDrillTopLayer );
-    loadBackdrill( bottomBackdrillSize, padstack.GetBackdrillEndLayer( false ), m_backDrillBottomSizeBinder,
-                   m_backDrillBottomLayer );
+    if( !hasTertiaryDrill )
+    {
+        m_backDrillTopSizeBinder.SetValue( 0 );
+    }
+    else
+    {
+        m_backDrillTopSizeBinder.SetValue( tertiaryDrill.size.x );
+
+        for( unsigned int i = 0; i < m_backDrillTopLayer->GetCount(); ++i )
+        {
+            if( ToLAYER_ID( (intptr_t)m_backDrillTopLayer->GetClientData( i ) ) == tertiaryDrill.end )
+            {
+                m_backDrillTopLayer->SetSelection( i );
+                break;
+            }
+        }
+    }
 
     // Post machining
     const PADSTACK::POST_MACHINING_PROPS& frontPostMachining = m_previewPad->Padstack().FrontPostMachining();
@@ -2262,39 +2271,45 @@ bool DIALOG_PAD_PROPERTIES::transferDataToPad( PAD* aPad )
 
     aPad->SetLayerSet( padLayerMask );
 
-    // Backdrills are written through the PADSTACK accessors, which stamp each side's start layer
-    // (top = F_Cu, bottom = B_Cu) so the result is read back correctly by older KiCad.
-    int  backDrillSel = m_backDrillChoice->GetSelection();
-    bool wantTop = ( backDrillSel == 1 || backDrillSel == 3 );    // 1: Top, 3: Top & bottom
-    bool wantBottom = ( backDrillSel == 2 || backDrillSel == 3 ); // 2: Bottom
+    // Save backdrill properties
+    PADSTACK::DRILL_PROPS secondaryDrill;
+    secondaryDrill.size = VECTOR2I( m_backDrillBottomSizeBinder.GetIntValue(),
+                                    m_backDrillBottomSizeBinder.GetIntValue() );
+    secondaryDrill.shape = PAD_DRILL_SHAPE::CIRCLE;
 
-    PADSTACK& padstack = aPad->Padstack();
+    PADSTACK::DRILL_PROPS tertiaryDrill;
+    tertiaryDrill.size = VECTOR2I( m_backDrillTopSizeBinder.GetIntValue(),
+                                   m_backDrillTopSizeBinder.GetIntValue() );
+    tertiaryDrill.shape = PAD_DRILL_SHAPE::CIRCLE;
 
-    if( wantTop )
+    if( !m_backDrillChoice->GetSelection() )
     {
-        padstack.SetBackdrillSize( true, m_backDrillTopSizeBinder.GetIntValue() );
+        secondaryDrill.start = UNDEFINED_LAYER;
+        secondaryDrill.end = UNDEFINED_LAYER;
+    }
+
+    if( m_backDrillChoice->GetSelection() == 1 || m_backDrillChoice->GetSelection() == 3 ) // Front
+    {
+        tertiaryDrill.start = F_Cu;
 
         if( m_backDrillTopLayer->GetSelection() != wxNOT_FOUND )
-            padstack.SetBackdrillEndLayer( true, ToLAYER_ID( (intptr_t) m_backDrillTopLayer->GetClientData(
-                                                         m_backDrillTopLayer->GetSelection() ) ) );
-    }
-    else
-    {
-        padstack.SetBackdrillSize( true, std::nullopt );
+            tertiaryDrill.end = ToLAYER_ID( (intptr_t)m_backDrillTopLayer->GetClientData( m_backDrillTopLayer->GetSelection() ) );
+        else
+            tertiaryDrill.end = UNDEFINED_LAYER;
     }
 
-    if( wantBottom )
+    if( m_backDrillChoice->GetSelection() == 2 || m_backDrillChoice->GetSelection() == 3 ) // Back
     {
-        padstack.SetBackdrillSize( false, m_backDrillBottomSizeBinder.GetIntValue() );
+        secondaryDrill.start = B_Cu;
 
         if( m_backDrillBottomLayer->GetSelection() != wxNOT_FOUND )
-            padstack.SetBackdrillEndLayer( false, ToLAYER_ID( (intptr_t) m_backDrillBottomLayer->GetClientData(
-                                                          m_backDrillBottomLayer->GetSelection() ) ) );
+            secondaryDrill.end = ToLAYER_ID( (intptr_t)m_backDrillBottomLayer->GetClientData( m_backDrillBottomLayer->GetSelection() ) );
+        else
+            secondaryDrill.end = UNDEFINED_LAYER;
     }
-    else
-    {
-        padstack.SetBackdrillSize( false, std::nullopt );
-    }
+
+    aPad->Padstack().SecondaryDrill() = secondaryDrill;
+    aPad->Padstack().TertiaryDrill() = tertiaryDrill;
 
     // Front Post Machining
     PADSTACK::POST_MACHINING_PROPS frontPostMachining;

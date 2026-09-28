@@ -1207,14 +1207,11 @@ int EDA_TEXT::Compare( const EDA_TEXT* aOther ) const
     if( val != 0 )
         return val;
 
-    const VECTOR2I pos = GetTextPos();
-    const VECTOR2I otherPos = aOther->GetTextPos();
+    if( m_pos.x != aOther->m_pos.x )
+        return m_pos.x - aOther->m_pos.x;
 
-    if( pos.x != otherPos.x )
-        return pos.x - otherPos.x;
-
-    if( pos.y != otherPos.y )
-        return pos.y - otherPos.y;
+    if( m_pos.y != aOther->m_pos.y )
+        return m_pos.y - aOther->m_pos.y;
 
     val = GetFontName().Cmp( aOther->GetFontName() );
 

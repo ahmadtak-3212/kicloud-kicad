@@ -40,7 +40,6 @@
 #include <widgets/wx_html_report_box.h>
 #include <dialogs/html_message_box.h>
 #include <scintilla_tricks.h>
-#include <drc/drc_rule.h>
 #include <drc/drc_rule_condition.h>
 #include <drc/drc_rule_parser.h>
 #include <tools/drc_tool.h>
@@ -221,14 +220,10 @@ void PANEL_SETUP_RULES::OnShowMatching()
 
     try
     {
-        std::function<bool( wxString* )> resolver =
-                [&]( wxString* token ) -> bool
-                {
-                    if( IsComponentClassSelector( *token ) )
-                        return false;
-
-                    return m_frame->GetBoard()->ResolveTextVar( token, 0 );
-                };
+        std::function<bool( wxString* )> resolver = [&]( wxString* token ) -> bool
+        {
+            return m_frame->GetBoard()->ResolveTextVar( token, 0 );
+        };
 
         wxString rulesText = m_frame->GetBoard()->ConvertCrossReferencesToKIIDs( text );
         rulesText = ExpandTextVars( rulesText, &resolver );
@@ -947,10 +942,10 @@ void PANEL_SETUP_RULES::OnCompile( wxCommandEvent& event )
         std::function<bool( wxString* )> resolver =
                 [&]( wxString* token ) -> bool
                 {
-                    if( IsComponentClassSelector( *token ) )
-                        return false;
+                    if( m_frame->GetBoard()->ResolveTextVar( token, 0 ) )
+                        return true;
 
-                    return m_frame->GetBoard()->ResolveTextVar( token, 0 );
+                    return false;
                 };
 
         wxString rulesText = m_textEditor->GetText();

@@ -159,7 +159,11 @@ bool DRC_TEST_PROVIDER_DISALLOW::Run()
                     return 0;
 
                 PTR_PTR_LAYER_CACHE_KEY key = { ruleArea, copperZone, UNDEFINED_LAYER };
-                board->m_IntersectsAreaCache.Set( key, isInside );
+
+                {
+                    std::unique_lock<std::shared_mutex> writeLock( board->m_CachesMutex );
+                    board->m_IntersectsAreaCache[ key ] = isInside;
+                }
 
                 done.fetch_add( 1 );
 
@@ -192,13 +196,9 @@ bool DRC_TEST_PROVIDER_DISALLOW::Run()
     auto checkTextOnEdgeCuts =
             [&]( BOARD_ITEM* item )
             {
-                // Tables and barcodes also plot geometry onto Edge.Cuts and corrupt the
-                // board outline. Reference images are excluded since they are never plotted.
                 if( item->Type() == PCB_FIELD_T
                         || item->Type() == PCB_TEXT_T
                         || item->Type() == PCB_TEXTBOX_T
-                        || item->Type() == PCB_TABLE_T
-                        || item->Type() == PCB_BARCODE_T
                         || BaseType( item->Type() ) == PCB_DIMENSION_T )
                 {
                     if( item->GetLayer() == Edge_Cuts )

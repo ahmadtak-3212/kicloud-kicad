@@ -130,10 +130,11 @@ bool SYMBOL_EDITOR_CONTROL::Init()
 
                         LIB_SYMBOL_LIBRARY_MANAGER& libMgr = editFrame->GetLibManager();
                         const LIB_SYMBOL* sym = libMgr.GetSymbol( sel.GetLibItemName(), sel.GetLibNickname() );
+                        wxArrayString     derived;
 
-                        // This runs on every menu evaluation, so ask for the answer and not the list
-                        return ( sym && sym->IsDerived() )
-                               || libMgr.HasDerivedSymbols( sel.GetLibItemName(), sel.GetLibNickname() );
+                        libMgr.GetDerivedSymbolNames( sel.GetLibItemName(), sel.GetLibNickname(), derived );
+
+                        return ( sym && sym->IsDerived() ) || !derived.IsEmpty();
                     }
 
                     return false;

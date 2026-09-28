@@ -127,12 +127,6 @@ public:
                                      bool aPromoteGroups = false );
 
     /**
-     * In general we don't want to select both a parent and any of it's children.  This includes
-     * both symbols and their items, and groups and their members.
-     */
-    void FilterCollectorForHierarchy( SCH_COLLECTOR& aCollector, bool aMultiselect ) const;
-
-    /**
      * Perform a click-type selection at a point (usually the cursor position).
      *
      * @param aWhere Point from which the selection should be made.
@@ -374,6 +368,11 @@ private:
      */
     bool itemPassesFilter( EDA_ITEM* aItem, SCH_SELECTION_FILTER_OPTIONS* aRejected = nullptr );
 
+    /**
+     * In general we don't want to select both a parent and any of it's children.  This includes
+     * both symbols and their items, and groups and their members.
+     */
+    void filterCollectorForHierarchy( SCH_COLLECTOR& aCollector, bool aMultiselect ) const;
     void filterCollectedItems( SCH_COLLECTOR& aCollector, bool aMultiSelect );
 
     ///< Set up handlers for various events.

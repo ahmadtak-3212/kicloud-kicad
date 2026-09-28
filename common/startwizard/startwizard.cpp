@@ -20,11 +20,9 @@
 
 #include <build_version.h>
 #include <confirm.h>
-#include <eda_base_frame.h>
 #include <kiface_base.h>
 #include <pgm_base.h>
 #include <wx/display.h>
-#include <wx/log.h>
 #include <wx/statline.h>
 #include <wx/wx.h>
 #include <wx/wizard.h>
@@ -33,7 +31,6 @@
 #include <startwizard/startwizard_provider_libraries.h>
 #include <startwizard/startwizard_provider_privacy.h>
 #include <startwizard/startwizard_provider_settings.h>
-#include <ui_events.h>
 #include <wx/hyperlink.h>
 
 
@@ -180,10 +177,6 @@ void STARTWIZARD::CheckAndRun( wxWindow* aParent )
 
     Pgm().HideSplash();
 
-    // wxLogGui shows queued messages when a modal opens
-    // A second modal inside RunWizard makes GTK fail
-    wxLog::FlushActive();
-
     m_wizard = new wxWizard( aParent, wxID_ANY, _( "KiCad Setup" ) );
     m_wizard->SetWindowStyleFlag( wxRESIZE_BORDER );
 
@@ -261,8 +254,6 @@ void STARTWIZARD::CheckAndRun( wxWindow* aParent )
                 }
             } );
 
-    int languageBefore = Pgm().GetSelectedLanguageIdentifier();
-
     if( m_wizard->RunWizard( firstPage ) )
     {
         for( std::unique_ptr<STARTWIZARD_PROVIDER>& provider : m_providers )
@@ -276,19 +267,4 @@ void STARTWIZARD::CheckAndRun( wxWindow* aParent )
 
     m_wizard->Destroy();
     m_wizard = nullptr;
-
-    // Settings import can switch the language after the parent frame was already built in the
-    // system locale, so retranslate it to avoid requiring a restart.
-    if( Pgm().GetSelectedLanguageIdentifier() != languageBefore && aParent )
-    {
-        // A dynamic_cast could be better, but creates link issues because EDA_BASE_FRAME lives in
-        // the common library while this code lives in kicommon, so a static_cast is used.  Every
-        // caller passes an EDA_BASE_FRAME-derived frame.
-        EDA_BASE_FRAME* frame = static_cast<EDA_BASE_FRAME*>( aParent );
-
-        frame->ShowChangedLanguage();
-
-        wxCommandEvent e( EDA_LANG_CHANGED );
-        frame->GetEventHandler()->ProcessEvent( e );
-    }
 }

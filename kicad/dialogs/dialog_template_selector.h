@@ -122,7 +122,6 @@ public:
     DIALOG_TEMPLATE_SELECTOR( wxWindow* aParent, const wxPoint& aPos, const wxSize& aSize,
                               const wxString& aUserTemplatesPath,
                               const wxString& aSystemTemplatesPath,
-                              const wxString& aDefaultTemplatesPath,
                               const std::vector<wxString>& aRecentTemplates );
 
     ~DIALOG_TEMPLATE_SELECTOR();
@@ -156,7 +155,6 @@ private:
     enum class DialogState { Initial, Preview, MRUWithPreview };
 
     void SetState( DialogState aState );
-    void EnsurePreviewSplit();
     void BuildMRUList();
     void BuildTemplateList();
     void ApplyFilter();
@@ -172,7 +170,6 @@ private:
 
     wxString                                     m_userTemplatesPath;
     wxString                                     m_systemTemplatesPath;
-    wxString                                     m_defaultTemplatesPath;
     std::vector<wxString>                        m_recentTemplates;
 
     std::vector<std::unique_ptr<PROJECT_TEMPLATE>> m_templates;
@@ -188,8 +185,6 @@ private:
 
     WEBVIEW_PANEL*                               m_webviewPanel;
     bool                                         m_loadingExternalHtml;
-
-    int                                          m_previewSashPos;
 };
 
 #endif

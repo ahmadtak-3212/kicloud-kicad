@@ -469,6 +469,9 @@ void SCH_CONNECTION::SetSuffix( const wxString& aSuffix )
     m_suffix = aSuffix;
 
     recacheName();
+
+    for( const std::shared_ptr<SCH_CONNECTION>& m : Members() )
+        m->SetSuffix( aSuffix );
 }
 
 

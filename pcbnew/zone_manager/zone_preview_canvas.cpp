@@ -101,14 +101,12 @@ public:
 };
 
 
-ZONE_PREVIEW_CANVAS::ZONE_PREVIEW_CANVAS( BOARD* aPcb, std::unique_ptr<ZONE> aZone, PCB_LAYER_ID aLayer,
-                                          wxWindow* aParentWindow, KIGFX::GAL_DISPLAY_OPTIONS& aOptions,
-                                          wxWindowID aWindowId, const wxPoint& aPosition, const wxSize& aSize,
-                                          GAL_TYPE aGalType ) :
-        PCB_DRAW_PANEL_GAL( aParentWindow, aWindowId, aPosition, aSize, aOptions, aGalType ),
+ZONE_PREVIEW_CANVAS::ZONE_PREVIEW_CANVAS( BOARD* aPcb, ZONE* aZone, PCB_LAYER_ID aLayer, wxWindow* aParentWindow,
+                                          KIGFX::GAL_DISPLAY_OPTIONS& aOptions, wxWindowID aWindowId,
+                                          const wxPoint& aPosition, const wxSize& aSize, GAL_TYPE aGalType ) :
+        PCB_DRAW_PANEL_GAL( aParentWindow, aWindowId, aPosition, wxDefaultSize, aOptions, aGalType ),
         m_pcb( aPcb ),
         m_pcb_bounding_box( std::make_unique<BOARD_EDGES_BOUNDING_ITEM>( aPcb->GetBoardEdgesBoundingBox() ) ),
-        m_zone( std::move( aZone ) ),
         m_zoomLocked( false )
 {
     m_view->UseDrawPriority( true );
@@ -116,8 +114,8 @@ ZONE_PREVIEW_CANVAS::ZONE_PREVIEW_CANVAS( BOARD* aPcb, std::unique_ptr<ZONE> aZo
     m_view->SetPainter( m_painter.get() );
     m_view->Add( m_pcb_bounding_box.get(), DRAW_ORDER_BOARD_BOUNDING );
 
-    if( m_zone )
-        m_view->Add( m_zone.get(), DRAW_ORDER_ZONE );
+    if( aZone )
+        m_view->Add( aZone, DRAW_ORDER_ZONE );
 
     UpdateColors();
     m_painter->GetSettings()->SetBackgroundColor( getCanvasBackgroundColor() );

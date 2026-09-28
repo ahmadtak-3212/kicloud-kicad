@@ -19,9 +19,6 @@
 
 #include <printing.h>
 
-#include <wx/print.h>
-#include <wx/cmndata.h>
-
 #ifndef __MINGW32__
 #include <windows.h>
 #include <algorithm>
@@ -453,15 +450,3 @@ namespace PRINTING
 } // namespace KIPLATFORM
 
 #endif
-
-namespace KIPLATFORM
-{
-namespace PRINTING
-{
-    // Windows spools through the driver rather than a scratch file, so the wx-level filename
-    // only ever holds the destination the user asked for
-    void ResetPrintToFilePath( wxPrintData& )
-    {
-    }
-} // namespace PRINTING
-} // namespace KIPLATFORM

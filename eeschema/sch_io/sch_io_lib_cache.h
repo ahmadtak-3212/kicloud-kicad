@@ -105,9 +105,6 @@ public:
 
     const LIB_SYMBOL_MAP& GetSymbolMap() const { return m_symbols; }
 
-    /// For folder-based libraries, the source file each symbol was loaded from (by name).
-    const std::map<wxString, wxString>& GetSymbolSourceFiles() const { return m_symbolSourceFiles; }
-
 protected:
     LIB_SYMBOL* removeSymbol( LIB_SYMBOL* aAlias );
 

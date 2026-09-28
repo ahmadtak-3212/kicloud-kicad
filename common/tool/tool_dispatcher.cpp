@@ -129,8 +129,6 @@ struct TOOL_DISPATCHER::BUTTON_STATE
 
 
 TOOL_DISPATCHER::TOOL_DISPATCHER( TOOL_MANAGER* aToolMgr ) :
-    m_lastKeyCode( 0 ),
-    m_lastKeyTime( 0 ),
     m_toolMgr( aToolMgr )
 {
     m_sysDragMinX = wxSystemSettings::GetMetric( wxSYS_DRAG_X );
@@ -202,9 +200,6 @@ void TOOL_DISPATCHER::ResetState()
 {
     for( BUTTON_STATE* st : m_buttons )
         st->Reset();
-
-    m_lastKeyCode = 0;
-    m_lastKeyTime = 0;
 }
 
 
@@ -501,32 +496,6 @@ void TOOL_DISPATCHER::flushPendingClicks()
 }
 
 
-bool TOOL_DISPATCHER::ShouldDropAutoRepeat( int aKeyCode, wxLongLong aNowMs, bool aKeyIsDown,
-                                            int& aLastKey, wxLongLong& aLastTimeMs )
-{
-    bool sameBurst = aKeyCode == aLastKey && ( aNowMs - aLastTimeMs ) < AutoRepeatWindowMs;
-
-    aLastKey = aKeyCode;
-    aLastTimeMs = aNowMs;
-
-    return sameBurst && !aKeyIsDown;
-}
-
-
-bool TOOL_DISPATCHER::isStaleAutoRepeat( const wxKeyEvent& aKeyEvent )
-{
-    const int MAX_MOUSE_BUTTON = 0x04;
-    int key = aKeyEvent.GetKeyCode();
-
-    // wxGetKeyState answers reliably for letters, digits and the named WXK_ codes used as
-    // hotkeys; modifier-only keys never reach here.
-    bool keyIsDown = key > MAX_MOUSE_BUTTON && wxGetKeyState( static_cast<wxKeyCode>( key ) );
-
-    return ShouldDropAutoRepeat( key, wxGetLocalTimeMillis(), keyIsDown, m_lastKeyCode,
-                                 m_lastKeyTime );
-}
-
-
 void TOOL_DISPATCHER::DispatchWxEvent( wxEvent& aEvent )
 {
     bool            motion = false;
@@ -535,7 +504,6 @@ void TOOL_DISPATCHER::DispatchWxEvent( wxEvent& aEvent )
     std::optional<TOOL_EVENT> evt;
     bool            keyIsEscape  = false;  // True if the keypress was the escape key
     bool            keyIsSpecial = false;  // True if the key is a special key code
-    bool            droppedStaleAutoRepeat = false;  // True if a backlogged repeat was discarded
     wxWindow*       focus = wxWindow::FindFocus();
 
     // Required in win32 to ensure wxTimer events get scheduled in between other events
@@ -544,9 +512,6 @@ void TOOL_DISPATCHER::DispatchWxEvent( wxEvent& aEvent )
     KIPLATFORM::APP::ForceTimerMessagesToBeCreatedIfNecessary();
 
     wxEventType type = aEvent.GetEventType();
-
-    if( m_lastKeyCode > 0 && !wxGetKeyState( static_cast<wxKeyCode>( m_lastKeyCode ) ) )
-        m_lastKeyCode = 0;
 
     // Sometimes there is no window that has the focus (it happens when another PCB_BASE_FRAME
     // is opened and is iconized on Windows).
@@ -674,16 +639,6 @@ void TOOL_DISPATCHER::DispatchWxEvent( wxEvent& aEvent )
         }
 
         evt = GetToolEvent( ke, &keyIsSpecial );
-
-        // Drop backlogged OS key auto-repeat events that arrive after the key was released so a
-        // slow hotkey action (e.g. Rotate on a large selection) stops when the key is let go
-        // instead of running the whole queued burst. Only ordinary hotkey presses are filtered;
-        // cancel (escape) is always honoured.
-        if( evt && !evt->IsCancel() && !keyIsEscape && isStaleAutoRepeat( *ke ) )
-        {
-            evt.reset();
-            droppedStaleAutoRepeat = true;
-        }
     }
     else if( type == wxEVT_MENU_OPEN || type == wxEVT_MENU_CLOSE || type == wxEVT_MENU_HIGHLIGHT )
     {
@@ -772,9 +727,7 @@ void TOOL_DISPATCHER::DispatchWxEvent( wxEvent& aEvent )
     // (PAGE_UP, PAGE_DOWN) have predefined actions (like move thumbtrack cursor), and we do
     // not want these actions executed (most are handled by KiCad)
 
-    // A dropped stale auto-repeat must be fully swallowed; skipping it would let wx menu
-    // accelerators re-run the same hotkey after the key was released.
-    if( ( !evt && !droppedStaleAutoRepeat ) || type == wxEVT_LEFT_DOWN )
+    if( !evt || type == wxEVT_LEFT_DOWN )
         aEvent.Skip();
 
     // Not handled wxEVT_CHAR must be Skipped (sent to GUI).
@@ -785,8 +738,7 @@ void TOOL_DISPATCHER::DispatchWxEvent( wxEvent& aEvent )
     if( ( type == wxEVT_CHAR || type == wxEVT_CHAR_HOOK )
              && !keyIsSpecial
              && !handled
-             && !keyIsEscape
-             && !droppedStaleAutoRepeat )
+             && !keyIsEscape )
     {
         aEvent.Skip();
     }

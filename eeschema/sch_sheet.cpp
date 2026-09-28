@@ -1914,11 +1914,11 @@ void SCH_SHEET::SetDNP( bool aEnable, const SCH_SHEET_PATH* aInstance, const wxS
     }
     else
     {
-        if( instance->m_Variants.contains( aVariantName ) )
+        if( instance->m_Variants.contains( aVariantName ) && ( aEnable != instance->m_Variants[aVariantName].m_DNP ) )
         {
             instance->m_Variants[aVariantName].m_DNP = aEnable;
         }
-        else if( aEnable != m_DNP )
+        else
         {
             SCH_SHEET_VARIANT variant( aVariantName );
 
@@ -1982,11 +1982,12 @@ void SCH_SHEET::SetExcludedFromSim( bool aEnable, const SCH_SHEET_PATH* aInstanc
     }
     else
     {
-        if( instance->m_Variants.contains( aVariantName ) )
+        if( instance->m_Variants.contains( aVariantName )
+          && ( aEnable != instance->m_Variants[aVariantName].m_ExcludedFromSim ) )
         {
             instance->m_Variants[aVariantName].m_ExcludedFromSim = aEnable;
         }
-        else if( aEnable != m_excludedFromSim )
+        else
         {
             SCH_SHEET_VARIANT variant( aVariantName );
 
@@ -2050,11 +2051,12 @@ void SCH_SHEET::SetExcludedFromBOM( bool aEnable, const SCH_SHEET_PATH* aInstanc
     }
     else
     {
-        if( instance->m_Variants.contains( aVariantName ) )
+        if( instance->m_Variants.contains( aVariantName )
+          && ( aEnable != instance->m_Variants[aVariantName].m_ExcludedFromBOM ) )
         {
             instance->m_Variants[aVariantName].m_ExcludedFromBOM = aEnable;
         }
-        else if( aEnable != m_excludedFromBOM )
+        else
         {
             SCH_SHEET_VARIANT variant( aVariantName );
 

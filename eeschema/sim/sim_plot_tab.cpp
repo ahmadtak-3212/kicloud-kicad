@@ -499,16 +499,9 @@ void CURSOR::Plot( wxDC& aDC, mpWindow& aWindow )
         m_updateRef = false;
     }
 
-    if( !std::isfinite( m_coords.x ) )
-        return;
-
-    // A silent trace interpolates to no y value at all, and converting that to a pixel is
-    // undefined behaviour, so carry the x cursor on its own
-    const bool hasY = std::isfinite( m_coords.y );
-
     // Line length in horizontal and vertical dimensions
     const wxPoint cursorPos( aWindow.x2p( m_trace->x2s( m_coords.x ) ),
-                             hasY ? aWindow.y2p( m_trace->y2s( m_coords.y ) ) : 0 );
+                             aWindow.y2p( m_trace->y2s( m_coords.y ) ) );
 
     wxCoord leftPx   = aWindow.GetMarginLeft();
     wxCoord rightPx  = aWindow.GetScrX() - aWindow.GetMarginRight();
@@ -527,7 +520,7 @@ void CURSOR::Plot( wxDC& aDC, mpWindow& aWindow )
     pen.SetStyle( m_continuous ? wxPENSTYLE_SOLID : wxPENSTYLE_LONG_DASH );
     aDC.SetPen( pen );
 
-    if( hasY && topPx < cursorPos.y && cursorPos.y < bottomPx )
+    if( topPx < cursorPos.y && cursorPos.y < bottomPx )
         aDC.DrawLine( leftPx, cursorPos.y, rightPx, cursorPos.y );
 
     if( leftPx < cursorPos.x && cursorPos.x < rightPx )
@@ -599,13 +592,10 @@ bool CURSOR::Inside( const wxPoint& aPoint ) const
     if( !m_window || !m_trace )
         return false;
 
-    // An undefined coordinate draws no line, so it offers nothing to grab
-    bool nearX = std::isfinite( m_coords.x )
-            && std::abs( (double) aPoint.x - m_window->x2p( m_trace->x2s( m_coords.x ) ) ) <= DRAG_MARGIN;
-    bool nearY = std::isfinite( m_coords.y )
-            && std::abs( (double) aPoint.y - m_window->y2p( m_trace->y2s( m_coords.y ) ) ) <= DRAG_MARGIN;
-
-    return nearX || nearY;
+    return ( std::abs( (double) aPoint.x -
+                       m_window->x2p( m_trace->x2s( m_coords.x ) ) ) <= DRAG_MARGIN )
+        || ( std::abs( (double) aPoint.y -
+                       m_window->y2p( m_trace->y2s( m_coords.y ) ) ) <= DRAG_MARGIN );
 }
 
 
@@ -614,13 +604,8 @@ void CURSOR::UpdateReference()
     if( !m_window )
         return;
 
-    // An undefined coordinate has no pixel, so keep the last good reference for a drag to
-    // measure against
-    if( std::isfinite( m_coords.x ) )
-        m_reference.x = m_window->x2p( m_trace->x2s( m_coords.x ) );
-
-    if( std::isfinite( m_coords.y ) )
-        m_reference.y = m_window->y2p( m_trace->y2s( m_coords.y ) );
+    m_reference.x = m_window->x2p( m_trace->x2s( m_coords.x ) );
+    m_reference.y = m_window->y2p( m_trace->y2s( m_coords.y ) );
 }
 
 
@@ -1125,7 +1110,11 @@ void SIM_PLOT_TAB::SetTraceData( TRACE* trace, std::vector<double>& aX, std::vec
         else
         {
             for( double& pt : aY )
-                pt = MagnitudeToDb( pt );                   // NaN where there is no signal
+            {
+                // log( 0 ) is not valid.
+                if( pt != 0 )
+                    pt = 20 * log( pt ) / log( 10.0 );      // convert to dB
+            }
         }
     }
 

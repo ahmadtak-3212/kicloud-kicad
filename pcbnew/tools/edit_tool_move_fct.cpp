@@ -915,10 +915,6 @@ bool EDIT_TOOL::doMoveSelection( const TOOL_EVENT& aEvent, BOARD_COMMIT* aCommit
     std::vector<BOARD_ITEM*> sel_items;         // All the items operated on by the move below
     std::vector<BOARD_ITEM*> orig_items;        // All the original items in the selection
 
-    // Top-level items being moved.  Used instead of selection flags, which can be cleared
-    // mid-move by the find dialog (issue 24884).
-    std::unordered_set<EDA_ITEM*> moved_items;
-
     for( EDA_ITEM* item : selection )
     {
         if( item->IsBOARD_ITEM() )
@@ -929,7 +925,6 @@ bool EDIT_TOOL::doMoveSelection( const TOOL_EVENT& aEvent, BOARD_COMMIT* aCommit
                 orig_items.push_back( boardItem );
 
             sel_items.push_back( boardItem );
-            moved_items.insert( boardItem );
         }
 
         if( item->Type() == PCB_FOOTPRINT_T )
@@ -979,9 +974,6 @@ bool EDIT_TOOL::doMoveSelection( const TOOL_EVENT& aEvent, BOARD_COMMIT* aCommit
 
         sel_items.clear();
         sel_items.push_back( orig_items[ itemIdx ] );
-
-        moved_items.clear();
-        moved_items.insert( orig_items[itemIdx] );
     }
 
     bool            restore_state = false;
@@ -1181,7 +1173,7 @@ bool EDIT_TOOL::doMoveSelection( const TOOL_EVENT& aEvent, BOARD_COMMIT* aCommit
                 for( BOARD_ITEM* item : sel_items )
                 {
                     // Don't double move child items.
-                    if( !item->GetParent() || !moved_items.count( item->GetParent() ) )
+                    if( !item->GetParent() || !item->GetParent()->IsSelected() )
                     {
                         item->Move( movement );
 
@@ -1221,7 +1213,7 @@ bool EDIT_TOOL::doMoveSelection( const TOOL_EVENT& aEvent, BOARD_COMMIT* aCommit
 
                 for( BOARD_ITEM* item : sel_items )
                 {
-                    if( item->GetParent() && moved_items.count( item->GetParent() ) )
+                    if( item->GetParent() && item->GetParent()->IsSelected() )
                         continue;
 
                     if( !item->IsNew() && !item->IsMoving() )
@@ -1271,7 +1263,7 @@ bool EDIT_TOOL::doMoveSelection( const TOOL_EVENT& aEvent, BOARD_COMMIT* aCommit
                             continue;
 
                         // Don't double move footprint pads, fields, etc.
-                        if( item->GetParent() && moved_items.count( item->GetParent() ) )
+                        if( item->GetParent() && item->GetParent()->IsSelected() )
                             continue;
 
                         BOARD_ITEM* boardItem = static_cast<BOARD_ITEM*>( item );
@@ -1431,9 +1423,6 @@ bool EDIT_TOOL::doMoveSelection( const TOOL_EVENT& aEvent, BOARD_COMMIT* aCommit
 
                     sel_items.clear();
                     sel_items.push_back( nextItem );
-
-                    moved_items.clear();
-                    moved_items.insert( nextItem );
                     updateStatusPopup( nextItem, itemIdx + 1, orig_items.size() );
 
                     // Pick up new item
@@ -1473,11 +1462,12 @@ bool EDIT_TOOL::doMoveSelection( const TOOL_EVENT& aEvent, BOARD_COMMIT* aCommit
             else
                 m_toolMgr->RunSynchronousAction( ACTIONS::increment, aCommit, ACTIONS::INCREMENT { 1, 0 } );
         }
-        else if( ZONE_FILLER_TOOL::IsZoneFillAction( evt ) || evt->IsAction( &PCB_ACTIONS::moveExact )
-                 || evt->IsAction( &PCB_ACTIONS::moveWithReference ) || evt->IsAction( &PCB_ACTIONS::copyWithReference )
+        else if( ZONE_FILLER_TOOL::IsZoneFillAction( evt )
+                 || evt->IsAction( &PCB_ACTIONS::moveExact )
+                 || evt->IsAction( &PCB_ACTIONS::moveWithReference )
+                 || evt->IsAction( &PCB_ACTIONS::copyWithReference )
                  || evt->IsAction( &PCB_ACTIONS::positionRelative )
-                 || evt->IsAction( &PCB_ACTIONS::interactiveOffsetTool ) || evt->IsAction( &ACTIONS::find )
-                 || evt->IsAction( &ACTIONS::findNext ) || evt->IsAction( &ACTIONS::findPrevious )
+                 || evt->IsAction( &PCB_ACTIONS::interactiveOffsetTool )
                  || evt->IsAction( &ACTIONS::redo ) )
         {
             wxBell();

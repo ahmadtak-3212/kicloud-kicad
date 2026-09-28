@@ -93,15 +93,15 @@ void ScriptingOnDestructPcbEditFrame( PCB_EDIT_FRAME* aPcbEditFrame )
 }
 
 
-BOARD* LoadBoard( const wxString& aFileName, bool aSetActive, wxString* aReason )
+BOARD* LoadBoard( const wxString& aFileName, bool aSetActive )
 {
     if( aFileName.EndsWith( FILEEXT::KiCadPcbFileExtension ) )
-        return LoadBoard( aFileName, PCB_IO_MGR::KICAD_SEXP, aSetActive, aReason );
+        return LoadBoard( aFileName, PCB_IO_MGR::KICAD_SEXP, aSetActive );
     else if( aFileName.EndsWith( FILEEXT::LegacyPcbFileExtension ) )
-        return LoadBoard( aFileName, PCB_IO_MGR::LEGACY, aSetActive, aReason );
+        return LoadBoard( aFileName, PCB_IO_MGR::LEGACY, aSetActive );
 
     // as fall back for any other kind use the legacy format
-    return LoadBoard( aFileName, PCB_IO_MGR::LEGACY, aSetActive, aReason );
+    return LoadBoard( aFileName, PCB_IO_MGR::LEGACY, aSetActive );
 }
 
 
@@ -150,8 +150,7 @@ BOARD* LoadBoard( const wxString& aFileName, PCB_IO_MGR::PCB_FILE_T aFormat )
 }
 
 
-BOARD* LoadBoard( const wxString& aFileName, PCB_IO_MGR::PCB_FILE_T aFormat, bool aSetActive,
-                  wxString* aReason )
+BOARD* LoadBoard( const wxString& aFileName, PCB_IO_MGR::PCB_FILE_T aFormat, bool aSetActive )
 {
     wxFileName pro = aFileName;
     pro.SetExt( FILEEXT::ProjectFileExtension );
@@ -189,13 +188,6 @@ BOARD* LoadBoard( const wxString& aFileName, PCB_IO_MGR::PCB_FILE_T aFormat, boo
     try
     {
         brd = PCB_IO_MGR::Load( aFormat, aFileName );
-    }
-    catch( const IO_ERROR& ioe )
-    {
-        if( aReason )
-            *aReason = ioe.What();
-
-        brd = nullptr;
     }
     catch( ... )
     {

@@ -26,7 +26,6 @@
 class KICOMMON_API JSON_SETTINGS_INTERNALS : public nlohmann::json
 {
     friend class JSON_SETTINGS;
-    friend class NESTED_SETTINGS;
 
 public:
     JSON_SETTINGS_INTERNALS() :

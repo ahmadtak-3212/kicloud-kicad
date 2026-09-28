@@ -262,9 +262,8 @@ CLI::PCB_RENDER_COMMAND::PCB_RENDER_COMMAND() : COMMAND( "render" )
                                                  FOLLOW_PLOT_SETTINGS ) ) );
 
     m_argParser.add_argument( ARG_USE_BOARD_STACKUP_COLORS )
-            .flag()
-            .help( UTF8STDSTR( _( "Use colors defined in the board stackup instead of those in "
-                                  "the preset" ) ) );
+            .default_value( true )
+            .help( UTF8STDSTR( _( "Colors defined in board stackup override those in preset" ) ) );
 
     m_argParser.add_argument( ARG_FLOOR )
             .flag()

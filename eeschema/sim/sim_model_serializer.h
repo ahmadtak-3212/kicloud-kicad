@@ -57,10 +57,7 @@ namespace SIM_MODEL_SERIALIZER_GRAMMAR
     struct param : identifier {};
 
     struct unquotedString : plus<not_at<sep>, any> {};
-    // Allow \" and \\ inside quoted values so nested quotes (e.g. model="… infile=\"file\"") work.
-    struct escapedChar : seq<one<'\\'>, one<'"', '\\'>> {};
-    struct quotedChar : sor<escapedChar, not_one<'"'>> {};
-    struct quotedStringContent : star<quotedChar> {};
+    struct quotedStringContent : star<not_at<one<'"'>>, any> {}; // TODO: Allow escaping '"'.
     struct quotedString : seq<one<'"'>,
                               quotedStringContent,
                               one<'"'>> {};

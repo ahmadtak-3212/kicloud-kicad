@@ -229,7 +229,7 @@ void VIEW::OnDestroy( VIEW_ITEM* aItem )
     if( aItem->m_viewPrivData )
     {
         if( aItem->m_viewPrivData->m_view )
-            aItem->m_viewPrivData->m_view->unlinkItem( aItem );
+            aItem->m_viewPrivData->m_view->VIEW::Remove( aItem );
 
         delete aItem->m_viewPrivData;
         aItem->m_viewPrivData = nullptr;
@@ -305,10 +305,8 @@ void VIEW::Add( VIEW_ITEM* aItem, int aDrawPriority )
     if( !aItem->m_viewPrivData )
         aItem->m_viewPrivData = new VIEW_ITEM_DATA;
 
-    // One view pointer and one index per item, so re-registering strands the first entry to
-    // dangle at free time
-    if( VIEW* previous = aItem->m_viewPrivData->m_view )
-        previous->unlinkItem( aItem );
+    wxASSERT_MSG( aItem->m_viewPrivData->m_view == nullptr || aItem->m_viewPrivData->m_view == this,
+                  wxS( "Already in a different view!" ) );
 
     aItem->m_viewPrivData->m_view = this;
     aItem->m_viewPrivData->m_drawPriority = aDrawPriority;
@@ -343,12 +341,6 @@ void VIEW::Add( VIEW_ITEM* aItem, int aDrawPriority )
 
 
 void VIEW::Remove( VIEW_ITEM* aItem )
-{
-    unlinkItem( aItem );
-}
-
-
-void VIEW::unlinkItem( VIEW_ITEM* aItem )
 {
     static int s_gcCounter = 0;
 
@@ -806,10 +798,11 @@ void VIEW::UpdateAllLayersColor()
 
             for( int layer : viewData->m_layers )
             {
-                int group = viewData->getGroup( layer );
+                const COLOR4D color = m_painter->GetSettings()->GetColor( item, layer );
+                int           group = viewData->getGroup( layer );
 
                 if( group >= 0 )
-                    recolorGroup( item, layer, group );
+                    m_gal->ChangeGroupColor( group, color );
             }
         }
     }
@@ -1314,15 +1307,6 @@ void VIEW::SortOrderedLayers()
 }
 
 
-void VIEW::recolorGroup( VIEW_ITEM* aItem, int aLayer, int aGroup )
-{
-    if( m_painter->HasUniformColor( aItem, aLayer ) )
-        m_gal->ChangeGroupColor( aGroup, m_painter->GetSettings()->GetColor( aItem, aLayer ) );
-    else
-        updateItemGeometry( aItem, aLayer );
-}
-
-
 void VIEW::updateItemColor( VIEW_ITEM* aItem, int aLayer )
 {
     VIEW_ITEM_DATA* viewData = aItem->viewPrivData();
@@ -1331,10 +1315,13 @@ void VIEW::updateItemColor( VIEW_ITEM* aItem, int aLayer )
     if( !viewData )
         return;
 
+    // Obtain the color that should be used for coloring the item on the specific layerId
+    const COLOR4D color = m_painter->GetSettings()->GetColor( aItem, aLayer );
     int group = viewData->getGroup( aLayer );
 
+    // Change the color, only if it has group assigned
     if( group >= 0 )
-        recolorGroup( aItem, aLayer, group );
+        m_gal->ChangeGroupColor( group, color );
 }
 
 
@@ -1382,10 +1369,7 @@ void VIEW::updateBbox( VIEW_ITEM* aItem )
     wxASSERT( aItem->m_viewPrivData ); //must have a viewPrivData
 
     const BOX2I  new_bbox = aItem->ViewBBox();
-
-    // The R-tree removal below keys on the bbox the item was inserted with, so it must be
-    // copied before the m_bbox overwrite that follows rather than aliased to it.
-    const BOX2I  old_bbox = aItem->m_viewPrivData->m_bbox;
+    const BOX2I* old_bbox = &aItem->m_viewPrivData->m_bbox;
     aItem->m_viewPrivData->m_bbox = new_bbox;
 
     for( int layer : layers )
@@ -1396,7 +1380,7 @@ void VIEW::updateBbox( VIEW_ITEM* aItem )
             continue;
 
         VIEW_LAYER& l = it->second;
-        l.items->Remove( aItem, &old_bbox );
+        l.items->Remove( aItem, old_bbox );
         l.items->Insert( aItem, new_bbox );
         MarkTargetDirty( l.target );
     }
@@ -1669,9 +1653,6 @@ std::unique_ptr<VIEW> VIEW::DataReference() const
 
 void VIEW::SetVisible( VIEW_ITEM* aItem, bool aIsVisible )
 {
-    if( !aItem )
-        return;
-
     VIEW_ITEM_DATA* viewData = aItem->viewPrivData();
 
     if( !viewData )
@@ -1693,9 +1674,6 @@ void VIEW::SetVisible( VIEW_ITEM* aItem, bool aIsVisible )
 
 void VIEW::Hide( VIEW_ITEM* aItem, bool aHide, bool aHideOverlay )
 {
-    if( !aItem )
-        return;
-
     VIEW_ITEM_DATA* viewData = aItem->viewPrivData();
 
     if( !viewData )

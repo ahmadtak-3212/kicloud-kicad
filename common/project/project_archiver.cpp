@@ -262,8 +262,11 @@ bool PROJECT_ARCHIVER::Archive( const wxString& aSrcDir, const wxString& aDestFi
 
     if( !projectDir.IsOpened() )
     {
-        msg.Printf( _( "Error opening directory: '%s'." ), aSrcDir );
-        aReporter.Report( msg, RPT_SEVERITY_ERROR );
+        if( aVerbose )
+        {
+            msg.Printf( _( "Error opening directory: '%s'." ), aSrcDir );
+            aReporter.Report( msg, RPT_SEVERITY_ERROR );
+        }
 
         wxSetWorkingDirectory( oldCwd );
         return false;
@@ -303,20 +306,7 @@ bool PROJECT_ARCHIVER::Archive( const wxString& aSrcDir, const wxString& aDestFi
         wxString relativeFn = fn.GetFullPath();
 
         // Read input file and add it to the zip file:
-        wxFSFile* infile = nullptr;
-        wxString  sysError;
-
-        {
-            // Failures are reported through aReporter, wx would also pop its own dialog.
-            wxLogNull suppressSysErrorPopups;
-            infile = fsFile.OpenFile( relativeFn );
-
-            if( !infile )
-            {
-                if( unsigned long code = wxSysErrorCode() )
-                    sysError = wxSysErrorMsgStr( code );
-            }
-        }
+        wxFSFile* infile = fsFile.OpenFile( relativeFn );
 
         if( infile )
         {
@@ -336,12 +326,11 @@ bool PROJECT_ARCHIVER::Archive( const wxString& aSrcDir, const wxString& aDestFi
         }
         else
         {
-            if( sysError.IsEmpty() )
+            if( aVerbose )
+            {
                 msg.Printf( _( "Failed to archive file '%s'." ), relativeFn );
-            else
-                msg.Printf( _( "Failed to archive file '%s': %s" ), relativeFn, sysError );
-
-            aReporter.Report( msg, RPT_SEVERITY_ERROR );
+                aReporter.Report( msg, RPT_SEVERITY_ERROR );
+            }
         }
     }
 
@@ -365,12 +354,11 @@ bool PROJECT_ARCHIVER::Archive( const wxString& aSrcDir, const wxString& aDestFi
         // bytes are included in the count.
         size_t zipBytesCnt = ostream.GetSize();
 
-        if( aVerbose )
-        {
-            msg.Printf( _( "Zip archive '%s' created (%s uncompressed, %s compressed)." ), aDestFile,
-                        reportSize( uncompressedBytes ), reportSize( zipBytesCnt ) );
-            aReporter.Report( msg, RPT_SEVERITY_INFO );
-        }
+        msg.Printf( _( "Zip archive '%s' created (%s uncompressed, %s compressed)." ),
+                    aDestFile,
+                    reportSize( uncompressedBytes ),
+                    reportSize( zipBytesCnt ) );
+        aReporter.Report( msg, RPT_SEVERITY_INFO );
     }
     else
     {

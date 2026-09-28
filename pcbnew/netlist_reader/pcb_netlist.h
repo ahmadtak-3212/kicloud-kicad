@@ -90,9 +90,7 @@ struct NETLIST_GROUP
     wxString name;
     KIID uuid;
     LIB_ID            libId;
-
-    // Full instance paths of the member symbols (sheet path + symbol uuid)
-    std::vector<KIID_PATH> members;
+    std::vector<KIID> members;
 };
 
 typedef boost::ptr_vector< NETLIST_GROUP > NETLIST_GROUPS;

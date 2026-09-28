@@ -234,11 +234,8 @@ const wxString& API_PLUGIN::ErrorMessage() const
 
 bool API_PLUGIN::IsValidIdentifier( const wxString& aIdentifier )
 {
-    // Validate a reverse-DNS style identifier:
-    // - Starts with a TLD containing at least two letters
-    // - Requires at least two additional namespaces
-    // - Namespaces are alphanumeric and may contain internal hyphens
-    wxRegEx identifierRegex( R"(^[a-zA-Z]{2,}(\.([a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]|[a-zA-Z0-9])){2,}$)" );
+    // At minimum, we need a reverse-DNS style identifier with two dots and a 2+ character TLD
+    wxRegEx identifierRegex( wxS( "[\\w\\d]{2,}\\.[\\w\\d]+\\.[\\w\\d]+" ) );
     return identifierRegex.Matches( aIdentifier );
 }
 

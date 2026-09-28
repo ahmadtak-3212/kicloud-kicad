@@ -21,7 +21,6 @@
 #include "nl_schematic_plugin.h"
 #include <advanced_config.h>
 #include <kiplatform/drivers.h>
-#include <navlib_safe_init.h>
 
 #include "nl_schematic_plugin_impl.h"
 
@@ -29,8 +28,7 @@
 NL_SCHEMATIC_PLUGIN::NL_SCHEMATIC_PLUGIN() : m_impl( nullptr )
 {
     if( ADVANCED_CFG::GetCfg().m_Use3DConnexionDriver
-        && KIPLATFORM::DRIVERS::Valid3DConnexionDriverVersion()
-        && !NavlibDriverCrashed() )
+        && KIPLATFORM::DRIVERS::Valid3DConnexionDriverVersion() )
     {
         m_impl = std::make_unique<NL_SCHEMATIC_PLUGIN_IMPL>();
     }

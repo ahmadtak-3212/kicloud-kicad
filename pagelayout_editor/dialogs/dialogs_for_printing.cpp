@@ -40,8 +40,6 @@
 #include "pl_editor_frame.h"
 #include "pl_editor_id.h"
 
-#include <printing.h>
-
 #include <wx/msgdlg.h>
 #include <wx/print.h>
 
@@ -244,7 +242,6 @@ int InvokeDialogPrint( PL_EDITOR_FRAME* aCaller, wxPrintData* aPrintData,
     }
 
     *aPageSetupData = printer.GetPrintDialogData().GetPrintData();
-    KIPLATFORM::PRINTING::ResetPrintToFilePath( aPageSetupData->GetPrintData() );
 
     return 1;
 }
