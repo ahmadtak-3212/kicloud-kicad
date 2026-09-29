@@ -34,6 +34,18 @@
 
 
 static const wxString HOSTNAME( wxT( "localhost" ) );
+
+#ifdef __EMSCRIPTEN__
+// KICLOUD: B1.4: a browser page cannot open a socket to another editor; the page hands the
+// message to the shell, which delivers it to the tab that registered the service number
+// (KIWAY_PLAYER::CreateServer). See docs/patches.md.
+#include <emscripten.h>
+
+EM_JS( void, kicloudCrossProbeSend, ( int aService, const char* aMessage ), {
+    if( typeof globalThis.kicloudCrossProbe === 'object' )
+        globalThis.kicloudCrossProbe.send( aService, UTF8ToString( aMessage ) );
+} );
+#endif
 /**
  * Spin up a thread to send messages via a socket.
  *
@@ -229,6 +241,12 @@ std::unique_ptr<ASYNC_SOCKET_HOLDER> socketHolder = nullptr;
  */
 bool SendCommand( int aService, const std::string& aMessage )
 {
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: B1.4 (see above).
+    kicloudCrossProbeSend( aService, aMessage.c_str() );
+    return true;
+#endif
+
     if( !socketHolder )
         socketHolder.reset( new ASYNC_SOCKET_HOLDER() );
 

@@ -35,6 +35,62 @@
 #include <core/raii.h>
 #include <wx/log.h>
 
+#ifdef __EMSCRIPTEN__
+// KICLOUD: B1.4 cross-probing between browser tabs. Each editor tab is its own KiCad
+// (single-top, so cross-probes go through SendCommand/CreateServer), and a browser page cannot
+// open or accept TCP sockets. CreateServer registers the frame as the receiver for its service
+// number with the page (web/live/editor.html, which tells the shell); a message routed back by
+// the shell arrives through kicloud_cross_probe_deliver() and reaches ExecuteRemoteCommand()
+// from the event loop, as OnSockRequest() does on the desktop. One difference from the desktop
+// socket: selection sync ("$SELECT: ...") is only understood as Kiway mail (MAIL_SELECTION,
+// which a project-manager session sends with the same payload); ExecuteRemoteCommand() ignores
+// it. The browser tabs are one project, so a "$SELECT:" message is delivered as that mail.
+// See docs/patches.md.
+#include <emscripten.h>
+#include <map>
+#include <string>
+#include <wx/app.h>
+
+static std::map<int, KIWAY_PLAYER*>& crossProbeServers()
+{
+    static std::map<int, KIWAY_PLAYER*> servers;
+    return servers;
+}
+
+EM_JS( void, kicloudCrossProbeListen, ( int aService ), {
+    if( typeof globalThis.kicloudCrossProbe === 'object' )
+        globalThis.kicloudCrossProbe.listen( aService );
+} );
+
+extern "C" EMSCRIPTEN_KEEPALIVE void kicloud_cross_probe_deliver( int aService, const char* aMessage )
+{
+    if( !wxTheApp )
+        return;
+
+    std::string message( aMessage ? aMessage : "" );
+
+    wxTheApp->CallAfter(
+            [aService, message]()
+            {
+                auto it = crossProbeServers().find( aService );
+
+                if( it == crossProbeServers().end() )
+                    return;
+
+                if( message.rfind( "$SELECT:", 0 ) == 0 )
+                {
+                    std::string payload = message;
+                    KIWAY_MAIL_EVENT mail( it->second->GetFrameType(), MAIL_SELECTION, payload );
+                    it->second->KiwayMailIn( mail );
+                }
+                else
+                {
+                    it->second->ExecuteRemoteCommand( message.c_str() );
+                }
+            } );
+}
+#endif
+
 
 static const wxString HOSTNAME( wxT( "localhost" ) );
 
@@ -64,6 +120,12 @@ KIWAY_PLAYER::KIWAY_PLAYER( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrameType
 
 KIWAY_PLAYER::~KIWAY_PLAYER() throw()
 {
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: B1.4: stop routing cross-probes to this frame (see CreateServer).
+    for( auto it = crossProbeServers().begin(); it != crossProbeServers().end(); )
+        it = ( it->second == this ) ? crossProbeServers().erase( it ) : std::next( it );
+#endif
+
     // socket server must be destructed before we complete
     // destructing the frame or else we could crash
     // as the socket server holds a reference to this frame
@@ -191,6 +253,13 @@ void KIWAY_PLAYER::kiway_express( KIWAY_MAIL_EVENT& aEvent )
 
 void KIWAY_PLAYER::CreateServer( int service, bool local )
 {
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: B1.4: no socket server in a browser page; the shell routes the messages.
+    crossProbeServers()[service] = this;
+    kicloudCrossProbeListen( service );
+    return;
+#endif
+
     wxIPV4address addr;
 
     // Set the port number
