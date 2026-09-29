@@ -27,6 +27,7 @@
 #include "dialogs/panel_maintenance.h"
 #include "kicad_manager_frame.h"
 #include <eda_base_frame.h>
+#include <kicloud_collab_hooks.h> // KICLOUD: L8.1 collab undo hooks
 #include <nlohmann/json.hpp>
 
 #include <advanced_config.h>
@@ -1866,6 +1867,10 @@ void EDA_BASE_FRAME::PushCommandToUndoList( PICKED_ITEMS_LIST* aNewitem )
 {
     m_undoList.PushCommand( aNewitem );
 
+    // KICLOUD: L8.1 the collab bridge records when this command's state was captured
+    if( KICLOUD_COLLAB_HOOKS::UndoPushed )
+        KICLOUD_COLLAB_HOOKS::UndoPushed( this, aNewitem, false );
+
     // Delete the extra items, if count max reached
     if( m_undoRedoCountMax > 0 )
     {
@@ -1880,6 +1885,10 @@ void EDA_BASE_FRAME::PushCommandToUndoList( PICKED_ITEMS_LIST* aNewitem )
 void EDA_BASE_FRAME::PushCommandToRedoList( PICKED_ITEMS_LIST* aNewitem )
 {
     m_redoList.PushCommand( aNewitem );
+
+    // KICLOUD: L8.1 the collab bridge records when this command's state was captured
+    if( KICLOUD_COLLAB_HOOKS::UndoPushed )
+        KICLOUD_COLLAB_HOOKS::UndoPushed( this, aNewitem, true );
 
     // Delete the extra items, if count max reached
     if( m_undoRedoCountMax > 0 )

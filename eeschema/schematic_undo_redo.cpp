@@ -37,6 +37,7 @@
 #include <drawing_sheet/ds_proxy_undo_item.h>
 #include <tool/actions.h>
 #include <wx/log.h>
+#include <kicloud_collab_hooks.h> // KICLOUD: L8.1 collab undo hooks
 
 
 /* Functions to undo and redo edit commands.
@@ -245,6 +246,11 @@ void SCH_EDIT_FRAME::SaveCopyInUndoList( const PICKED_ITEMS_LIST& aItemsList, UN
 
 void SCH_EDIT_FRAME::PutDataInPreviousState( PICKED_ITEMS_LIST* aList )
 {
+    // KICLOUD: L8.1 the collab bridge reports items a remote apply changed after this command
+    // was recorded (the undo below overwrites them); it does not change what happens
+    if( KICLOUD_COLLAB_HOOKS::BeforeUndoRedo )
+        KICLOUD_COLLAB_HOOKS::BeforeUndoRedo( this, aList );
+
     std::vector<SCH_ITEM*> bulkAddedItems;
     std::vector<SCH_ITEM*> bulkRemovedItems;
     std::vector<SCH_ITEM*> bulkChangedItems;

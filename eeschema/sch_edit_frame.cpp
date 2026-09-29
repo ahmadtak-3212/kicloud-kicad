@@ -1868,7 +1868,8 @@ void SCH_EDIT_FRAME::initScreenZoom()
 
 
 void SCH_EDIT_FRAME::RecalculateConnections( SCH_COMMIT* aCommit, SCH_CLEANUP_FLAGS aCleanupFlags,
-                                             PROGRESS_REPORTER* aProgressReporter )
+                                             PROGRESS_REPORTER* aProgressReporter,
+                                             bool aIncrementalFromUndo )
 {
     wxString highlightedConn = GetHighlightedConnection();
     bool     hasHighlightedConn = !highlightedConn.IsEmpty();
@@ -1901,8 +1902,11 @@ void SCH_EDIT_FRAME::RecalculateConnections( SCH_COMMIT* aCommit, SCH_CLEANUP_FL
                                         aProgressReporter,
                                         GetCanvas()->GetView(),
                                         &changeHandler,
-                                        m_undoList.m_CommandsList.empty() ? nullptr
-                                                                          : m_undoList.m_CommandsList.back() );
+                                        // KICLOUD: L8.1 no incremental scope for a commit
+                                        // that skipped the undo stack (see the header)
+                                        ( !aIncrementalFromUndo || m_undoList.m_CommandsList.empty() )
+                                                ? nullptr
+                                                : m_undoList.m_CommandsList.back() );
 
     GetCanvas()->GetView()->UpdateAllItemsConditionally(
             [&]( KIGFX::VIEW_ITEM* aItem ) -> int

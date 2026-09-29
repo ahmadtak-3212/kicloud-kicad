@@ -48,6 +48,7 @@ using namespace std::placeholders;
 #include <board_commit.h>
 #include <drawing_sheet/ds_proxy_undo_item.h>
 #include <wx/log.h>
+#include <kicloud_collab_hooks.h> // KICLOUD: L8.1 collab undo hooks
 #include <wx/msgdlg.h>
 #include <pcb_board_outline.h>
 
@@ -301,6 +302,11 @@ void PCB_BASE_EDIT_FRAME::RestoreCopyFromRedoList( wxCommandEvent& aEvent )
 
 void PCB_BASE_EDIT_FRAME::PutDataInPreviousState( PICKED_ITEMS_LIST* aList, bool aRehatchShapes )
 {
+    // KICLOUD: L8.1 the collab bridge reports items a remote apply changed after this command
+    // was recorded (the undo below overwrites them); it does not change what happens
+    if( KICLOUD_COLLAB_HOOKS::BeforeUndoRedo )
+        KICLOUD_COLLAB_HOOKS::BeforeUndoRedo( this, aList );
+
     bool not_found = false;
     bool reBuild_ratsnest = false;
     bool deep_reBuild_ratsnest = false;  // true later if pointers must be rebuilt

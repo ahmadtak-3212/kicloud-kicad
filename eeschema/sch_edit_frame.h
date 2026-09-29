@@ -790,9 +790,14 @@ public:
 
     /**
      * Generate the connection data for the entire schematic hierarchy.
+     *
+     * KICLOUD: L8.1 @param aIncrementalFromUndo false for a commit that skipped the undo stack
+     * (a collaborative remote apply): the incremental update scopes itself by the last undo
+     * command, which is then an unrelated local edit, so the connectivity is rebuilt in full.
      */
     void RecalculateConnections( SCH_COMMIT* aCommit, SCH_CLEANUP_FLAGS aCleanupFlags,
-                                 PROGRESS_REPORTER* aProgressReporter = nullptr );
+                                 PROGRESS_REPORTER* aProgressReporter = nullptr,
+                                 bool aIncrementalFromUndo = true );
 
     /**
      * Called after the preferences dialog is run.

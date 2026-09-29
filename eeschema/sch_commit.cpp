@@ -458,7 +458,10 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
             wxLogTrace( wxS( "CONN_PROFILE" ),
                         wxS( "SCH_COMMIT::pushSchEdit() %s clean up connectivity rebuild." ),
                         connectivityCleanUp == LOCAL_CLEANUP ? wxS( "local" ) : wxS( "global" ) );
-            frame->RecalculateConnections( this, connectivityCleanUp );
+            // KICLOUD: L8.1 a SKIP_UNDO commit is not the last undo command, so it must not
+            // take the incremental update's scope from it (a full rebuild instead)
+            frame->RecalculateConnections( this, connectivityCleanUp, nullptr,
+                                           !( aCommitFlags & SKIP_UNDO ) );
         }
     }
 
