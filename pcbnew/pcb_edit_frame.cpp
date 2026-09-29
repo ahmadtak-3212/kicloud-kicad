@@ -2323,6 +2323,24 @@ int PCB_EDIT_FRAME::TestStandalone()
     if( !frame )
         return -1;
 
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: B1.14i: every editor frame of this instance is a browser tab (B1.6d), and a frame
+    // whose tab is hidden is not IsShownOnScreen(). A schematic frame that already has this
+    // project's schematic is the running schematic editor: re-opening it asked "Save Changes?"
+    // over its unsaved edits (Discard lost them), and dropped its undo history otherwise. Use it
+    // as it is, as desktop KiCad uses a running schematic editor. See docs/patches.md.
+    {
+        const wxFileName current( frame->GetCurrentFileName() );
+        const wxFileName project( Prj().GetProjectPath(), Prj().GetProjectName(), wxEmptyString );
+
+        if( !current.GetName().IsEmpty() && current.GetName() == project.GetName()
+            && current.GetPath() == project.GetPath() )
+        {
+            return 1;
+        }
+    }
+#endif
+
     if( !frame->IsShownOnScreen() )
     {
         wxEventBlocker blocker( this );
