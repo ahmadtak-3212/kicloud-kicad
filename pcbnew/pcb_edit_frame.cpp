@@ -1506,8 +1506,8 @@ bool PCB_EDIT_FRAME::canCloseWindow( wxCloseEvent& aEvent )
 void PCB_EDIT_FRAME::doCloseWindow()
 {
     // Unregister the autosave saver before any cleanup that might invalidate the board
-    if( GetBoard() )
-        Kiway().LocalHistory().UnregisterSaver( GetBoard() );
+    // KICLOUD: B1.14h, keyed by the frame (see ProjectChanged())
+    Kiway().LocalHistory().UnregisterSaver( this );
 
     // On Windows 7 / 32 bits, on OpenGL mode only, Pcbnew crashes
     // when closing this frame if a footprint was selected, and the footprint editor called
@@ -3205,8 +3205,13 @@ void PCB_EDIT_FRAME::ProjectChanged()
     // file I/O happen on a background thread to avoid blocking the UI.
     if( GetBoard() )
     {
+        // KICLOUD: B1.14h. The saver is keyed by this frame, not by the board: SetBoard()
+        // replaces the board after a first ProjectChanged() registered it, and a saver left
+        // under the old key outlives the frame and runs on it when another editor frame of the
+        // instance saves (the browser's editor tabs, B1.6d). The saver reads GetBoard() when it
+        // runs, so one saver per frame is enough.
         Kiway().LocalHistory().RegisterSaver(
-                GetBoard(),
+                this,
                 [this]( const wxString& aProjectPath, std::vector<HISTORY_FILE_DATA>& aFileData )
                 {
                     // See SCHEMATIC::SaveToHistory: the dirty check is only valid in ZIP

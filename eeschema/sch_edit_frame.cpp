@@ -609,8 +609,18 @@ SCH_EDIT_FRAME::~SCH_EDIT_FRAME()
     delete m_schematic;
     m_schematic = nullptr;
 
+    // KICLOUD: B1.14h. One instance hosts several editor frames (the browser's editor tabs,
+    // B1.6d), and they share its project: a board editor still open holds it (BOARD's
+    // m_project). Leave it loaded while another editor frame is open (this frame's own entry
+    // was cleared when it was destroyed); the last one unloads it, as the project manager does
+    // on the desktop.
+    bool otherEditorOpen = false;
+
+    for( int i = 0; i < KIWAY_PLAYER_COUNT && !otherEditorOpen; ++i )
+        otherEditorOpen = FRAME_T( i ) != GetFrameType() && Kiway().Player( FRAME_T( i ), false );
+
     // Close the project if we are standalone, so it gets cleaned up properly
-    if( Kiface().IsSingle() )
+    if( Kiface().IsSingle() && !otherEditorOpen )
     {
         try
         {
@@ -1218,8 +1228,8 @@ bool SCH_EDIT_FRAME::canCloseWindow( wxCloseEvent& aEvent )
 void SCH_EDIT_FRAME::doCloseWindow()
 {
     // Unregister the autosave saver before any cleanup that might invalidate m_schematic
-    if( m_schematic )
-        Kiway().LocalHistory().UnregisterSaver( m_schematic );
+    // KICLOUD: B1.14h, keyed by the frame (see ProjectChanged())
+    Kiway().LocalHistory().UnregisterSaver( this );
 
     SCH_BASE_FRAME::doCloseWindow();
 
@@ -1502,7 +1512,12 @@ void SCH_EDIT_FRAME::ProjectChanged()
     SCH_BASE_FRAME::ProjectChanged();
 
     // Register schematic saver for autosave history
-    Kiway().LocalHistory().RegisterSaver( m_schematic,
+    // KICLOUD: B1.14h. The saver is keyed by this frame, not by m_schematic: SetSchematic()
+    // replaces the schematic after a first ProjectChanged() registered it, and a saver left
+    // under the old key outlived the frame and ran on it when another editor frame of the
+    // instance saved (the browser's editor tabs, B1.6d). The saver reads m_schematic when it
+    // runs, so one saver per frame is enough.
+    Kiway().LocalHistory().RegisterSaver( this,
             [this]( const wxString& aProjectPath, std::vector<HISTORY_FILE_DATA>& aFileData )
             {
                 m_schematic->SaveToHistory( aProjectPath, aFileData );

@@ -54,6 +54,7 @@
 #include <widgets/kistatusbar.h>
 #include <widgets/wx_aui_utils.h>
 #include <id.h>
+#include <kiway.h>     // KICLOUD: B1.14h
 
 
 PCB_BASE_EDIT_FRAME::PCB_BASE_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent,
@@ -107,8 +108,17 @@ void PCB_BASE_EDIT_FRAME::doCloseWindow()
 {
     SETTINGS_MANAGER* mgr = GetSettingsManager();
 
+    // KICLOUD: B1.14h. One instance hosts several editor frames (the browser's editor tabs,
+    // B1.6d), and they share its project: a schematic editor still open holds it (SCHEMATIC's
+    // m_project). Leave it loaded while another editor frame is open; the last one unloads it,
+    // as the project manager does on the desktop.
+    bool otherEditorOpen = false;
+
+    for( int i = 0; i < KIWAY_PLAYER_COUNT && !otherEditorOpen; ++i )
+        otherEditorOpen = FRAME_T( i ) != GetFrameType() && Kiway().Player( FRAME_T( i ), false );
+
     // Close the project if we are standalone, so it gets cleaned up properly
-    if( mgr->IsProjectOpen() && Kiface().IsSingle() )
+    if( mgr->IsProjectOpen() && Kiface().IsSingle() && !otherEditorOpen )
         mgr->UnloadProject( &Prj(), false );
 }
 
