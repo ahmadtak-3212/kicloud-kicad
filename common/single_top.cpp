@@ -471,7 +471,7 @@ bool PGM_SINGLE_TOP::OnPgmInit()
     FRAME_T topFrame = TOP_FRAME;
 
 #ifdef __EMSCRIPTEN__
-    bool wasmLibEditorProject = false;    // KICLOUD: see the project load below
+    bool wasmProjectArg = false;    // KICLOUD: see the project load below
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -519,12 +519,13 @@ bool PGM_SINGLE_TOP::OnPgmInit()
             }
         }
 
-        // KICLOUD: the symbol and footprint editors are started with the project file when
-        // they are opened from the browser's project manager. Load that project before the
-        // frame exists, as desktop KiCad's project manager does, so the frame starts with the
-        // project's library tables. See docs/patches.md (B1.7).
-        if( ( topFrame == FRAME_SCH_SYMBOL_EDITOR || topFrame == FRAME_FOOTPRINT_EDITOR )
-            && frameParser.GetParamCount() == 1 )
+        // KICLOUD: an editor is started with the project file when the browser's project manager
+        // has no document of that project for it (and the library editors always are). Load that
+        // project before the frame exists, as desktop KiCad's project manager does: the frame
+        // starts in the project (with its library tables) and opens no document. Every editor of
+        // an instance then shares one project; a later editor that opened another project's file
+        // unloaded the project under the open ones. See docs/patches.md (B1.7, B1.14a).
+        if( frameParser.GetParamCount() == 1 )
         {
             wxFileName pro( frameParser.GetParam( 0 ) );
 
@@ -532,7 +533,7 @@ bool PGM_SINGLE_TOP::OnPgmInit()
             {
                 pro.MakeAbsolute();
                 GetSettingsManager().LoadProject( pro.GetFullPath() );
-                wasmLibEditorProject = true;
+                wasmProjectArg = true;
             }
         }
     }
@@ -658,8 +659,8 @@ bool PGM_SINGLE_TOP::OnPgmInit()
         }
 
 #ifdef __EMSCRIPTEN__
-        // KICLOUD: a library editor's project file was loaded above; it is not a document.
-        if( !wasmLibEditorProject )
+        // KICLOUD: a project file given as the argument was loaded above; it is not a document.
+        if( !wasmProjectArg )
 #endif
         frame->OpenProjectFiles( fileArgs );
     }

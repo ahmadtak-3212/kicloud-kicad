@@ -593,6 +593,15 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
     else
         setProject = Prj().GetProjectFullName().IsEmpty();
 
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: the browser's project manager keeps one project for all editors of an instance,
+    // so a non-KiCad import goes into it, as under desktop KiCad's project manager (the branch
+    // above for !IsSingle()), instead of switching to a project named after the imported file:
+    // the switch unloaded the project under the other editors (B1.14a, B1.11).
+    if( ( aCtl & KICTL_NONKICAD_ONLY ) && !Prj().GetProjectFullName().IsEmpty() )
+        setProject = false;
+#endif
+
     if( setProject )
     {
         // calls SaveProject

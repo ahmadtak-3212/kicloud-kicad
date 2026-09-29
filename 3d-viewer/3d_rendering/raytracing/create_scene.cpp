@@ -893,6 +893,10 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
 
     load3DModels( m_objectContainer, aOnlyLoadCopperAndShapes );
 
+#ifdef __EMSCRIPTEN__
+    reportMissingModels( aWarningReporter );    // KICLOUD: B1.10
+#endif
+
 #ifdef PRINT_STATISTICS_3D_VIEWER
     int64_t stats_endLoad3DmodelsTime = GetRunningMicroSecs();
 #endif
@@ -1914,6 +1918,10 @@ void RENDER_3D_RAYTRACE_BASE::addPadsAndVias()
 void RENDER_3D_RAYTRACE_BASE::load3DModels( CONTAINER_3D& aDstContainer,
                                             bool aSkipMaterialInformation )
 {
+#ifdef __EMSCRIPTEN__
+    m_missingModels.clear();    // KICLOUD: B1.10, see render_3d_base.h
+#endif
+
     if( !m_boardAdapter.GetBoard() )
         return;
 
@@ -1999,6 +2007,11 @@ void RENDER_3D_RAYTRACE_BASE::load3DModels( CONTAINER_3D& aDstContainer,
 
                 const S3DMODEL* modelPtr = cacheMgr->GetModel( model.m_Filename, footprintBasePath,
                                                                std::move( embeddedFilesStack ) );
+
+#ifdef __EMSCRIPTEN__
+                if( !modelPtr )
+                    m_missingModels.insert( model.m_Filename );    // KICLOUD: B1.10
+#endif
 
                 // only add it if the return is not NULL.
                 if( modelPtr )

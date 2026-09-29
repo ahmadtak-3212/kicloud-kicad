@@ -875,6 +875,15 @@ void SCH_EDIT_FRAME::OnImportProject()
 
     // Set the project location if none is set or if we are running in standalone mode
     bool     setProject = Prj().GetProjectFullName().IsEmpty() || Kiface().IsSingle();
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: the browser's project manager keeps one project for all editors of an instance,
+    // so an import goes into it as under desktop KiCad's project manager ("Replace current
+    // schematic"), instead of switching to a project named after the imported file (standalone):
+    // the switch unloaded the project under the other editors (B1.14a, B1.11).
+    if( !Prj().GetProjectFullName().IsEmpty() )
+        setProject = false;
+#endif
     wxString path = wxPathOnly( Prj().GetProjectFullName() );
 
     wxString fileFiltersStr;

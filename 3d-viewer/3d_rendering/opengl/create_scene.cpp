@@ -938,6 +938,10 @@ void RENDER_3D_OPENGL::reload( REPORTER* aStatusReporter, REPORTER* aWarningRepo
 
     load3dModels( aStatusReporter );
 
+#ifdef __EMSCRIPTEN__
+    reportMissingModels( aWarningReporter );    // KICLOUD: B1.10
+#endif
+
     if( aStatusReporter )
     {
         // Calculation time in seconds
@@ -1607,6 +1611,10 @@ void RENDER_3D_OPENGL::Load3dModelsIfNeeded()
 
 void RENDER_3D_OPENGL::load3dModels( REPORTER* aStatusReporter )
 {
+#ifdef __EMSCRIPTEN__
+    m_missingModels.clear();    // KICLOUD: B1.10, see render_3d_base.h
+#endif
+
     if( !m_boardAdapter.GetBoard() )
         return;
 
@@ -1673,6 +1681,11 @@ void RENDER_3D_OPENGL::load3dModels( REPORTER* aStatusReporter )
 
                     const S3DMODEL* modelPtr = cacheMgr->GetModel( fp_model.m_Filename, footprintBasePath,
                                                                    std::move( embeddedFilesStack ) );
+
+#ifdef __EMSCRIPTEN__
+                    if( !modelPtr )
+                        m_missingModels.insert( fp_model.m_Filename );    // KICLOUD: B1.10
+#endif
 
                     // only add it if the return is not NULL
                     if( modelPtr )

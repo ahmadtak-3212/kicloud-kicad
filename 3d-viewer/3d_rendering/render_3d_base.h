@@ -33,6 +33,7 @@
 #include <pcb_base_frame.h>
 #include "3d_canvas/board_adapter.h"
 #include <reporter.h>
+#include <set>
 
 #include <widgets/busy_indicator.h>
 
@@ -119,6 +120,19 @@ protected:
      *  more information.
      */
     static const wxChar* m_logTrace;
+
+#ifdef __EMSCRIPTEN__
+    /// KICLOUD: the 3D models the last scene build could not load (B1.10).
+    std::set<wxString> m_missingModels;
+
+    /**
+     * KICLOUD: name the 3D models that are not shown, and why, in the viewer's infobar (B1.10).
+     * Desktop KiCad only traces a model it cannot find; in the browser most library models are
+     * missing (the model library is not served; STEP needs the OpenCASCADE worker), and the
+     * viewer showed bare boards without a word.
+     */
+    void reportMissingModels( REPORTER* aWarningReporter ) const;
+#endif
 
 private:
     /// Factory that returns a suitable busy indicator for the context.

@@ -29,6 +29,7 @@
 
 
 #include "render_3d_base.h"
+#include <wx/filename.h>
 #include <wx/log.h>
 
 
@@ -75,3 +76,33 @@ std::unique_ptr<BUSY_INDICATOR> RENDER_3D_BASE::CreateBusyIndicator() const
 
     return busy;
 }
+
+
+#ifdef __EMSCRIPTEN__
+// KICLOUD: see render_3d_base.h (B1.10).
+void RENDER_3D_BASE::reportMissingModels( REPORTER* aWarningReporter ) const
+{
+    if( !aWarningReporter || m_missingModels.empty() )
+        return;
+
+    wxString names;
+    int      listed = 0;
+
+    for( const wxString& model : m_missingModels )
+    {
+        if( listed == 3 )
+            break;
+
+        names += ( listed++ ? wxS( ", " ) : wxString() ) + wxFileName( model ).GetFullName();
+    }
+
+    if( m_missingModels.size() > 3 )
+        names += wxString::Format( _( " and %d more" ), (int) m_missingModels.size() - 3 );
+
+    aWarningReporter->Report( wxString::Format( _( "%d 3D models could not be loaded and are not shown: %s. "
+                                                   "The browser version does not include KiCad's 3D model "
+                                                   "library yet, and STEP models are not supported yet." ),
+                                                (int) m_missingModels.size(), names ),
+                              RPT_SEVERITY_WARNING );
+}
+#endif
