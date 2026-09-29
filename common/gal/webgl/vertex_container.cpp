@@ -32,6 +32,7 @@
 #include <gal/webgl/vertex_container.h>
 #include <gal/webgl/cached_container_ram.h>
 #include <gal/webgl/cached_container_gpu.h>
+#include <gal/webgl/cached_container_split.h>   // KICLOUD: B1.6c
 #include <gal/webgl/noncached_container.h>
 #include <gal/webgl/shader.h>
 
@@ -44,8 +45,9 @@ VERTEX_CONTAINER* VERTEX_CONTAINER::MakeContainer( bool aCached )
     if( aCached )
     {
         // WebGL 2.0 does not support glMapBuffer (only available via FULL_ES3 emulation).
-        // Always use RAM container which uploads via glBufferData - native WebGL 2.0.
-        return new CACHED_CONTAINER_RAM;
+        // KICLOUD: a container that keeps the vertices on the GPU only; the RAM container kept a
+        // CPU copy of every cached vertex (docs/patches.md, B1.6c).
+        return new CACHED_CONTAINER_SPLIT;
     }
 
     return new NONCACHED_CONTAINER;
@@ -66,4 +68,40 @@ VERTEX_CONTAINER::VERTEX_CONTAINER( unsigned int aSize ) :
 
 VERTEX_CONTAINER::~VERTEX_CONTAINER()
 {
+}
+
+
+// KICLOUD: moved here from VERTEX_MANAGER::ChangeItemColor/Depth, so a container can keep its
+// vertices on the GPU only (docs/patches.md, B1.6c)
+void VERTEX_CONTAINER::SetItemColor( unsigned int aOffset, unsigned int aSize,
+                                     const GLubyte aColor[4] )
+{
+    VERTEX* vertex = GetVertices( aOffset );
+
+    for( unsigned int i = 0; i < aSize; ++i )
+    {
+        vertex->r = aColor[0];
+        vertex->g = aColor[1];
+        vertex->b = aColor[2];
+        vertex->a = aColor[3];
+        vertex++;
+    }
+
+    // KICLOUD: mark only this item's vertices for upload (docs/patches.md, B1.6)
+    SetDirty( aOffset, aSize );
+}
+
+
+void VERTEX_CONTAINER::SetItemDepth( unsigned int aOffset, unsigned int aSize, GLfloat aDepth )
+{
+    VERTEX* vertex = GetVertices( aOffset );
+
+    for( unsigned int i = 0; i < aSize; ++i )
+    {
+        vertex->z = aDepth;
+        vertex++;
+    }
+
+    // KICLOUD: mark only this item's vertices for upload (docs/patches.md, B1.6)
+    SetDirty( aOffset, aSize );
 }

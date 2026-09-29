@@ -96,6 +96,13 @@ public:
 
     virtual unsigned int AllItemsSize() const { return 0; }
 
+    /**
+     * KICLOUD: bind the vertex buffer(s) to the shader attributes for drawing (an attribute of
+     * -1 is not used). The default is the interleaved VERTEX layout (docs/patches.md, B1.6c).
+     */
+    virtual void BindAttributes( int aVertexAttrib, int aDepthAttrib, int aColorAttrib,
+                                 int aShaderAttrib );
+
 protected:
     ///< Maps size of free memory chunks to their offsets
     typedef std::pair<unsigned int, unsigned int> CHUNK;
@@ -113,6 +120,12 @@ protected:
      * @return true in case of success, false otherwise.
      */
     bool reallocate( unsigned int aSize );
+
+    /**
+     * KICLOUD: copy the vertices of the current item from one chunk to another during
+     * reallocate(). The default copies within m_vertices (docs/patches.md, B1.6c).
+     */
+    virtual void moveItemData( unsigned int aFrom, unsigned int aTo, unsigned int aCount );
 
     /**
      * Remove empty spaces between chunks and optionally resizes the container.

@@ -872,6 +872,7 @@ void PCB_EDIT_FRAME::redrawNetnames()
 
     // KICLOUD: B1.12b: these repaints follow the viewport; they are not edits (view.h)
     view->SetViewportDependentUpdates( true );
+    bool updated = false;
 
     for( PCB_TRACK* track : GetBoard()->Tracks() )
     {
@@ -884,10 +885,18 @@ void PCB_EDIT_FRAME::redrawNetnames()
             continue;
 
         if( track->ViewGetLOD( GetNetnameLayer( track->GetLayer() ), view ) < view->GetScale() )
+        {
             view->Update( track, KIGFX::REPAINT );
+            updated = true;
+        }
     }
 
     view->SetViewportDependentUpdates( false );
+
+    // KICLOUD: B1.12a: paint the updated names now. Without a refresh they wait for the next
+    // repaint (a mouse move), so names that a pan brought into view appeared late.
+    if( updated )
+        GetCanvas()->Refresh();
 }
 
 

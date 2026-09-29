@@ -108,13 +108,9 @@
         return GL_TRUE;
     }
 
-    // Buffer copy - not available in WebGL 1.0, no-op stub
-    inline void glCopyBufferSubData(GLenum readTarget, GLenum writeTarget,
-                                     GLintptr readOffset, GLintptr writeOffset,
-                                     GLsizeiptr size) {
-        (void)readTarget; (void)writeTarget;
-        (void)readOffset; (void)writeOffset; (void)size;
-    }
+    // KICLOUD: glCopyBufferSubData is WebGL 2.0's copyBufferSubData (GLES3/gl3.h). This header
+    // defined it as an empty WebGL 1.0 stub, which silently replaced the real call; the split
+    // cached container moves vertices with it (docs/patches.md, B1.6c).
 
     // EXT framebuffer functions - alias to standard GL ES 2.0 functions
     #ifndef GL_FRAMEBUFFER_EXT

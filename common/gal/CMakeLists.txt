@@ -84,6 +84,7 @@ if( EMSCRIPTEN )
         webgl/cached_container.cpp
         webgl/cached_container_gpu.cpp
         webgl/cached_container_ram.cpp
+        webgl/cached_container_split.cpp    # KICLOUD: B1.6c, GPU-only cached vertices
         webgl/noncached_container.cpp
         webgl/webgl_antialiasing.cpp
         webgl/fullscreen_quad.cpp

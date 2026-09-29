@@ -257,7 +257,8 @@ bool CACHED_CONTAINER::reallocate( unsigned int aSize )
     if( itemSize > 0 )
     {
         // The item was reallocated, so we have to copy all the old data to the new place
-        memcpy( &m_vertices[newChunkOffset], &m_vertices[m_chunkOffset], itemSize * VERTEX_SIZE );
+        // KICLOUD: through moveItemData(), for containers without m_vertices (B1.6c)
+        moveItemData( m_chunkOffset, newChunkOffset, itemSize );
 
         // Free the space used by the previous chunk
         addFreeChunk( m_chunkOffset, m_chunkSize );
@@ -273,6 +274,43 @@ bool CACHED_CONTAINER::reallocate( unsigned int aSize )
     m_item->setOffset( m_chunkOffset );
 
     return true;
+}
+
+
+// KICLOUD: see cached_container.h (docs/patches.md, B1.6c)
+void CACHED_CONTAINER::moveItemData( unsigned int aFrom, unsigned int aTo, unsigned int aCount )
+{
+    memcpy( &m_vertices[aTo], &m_vertices[aFrom], aCount * VERTEX_SIZE );
+}
+
+
+// KICLOUD: the interleaved layout; a_vertex is (x, y) and a_depth is z (docs/patches.md, B1.6c)
+void CACHED_CONTAINER::BindAttributes( int aVertexAttrib, int aDepthAttrib, int aColorAttrib,
+                                       int aShaderAttrib )
+{
+    glBindBuffer( GL_ARRAY_BUFFER, GetBufferHandle() );
+
+    glEnableVertexAttribArray( aVertexAttrib );
+    glVertexAttribPointer( aVertexAttrib, 2, GL_FLOAT, GL_FALSE, VERTEX_SIZE,
+                           (GLvoid*) COORD_OFFSET );
+
+    if( aDepthAttrib >= 0 )
+    {
+        glEnableVertexAttribArray( aDepthAttrib );
+        glVertexAttribPointer( aDepthAttrib, 1, GL_FLOAT, GL_FALSE, VERTEX_SIZE,
+                               (GLvoid*) ( COORD_OFFSET + 2 * sizeof( GLfloat ) ) );
+    }
+
+    glEnableVertexAttribArray( aColorAttrib );
+    glVertexAttribPointer( aColorAttrib, COLOR_STRIDE, GL_UNSIGNED_BYTE, GL_TRUE, VERTEX_SIZE,
+                           (GLvoid*) COLOR_OFFSET );
+
+    if( aShaderAttrib >= 0 )
+    {
+        glEnableVertexAttribArray( aShaderAttrib );
+        glVertexAttribPointer( aShaderAttrib, SHADER_STRIDE, GL_FLOAT, GL_FALSE, VERTEX_SIZE,
+                               (GLvoid*) SHADER_OFFSET );
+    }
 }
 
 

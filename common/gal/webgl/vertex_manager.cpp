@@ -203,40 +203,19 @@ void VERTEX_MANAGER::FreeItem( VERTEX_ITEM& aItem ) const
 
 void VERTEX_MANAGER::ChangeItemColor( const VERTEX_ITEM& aItem, const COLOR4D& aColor ) const
 {
-    unsigned int size = aItem.GetSize();
-    unsigned int offset = aItem.GetOffset();
+    // KICLOUD: the container writes the colour; it may have no CPU copy of the vertices
+    // (docs/patches.md, B1.6c)
+    const GLubyte color[4] = { (GLubyte) ( aColor.r * 255.0 ), (GLubyte) ( aColor.g * 255.0 ),
+                               (GLubyte) ( aColor.b * 255.0 ), (GLubyte) ( aColor.a * 255.0 ) };
 
-    VERTEX* vertex = m_container->GetVertices( offset );
-
-    for( unsigned int i = 0; i < size; ++i )
-    {
-        vertex->r = aColor.r * 255.0;
-        vertex->g = aColor.g * 255.0;
-        vertex->b = aColor.b * 255.0;
-        vertex->a = aColor.a * 255.0;
-        vertex++;
-    }
-
-    // KICLOUD: mark only this item's vertices for upload (docs/patches.md, B1.6)
-    m_container->SetDirty( offset, size );
+    m_container->SetItemColor( aItem.GetOffset(), aItem.GetSize(), color );
 }
 
 
 void VERTEX_MANAGER::ChangeItemDepth( const VERTEX_ITEM& aItem, GLfloat aDepth ) const
 {
-    unsigned int size = aItem.GetSize();
-    unsigned int offset = aItem.GetOffset();
-
-    VERTEX* vertex = m_container->GetVertices( offset );
-
-    for( unsigned int i = 0; i < size; ++i )
-    {
-        vertex->z = aDepth;
-        vertex++;
-    }
-
-    // KICLOUD: mark only this item's vertices for upload (docs/patches.md, B1.6)
-    m_container->SetDirty( offset, size );
+    // KICLOUD: see ChangeItemColor() (docs/patches.md, B1.6c)
+    m_container->SetItemDepth( aItem.GetOffset(), aItem.GetSize(), aDepth );
 }
 
 

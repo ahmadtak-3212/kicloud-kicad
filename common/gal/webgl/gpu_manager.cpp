@@ -64,6 +64,7 @@ GPU_MANAGER::GPU_MANAGER( VERTEX_CONTAINER* aContainer ) :
         m_shaderAttrib( 0 ),
         m_vertexAttrib( 0 ),
         m_colorAttrib( 0 ),
+        m_depthAttrib( -1 ),
         m_enableDepthTest( true ),
         m_vao( 0 )
 {
@@ -87,6 +88,9 @@ void GPU_MANAGER::SetShader( SHADER& aShader )
     m_shaderAttrib = m_shader->GetAttribute( "a_shaderParams" );
     m_vertexAttrib = m_shader->GetAttribute( "a_vertex" );
     m_colorAttrib = m_shader->GetAttribute( "a_color" );
+    // KICLOUD: the vertex position is split into a_vertex (x, y) and a_depth (z), so a cached
+    // container can keep depth in its own buffer (convert_glsl_es3.py, docs/patches.md B1.6c)
+    m_depthAttrib = m_shader->GetAttribute( "a_depth" );
 
     if( m_shaderAttrib == -1 )
     {
@@ -198,27 +202,13 @@ void GPU_CACHED_MANAGER::EndDrawing()
     // Bind VAO first (required for WebGL 2.0 / OpenGL ES 3.0)
     glBindVertexArray( m_vao );
 
-    // Bind vertices data buffers
-    glBindBuffer( GL_ARRAY_BUFFER, cached->GetBufferHandle() );
-
-    // Modern vertex attributes (replacing legacy glEnableClientState/glVertexPointer/glColorPointer)
-    // Vertex position (a_vertex)
-    glEnableVertexAttribArray( m_vertexAttrib );
-    glVertexAttribPointer( m_vertexAttrib, COORD_STRIDE, GL_FLOAT, GL_FALSE, VERTEX_SIZE,
-                           (GLvoid*) COORD_OFFSET );
-
-    // Vertex color (a_color) - note: normalize=GL_TRUE for unsigned bytes to [0,1]
-    glEnableVertexAttribArray( m_colorAttrib );
-    glVertexAttribPointer( m_colorAttrib, COLOR_STRIDE, GL_UNSIGNED_BYTE, GL_TRUE, VERTEX_SIZE,
-                           (GLvoid*) COLOR_OFFSET );
-
+    // KICLOUD: the container binds its buffer(s); the split container keeps position, depth
+    // and colour in separate buffers (docs/patches.md, B1.6c)
     if( m_shader != nullptr ) // Use shader if applicable
-    {
         m_shader->Use();
-        glEnableVertexAttribArray( m_shaderAttrib );
-        glVertexAttribPointer( m_shaderAttrib, SHADER_STRIDE, GL_FLOAT, GL_FALSE, VERTEX_SIZE,
-                               (GLvoid*) SHADER_OFFSET );
-    }
+
+    cached->BindAttributes( m_vertexAttrib, m_depthAttrib, m_colorAttrib,
+                            m_shader != nullptr ? m_shaderAttrib : -1 );
 
     PROF_TIMER cntDraw( "gl-draw-elements" );
 
@@ -327,6 +317,9 @@ void GPU_CACHED_MANAGER::EndDrawing()
     glDisableVertexAttribArray( m_colorAttrib );
     glDisableVertexAttribArray( m_vertexAttrib );
 
+    if( m_depthAttrib >= 0 )    // KICLOUD: B1.6c
+        glDisableVertexAttribArray( m_depthAttrib );
+
     if( m_shader != nullptr )
     {
         glDisableVertexAttribArray( m_shaderAttrib );
@@ -409,9 +402,17 @@ void GPU_NONCACHED_MANAGER::EndDrawing()
                   vertices, GL_STREAM_DRAW );
 
     // Vertex position (a_vertex) — byte offsets into VBO, not raw pointers
+    // KICLOUD: a_vertex is (x, y) and a_depth is z (docs/patches.md, B1.6c)
     glEnableVertexAttribArray( m_vertexAttrib );
-    glVertexAttribPointer( m_vertexAttrib, COORD_STRIDE, GL_FLOAT, GL_FALSE, VERTEX_SIZE,
+    glVertexAttribPointer( m_vertexAttrib, 2, GL_FLOAT, GL_FALSE, VERTEX_SIZE,
                            (GLvoid*) COORD_OFFSET );
+
+    if( m_depthAttrib >= 0 )
+    {
+        glEnableVertexAttribArray( m_depthAttrib );
+        glVertexAttribPointer( m_depthAttrib, 1, GL_FLOAT, GL_FALSE, VERTEX_SIZE,
+                               (GLvoid*) ( COORD_OFFSET + 2 * sizeof( GLfloat ) ) );
+    }
 
     // Vertex color (a_color) - note: normalize=GL_TRUE for unsigned bytes to [0,1]
     glEnableVertexAttribArray( m_colorAttrib );
@@ -435,6 +436,9 @@ void GPU_NONCACHED_MANAGER::EndDrawing()
     // Deactivate vertex arrays
     glDisableVertexAttribArray( m_colorAttrib );
     glDisableVertexAttribArray( m_vertexAttrib );
+
+    if( m_depthAttrib >= 0 )    // KICLOUD: B1.6c
+        glDisableVertexAttribArray( m_depthAttrib );
 
     if( m_shader != nullptr )
     {

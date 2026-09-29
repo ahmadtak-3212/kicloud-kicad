@@ -2275,6 +2275,10 @@ bool WEBGL_GAL::ShiftMainTarget( int aDx, int aDy )
     if( bx != std::round( bx ) || by != std::round( by ) )
         return false;
 
+    // Nothing moved: only repainted areas are redrawn (VIEW::RepaintRects)
+    if( aDx == 0 && aDy == 0 )
+        return true;
+
     return m_compositor->ShiftBuffer( m_mainBuffer, (int) bx, (int) by );
 }
 

@@ -1204,6 +1204,7 @@ void VIEW::RememberMainDraw()
     m_mainDrawApprox = false;
     m_contentChanged = false;
     m_contentEdited = false;
+    m_repaintAreas.clear();
 }
 
 
@@ -1305,6 +1306,44 @@ std::vector<BOX2I> VIEW::ShiftStrips( const VECTOR2I& aShift ) const
 }
 
 
+std::vector<BOX2I> VIEW::RepaintRects() const
+{
+    const VECTOR2I     screen = m_gal->GetScreenPixelSize();
+    const BOX2I        screenBox( VECTOR2I( 0, 0 ), screen );
+    std::vector<BOX2I> rects;
+
+    for( const BOX2I& area : m_repaintAreas )
+    {
+        VECTOR2D a = ToScreen( VECTOR2D( area.GetOrigin() ) );
+        VECTOR2D b = ToScreen( VECTOR2D( area.GetEnd() ) );
+        BOX2D    r( a, b - a );
+        r.Normalize();
+
+        // Whole pixels, grown by 2 for anti-aliased edges
+        BOX2I ri( VECTOR2I( (int) std::floor( r.GetLeft() ) - 2, (int) std::floor( r.GetTop() ) - 2 ),
+                  VECTOR2I( (int) std::ceil( r.GetWidth() ) + 5, (int) std::ceil( r.GetHeight() ) + 5 ) );
+
+        if( !ri.Intersects( screenBox ) )
+            continue;
+
+        rects.push_back( ri.Intersect( screenBox ) );
+    }
+
+    // Many small rectangles cost more in draw calls than one that covers them
+    if( rects.size() > 24 )
+    {
+        BOX2I all = rects.front();
+
+        for( const BOX2I& r : rects )
+            all.Merge( r );
+
+        rects.assign( 1, all );
+    }
+
+    return rects;
+}
+
+
 void VIEW::RedrawMainTargets( const BOX2I& aScreenRect )
 {
     // The world rectangle under the screen strip, grown by a few pixels so items whose edges
@@ -1313,6 +1352,13 @@ void VIEW::RedrawMainTargets( const BOX2I& aScreenRect )
     VECTOR2D b = ToWorld( VECTOR2D( aScreenRect.GetRight() + 4, aScreenRect.GetBottom() + 4 ) );
     BOX2D    rect( a, b - a );
     rect.Normalize();
+
+    // Only what a full redraw draws: items that intersect the viewport (Redraw() culls to it).
+    // An item just off-screen would otherwise bleed its edge into the first pixel row or column.
+    VECTOR2D screenSize = m_gal->GetScreenPixelSize();
+    BOX2D    viewport( ToWorld( VECTOR2D( 0, 0 ) ), ToWorld( screenSize ) - ToWorld( VECTOR2D( 0, 0 ) ) );
+    viewport.Normalize();
+    rect = rect.Intersect( viewport );
 
     bool overlay = m_dirtyTargets[TARGET_OVERLAY];
     m_dirtyTargets[TARGET_OVERLAY] = false;
@@ -1722,14 +1768,26 @@ void VIEW::UpdateItems()
     {
         GAL_UPDATE_CONTEXT ctx( m_gal );
 
+        // KICLOUD: B1.12a: viewport-dependent repaints record their areas, before and after,
+        // instead of invalidating the whole drawn frame for the pan cache (see view.h)
+        m_recordingRepaintAreas = m_applyingViewportUpdates;
+
         for( VIEW_ITEM* item : *m_allItems.get() )
         {
             if( item && item->viewPrivData() && item->viewPrivData()->m_requiredUpdate != NONE )
             {
+                if( m_recordingRepaintAreas )
+                    m_repaintAreas.push_back( item->viewPrivData()->m_bbox );
+
                 invalidateItem( item, item->viewPrivData()->m_requiredUpdate );
                 item->viewPrivData()->m_requiredUpdate = NONE;
+
+                if( m_recordingRepaintAreas )
+                    m_repaintAreas.push_back( item->ViewBBox() );
             }
         }
+
+        m_recordingRepaintAreas = false;
     }
 
     KI_TRACE( traceGalProfile, wxS( "View update: total items %u, geom %u anyUpdated %u\n" ),

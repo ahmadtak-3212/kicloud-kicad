@@ -47,6 +47,13 @@ def convert_glsl120_to_es300(shader_source, is_fragment_shader):
     uses_gl_texcoord = 'gl_TexCoord' in shader_source
     uses_gl_multitexcoord0 = 'gl_MultiTexCoord0' in shader_source
 
+    # KICLOUD: the GAL's vertex shader (the one with a_shaderParams) reads its position from two
+    # attributes, a_vertex (x, y) and a_depth (z), so the cached vertex container can keep the
+    # depth in its own buffer and change it without a CPU copy of the vertices.
+    # See docs/patches.md (B1.6c).
+    split_depth = not is_fragment_shader and uses_gl_vertex and 'a_shaderParams' in shader_source
+    vertex_expr = 'vec4(a_vertex, a_depth, 1.0)' if split_depth else 'a_vertex'
+
     # GLSL ES 3.00 requires #version to be the ABSOLUTE first line
     # Collect any comments before #version to add after declarations
     pre_version_comments = []
@@ -95,7 +102,10 @@ def convert_glsl120_to_es300(shader_source, is_fragment_shader):
                 loc = 0
                 if uses_mvp_matrix:
                     result.append('uniform mat4 u_modelViewProjectionMatrix;')
-                if uses_gl_vertex:
+                if split_depth:
+                    result.append(f'layout(location = {loc}) in vec2 a_vertex;'); loc += 1
+                    result.append(f'layout(location = {loc}) in float a_depth;'); loc += 1
+                elif uses_gl_vertex:
                     result.append(f'layout(location = {loc}) in vec4 a_vertex;'); loc += 1
                 if uses_gl_color:
                     result.append(f'layout(location = {loc}) in vec4 a_color;'); loc += 1
@@ -139,7 +149,7 @@ def convert_glsl120_to_es300(shader_source, is_fragment_shader):
         # Convert legacy GL built-ins
         # ftransform() -> u_modelViewProjectionMatrix * a_vertex (must be done before other replacements)
         if 'ftransform()' in line:
-            line = line.replace('ftransform()', 'u_modelViewProjectionMatrix * a_vertex')
+            line = line.replace('ftransform()', f'u_modelViewProjectionMatrix * {vertex_expr}')
 
         # gl_ModelViewProjectionMatrix -> u_modelViewProjectionMatrix
         if 'gl_ModelViewProjectionMatrix' in line:
@@ -147,7 +157,7 @@ def convert_glsl120_to_es300(shader_source, is_fragment_shader):
 
         # gl_Vertex -> a_vertex
         if 'gl_Vertex' in line:
-            line = line.replace('gl_Vertex', 'a_vertex')
+            line = line.replace('gl_Vertex', vertex_expr)
 
         # gl_FrontColor -> v_color (vertex shader output)
         if 'gl_FrontColor' in line:

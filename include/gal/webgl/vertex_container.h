@@ -124,6 +124,18 @@ public:
     }
 
     /**
+     * KICLOUD: set the colour of the vertices [aOffset, aOffset + aSize). A container without a
+     * CPU copy of its vertices writes them on the GPU (docs/patches.md, B1.6c).
+     */
+    virtual void SetItemColor( unsigned int aOffset, unsigned int aSize,
+                               const GLubyte aColor[4] );
+
+    /**
+     * KICLOUD: set the depth of the vertices [aOffset, aOffset + aSize) (docs/patches.md, B1.6c).
+     */
+    virtual void SetItemDepth( unsigned int aOffset, unsigned int aSize, GLfloat aDepth );
+
+    /**
      * Return amount of vertices currently stored in the container.
      */
     virtual unsigned int GetSize() const

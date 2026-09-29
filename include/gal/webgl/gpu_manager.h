@@ -95,6 +95,7 @@ protected:
     int m_shaderAttrib;
     int m_vertexAttrib;   ///< Location of a_vertex attribute
     int m_colorAttrib;    ///< Location of a_color attribute
+    int m_depthAttrib;    ///< KICLOUD: location of a_depth, the vertex z (B1.6c)
 
     ///< true: enable Z test when drawing
     bool m_enableDepthTest;

@@ -58,6 +58,52 @@
 
 #include <core/profile.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <set>
+
+// KICLOUD: test hooks for the browser build: redraw every canvas in full, and count full
+// redraws of the board layers, so a test can compare a frame from the pan cache or the zoom
+// preview with a real full redraw of the same view (View > Refresh redraws only the overlay).
+// With aRebuild, every item's cached drawing is rebuilt first, so a test can compare colours and
+// depths set on cached items (the GAL's colour and depth fills) with freshly built ones.
+// See docs/patches.md (B1.12a, B1.6c).
+static std::set<EDA_DRAW_PANEL_GAL*>& livePanels()
+{
+    static std::set<EDA_DRAW_PANEL_GAL*> panels;
+    return panels;
+}
+
+static int s_fullMainRedraws = 0;
+
+extern "C" EMSCRIPTEN_KEEPALIVE void kicloud_view_full_redraw( int aRebuild )
+{
+    if( !wxTheApp )
+        return;
+
+    wxTheApp->CallAfter(
+            [aRebuild]()
+            {
+                for( EDA_DRAW_PANEL_GAL* panel : livePanels() )
+                {
+                    if( panel->GetView() )
+                    {
+                        if( aRebuild )
+                            panel->GetView()->UpdateAllItems( KIGFX::ALL );
+
+                        panel->GetView()->MarkDirty();
+                        panel->ForceRefresh();
+                    }
+                }
+            } );
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int kicloud_view_full_redraw_count()
+{
+    return s_fullMainRedraws;
+}
+#endif
+
 #include <pgm_base.h>
 #include <confirm.h>
 
@@ -172,6 +218,10 @@ EDA_DRAW_PANEL_GAL::EDA_DRAW_PANEL_GAL( wxWindow* aParentWindow, wxWindowID aWin
              wxTimerEventHandler( EDA_DRAW_PANEL_GAL::onRefreshTimer ), nullptr, this );
 
     Connect( wxEVT_SHOW, wxShowEventHandler( EDA_DRAW_PANEL_GAL::onShowEvent ), nullptr, this );
+
+#ifdef __EMSCRIPTEN__
+    livePanels().insert( this );    // KICLOUD: test hooks (above)
+#endif
 }
 
 
@@ -180,6 +230,10 @@ EDA_DRAW_PANEL_GAL::~EDA_DRAW_PANEL_GAL()
     // Ensure EDA_DRAW_PANEL_GAL::onShowEvent is not fired during Dtor process
     Disconnect( wxEVT_SHOW, wxShowEventHandler( EDA_DRAW_PANEL_GAL::onShowEvent ) );
     StopDrawing();
+
+#ifdef __EMSCRIPTEN__
+    livePanels().erase( this );     // KICLOUD: test hooks
+#endif
 
     wxASSERT( !m_drawing );
 
@@ -439,11 +493,16 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint( bool aAllowSkip )
 
                 cntRedraw.Start();
 
-                for( const BOX2I& strip : m_view->ShiftStrips( shift ) )
+                // The uncovered strips, then items repainted since the frame was drawn
+                std::vector<BOX2I> rects = m_view->ShiftStrips( shift );
+                std::vector<BOX2I> repaints = m_view->RepaintRects();
+                rects.insert( rects.end(), repaints.begin(), repaints.end() );
+
+                for( const BOX2I& rect : rects )
                 {
-                    m_gal->SetMainTargetClip( &strip );
+                    m_gal->SetMainTargetClip( &rect );
                     m_gal->DrawGrid();
-                    m_view->RedrawMainTargets( strip );
+                    m_view->RedrawMainTargets( rect );
                     m_gal->FlushMainTarget();
                 }
 
@@ -482,6 +541,9 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint( bool aAllowSkip )
                     m_heavyRedrawMs[m_heavyRedrawNext] = m_lastFullRedrawMs;
                     m_heavyRedrawNext = ( m_heavyRedrawNext + 1 ) % 5;
                     m_previewShown = false;
+#ifdef __EMSCRIPTEN__
+                    s_fullMainRedraws++;
+#endif
                 }
 
                 isDirty = true;

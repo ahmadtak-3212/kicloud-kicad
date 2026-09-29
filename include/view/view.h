@@ -654,7 +654,9 @@ public:
         // KICLOUD: B1.12a: the main target's content changed (not just the viewport)
         if( aTarget != TARGET_OVERLAY )
         {
-            m_contentChanged = true;
+            // A viewport-dependent repaint records its area instead (m_repaintAreas)
+            if( !m_recordingRepaintAreas )
+                m_contentChanged = true;
 
             if( !m_applyingViewportUpdates )
                 m_contentEdited = true;
@@ -703,6 +705,13 @@ public:
             m_dirtyTargets[i] = true;
     }
     std::vector<BOX2I> ShiftStrips( const VECTOR2I& aShift ) const;
+
+    /**
+     * KICLOUD: B1.12a: the screen rectangles of items repainted by viewport-dependent updates
+     * since the main target was drawn (e.g. pcbnew's track net names). A shifted frame shows
+     * them as they were drawn, so the panel redraws these rectangles too.
+     */
+    std::vector<BOX2I> RepaintRects() const;
 
     /// Redraw the main target's layers (cached and non-cached) inside a screen rectangle.
     void RedrawMainTargets( const BOX2I& aScreenRect );
@@ -966,6 +975,8 @@ protected:
     bool       m_viewportDependentUpdates = false;
     mutable bool m_pendingEditUpdates = false;  ///< an Update() outside viewport-dependent scope
     bool       m_applyingViewportUpdates = false;
+    bool       m_recordingRepaintAreas = false;     ///< KICLOUD: see m_repaintAreas
+    std::vector<BOX2I> m_repaintAreas;  ///< KICLOUD: world areas of viewport-dependent repaints
     MATRIX3x3D m_mainDrawMatrix;
     VECTOR2I   m_mainDrawScreen;
 
