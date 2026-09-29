@@ -449,10 +449,11 @@ void ANTIALIASING_SMAA::Begin()
 
 namespace
 {
-void draw_fullscreen_triangle()
+void draw_fullscreen_triangle( KIGFX::WEBGL_COMPOSITOR* aCompositor )
 {
     // Use VBO-based fullscreen triangle (replaces legacy immediate mode)
-    KIGFX::GetFullscreenQuad().DrawTriangle();
+    // KICLOUD: the compositor's own quad (B1.6d)
+    aCompositor->Quad().DrawTriangle();
 }
 } // namespace
 
@@ -476,7 +477,7 @@ void ANTIALIASING_SMAA::Present()
     checkGlError( "binding colorTex", __FILE__, __LINE__ );
     pass_1_shader->Use();
     checkGlError( "using smaa pass 1 shader", __FILE__, __LINE__ );
-    draw_fullscreen_triangle();
+    draw_fullscreen_triangle( compositor );
     pass_1_shader->Deactivate();
 
     //
@@ -495,7 +496,7 @@ void ANTIALIASING_SMAA::Present()
     glBindTexture( GL_TEXTURE_2D, smaaSearchTex );
 
     pass_2_shader->Use();
-    draw_fullscreen_triangle();
+    draw_fullscreen_triangle( compositor );
     pass_2_shader->Deactivate();
 
     //
@@ -513,7 +514,7 @@ void ANTIALIASING_SMAA::Present()
     glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE );
 
     pass_3_shader->Use();
-    draw_fullscreen_triangle();
+    draw_fullscreen_triangle( compositor );
     pass_3_shader->Deactivate();
 
     glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );

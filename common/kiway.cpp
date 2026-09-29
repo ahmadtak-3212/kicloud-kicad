@@ -42,6 +42,9 @@
 
 #include <wx/dynlib.h>
 #include <wx/stdpaths.h>
+#ifdef __EMSCRIPTEN__
+#include <wx/wasm/pageframes.h>     // KICLOUD: B1.6d
+#endif
 #include <wx/debug.h>
 #include <wx/utils.h>
 #include <confirm.h>
@@ -442,6 +445,26 @@ KIWAY_PLAYER* KIWAY::GetPlayerFrame( FRAME_T aFrameType )
 }
 
 
+#ifdef __EMSCRIPTEN__
+// KICLOUD: the editor frames the browser shows as tabs, by the key its pages use (the same
+// tokens as single_top's --frame). See docs/patches.md (B1.6d).
+static const char* pageFrameKey( FRAME_T aFrameType )
+{
+    switch( aFrameType )
+    {
+    case FRAME_SCH:               return "sch";
+    case FRAME_SCH_SYMBOL_EDITOR: return "symedit";
+    case FRAME_PCB_EDITOR:        return "pcb";
+    case FRAME_FOOTPRINT_EDITOR:  return "fpedit";
+    case FRAME_GERBER:            return "gerb";
+    case FRAME_PL_EDITOR:         return "ds";
+    case FRAME_CALC:              return "calc";
+    default:                      return nullptr;
+    }
+}
+#endif
+
+
 KIWAY_PLAYER* KIWAY::Player( FRAME_T aFrameType, bool doCreate, wxTopLevelWindow* aParent )
 {
     // Since this will be called from python, cannot assume that code will
@@ -471,6 +494,12 @@ KIWAY_PLAYER* KIWAY::Player( FRAME_T aFrameType, bool doCreate, wxTopLevelWindow
             if( !kiface )
                 return nullptr;
 
+#ifdef __EMSCRIPTEN__
+            // KICLOUD: with page frames on (the browser's editor tabs), an editor frame fills the
+            // page as a tab of its own; one opened in modal mode (a parent) stays a window
+            wxWasmSetNextPageFrame( aParent ? nullptr : pageFrameKey( aFrameType ) );
+#endif
+
             frame = (KIWAY_PLAYER*) kiface->CreateKiWindow(
                                             aParent,    // Parent window of frame in modal mode,
                                                         // NULL in non modal mode
@@ -479,6 +508,10 @@ KIWAY_PLAYER* KIWAY::Player( FRAME_T aFrameType, bool doCreate, wxTopLevelWindow
                                             m_ctl       // questionable need, these same flags
                                                         // were passed to KIFACE::OnKifaceStart()
                                             );
+#ifdef __EMSCRIPTEN__
+            wxWasmSetNextPageFrame( nullptr );      // KICLOUD: B1.6d
+#endif
+
             if( frame )
                 m_playerFrameId[aFrameType].store( frame->GetId() );
 

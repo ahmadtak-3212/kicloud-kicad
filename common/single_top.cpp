@@ -55,6 +55,10 @@
 #include <settings/kicad_settings.h>
 #include <settings/settings_manager.h>
 #include <paths.h>
+#ifdef __EMSCRIPTEN__
+#include <wx/frame.h>
+#include <wx/wasm/pageframes.h>     // KICLOUD: B1.6d
+#endif
 
 #include <kiplatform/app.h>
 #include <kiplatform/environment.h>
@@ -532,6 +536,14 @@ bool PGM_SINGLE_TOP::OnPgmInit()
             }
         }
     }
+#endif
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: with page frames (the browser's editor tabs), an empty host frame is the page's
+    // main window, so every editor frame is a page frame that can close on its own and more
+    // can open in this instance. See docs/patches.md (B1.6d).
+    if( wxWasmPageFramesEnabled() )
+        ( new wxFrame( nullptr, wxID_ANY, wxS( "KiCad" ) ) )->Show();
 #endif
 
     KIWAY_PLAYER* frame = Kiway.Player( topFrame, true );

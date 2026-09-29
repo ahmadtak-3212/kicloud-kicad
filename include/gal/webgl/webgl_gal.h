@@ -349,7 +349,10 @@ private:
     wxEvtHandler*           m_mouseListener;
     wxEvtHandler*           m_paintListener;
 
-    static GLuint           g_fontTexture;      ///< Bitmap font texture handle (shared)
+    /// KICLOUD: bitmap font texture of this GAL's own WebGL context. A static texture shared
+    /// by every GAL (upstream's, for OpenGL contexts that share objects) is not valid in another
+    /// WebGL context: a second editor in the same instance drew with it (B1.6d, docs/patches.md)
+    GLuint                  m_fontTexture = 0;
 
     // Vertex buffer objects related fields
     typedef std::unordered_map< unsigned int, std::shared_ptr<VERTEX_ITEM> > GROUPS_MAP;
@@ -382,7 +385,7 @@ private:
     /// KICLOUD: B1.12a: the main buffer holds a complete frame that may be shifted (false after
     /// the buffers are (re)created or resized, true once a full redraw clears the main target)
     bool                    m_mainTargetShiftable = false;
-    static bool             m_isBitmapFontLoaded;       ///< Is the bitmap font texture loaded?
+    bool                    m_isBitmapFontLoaded = false;   ///< KICLOUD: per GAL (B1.6d)
     bool                    m_isBitmapFontInitialized;  ///< Is the shader set to use bitmap fonts?
     bool                    m_isInitialized;            ///< Basic initialization flag, has to be
                                                         ///< done when the window is visible

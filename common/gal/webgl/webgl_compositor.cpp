@@ -131,7 +131,7 @@ bool WEBGL_COMPOSITOR::ValidateShaders()
         m_initialized = false;
 
         // Also reset the fullscreen quad — its VBOs/VAOs may be stale too
-        GetFullscreenQuad().Cleanup();
+        m_quad.Cleanup();
 
         return false;
     }
@@ -145,7 +145,7 @@ void WEBGL_COMPOSITOR::BlitFullscreenQuad()
     if( m_blitShader && m_blitShader->IsLinked() )
     {
         m_blitShader->Use();
-        GetFullscreenQuad().Draw();
+        m_quad.Draw();
         m_blitShader->Deactivate();
     }
     else
@@ -242,7 +242,7 @@ void WEBGL_COMPOSITOR::Initialize()
     initBlitShader();
 
     // Initialize fullscreen quad VBO
-    GetFullscreenQuad().Initialize();
+    m_quad.Initialize();
 
     m_antialiasing->Init();
 }
@@ -470,7 +470,7 @@ void WEBGL_COMPOSITOR::DrawBuffer( unsigned int aSourceHandle, unsigned int aDes
     }
 
     m_blitShader->Use();
-    GetFullscreenQuad().Draw();
+    m_quad.Draw();
     m_blitShader->Deactivate();
 }
 

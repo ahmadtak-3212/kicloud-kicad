@@ -127,7 +127,13 @@ public:
      */
     void BlitFullscreenQuad();
 
+    /// KICLOUD: this compositor's fullscreen quad, in its GAL's own WebGL context (a global quad
+    /// belonged to the first context only: B1.6d, docs/patches.md)
+    FULLSCREEN_QUAD& Quad() { return m_quad; }
+
 protected:
+    FULLSCREEN_QUAD m_quad;
+
     /// Binds a specific Framebuffer Object.
     void bindFb( unsigned int aFb );
 

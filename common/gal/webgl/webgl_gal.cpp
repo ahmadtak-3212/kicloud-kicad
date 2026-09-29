@@ -172,8 +172,6 @@ static wxGLAttributes getGLAttribs()
 
 wxGLContext* WEBGL_GAL::m_glMainContext = nullptr;
 int          WEBGL_GAL::m_instanceCounter = 0;
-GLuint       WEBGL_GAL::g_fontTexture = 0;
-bool         WEBGL_GAL::m_isBitmapFontLoaded = false;
 
 namespace KIGFX
 {
@@ -533,6 +531,13 @@ WEBGL_GAL::~WEBGL_GAL()
         delete m_tempManager;
     }
 
+    // KICLOUD: this GAL's own font texture (B1.6d)
+    if( m_isBitmapFontLoaded )
+    {
+        glDeleteTextures( 1, &m_fontTexture );
+        m_isBitmapFontLoaded = false;
+    }
+
     gl_mgr->UnlockCtx( m_glPrivContext );
 
     // If it was the main context, then it will be deleted
@@ -546,13 +551,6 @@ WEBGL_GAL::~WEBGL_GAL()
     if( m_instanceCounter == 0 )
     {
         gl_mgr->LockCtx( m_glMainContext, this );
-
-        if( m_isBitmapFontLoaded )
-        {
-            glDeleteTextures( 1, &g_fontTexture );
-            m_isBitmapFontLoaded = false;
-        }
-
         gl_mgr->UnlockCtx( m_glMainContext );
         gl_mgr->DestroyCtx( m_glMainContext );
         m_glMainContext = nullptr;
@@ -752,8 +750,8 @@ void WEBGL_GAL::BeginDrawing()
         if( !m_isBitmapFontLoaded )
         {
             glActiveTexture( GL_TEXTURE0 + FONT_TEXTURE_UNIT );
-            glGenTextures( 1, &g_fontTexture );
-            glBindTexture( GL_TEXTURE_2D, g_fontTexture );
+            glGenTextures( 1, &m_fontTexture );
+            glBindTexture( GL_TEXTURE_2D, m_fontTexture );
             glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB8, font_image.width, font_image.height, 0, GL_RGB,
                           GL_UNSIGNED_BYTE, font_image.pixels );
             glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
@@ -767,7 +765,7 @@ void WEBGL_GAL::BeginDrawing()
         else
         {
             glActiveTexture( GL_TEXTURE0 + FONT_TEXTURE_UNIT );
-            glBindTexture( GL_TEXTURE_2D, g_fontTexture );
+            glBindTexture( GL_TEXTURE_2D, m_fontTexture );
             glActiveTexture( GL_TEXTURE0 );
         }
 
@@ -818,9 +816,20 @@ void WEBGL_GAL::SetMinLineWidth( float aLineWidth )
 
     if( m_shader && ufm_minLinePixelWidth != -1 )
     {
+        // KICLOUD: KiCad calls this outside drawing: make this GAL's own WebGL context current,
+        // not whichever GAL drew last (several editors in one instance, B1.6d)
+        GL_CONTEXT_MANAGER* gl_mgr = Pgm().GetGLContextManager();
+        const bool          lock = !m_isContextLocked;
+
+        if( lock )
+            gl_mgr->LockCtx( m_glPrivContext, this );
+
         m_shader->Use();
         m_shader->SetParameter( ufm_minLinePixelWidth, aLineWidth );
         m_shader->Deactivate();
+
+        if( lock )
+            gl_mgr->UnlockCtx( m_glPrivContext );
     }
 }
 
