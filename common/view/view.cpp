@@ -40,6 +40,7 @@
 #include <gal/graphics_abstraction_layer.h>
 #include <gal/painter.h>
 #include <algorithm>
+#include <cmath>     // KICLOUD: B1.12a
 
 #include <core/profile.h>
 
@@ -595,7 +596,8 @@ void VIEW::SetScale( double aScale, VECTOR2D aAnchor )
     SetCenter( m_center - delta );
 
     // Redraw everything after the viewport has changed
-    MarkDirty();
+    // KICLOUD: B1.12b: a zoom alone does not change the main target's content
+    markViewportDirty();
 }
 
 
@@ -620,7 +622,8 @@ void VIEW::SetCenter( const VECTOR2D& aCenter )
     m_gal->ComputeWorldScreenMatrix();
 
     // Redraw everything after the viewport has changed
-    MarkDirty();
+    // KICLOUD: B1.12a: a viewport move alone does not change the main target's content
+    markViewportDirty();
 }
 
 
@@ -1192,6 +1195,151 @@ void VIEW::ClearTargets()
 }
 
 
+// KICLOUD: B1.12a pan cache (see view.h and docs/patches.md).
+void VIEW::RememberMainDraw()
+{
+    m_mainDrawMatrix = m_gal->GetWorldScreenMatrix();
+    m_mainDrawScreen = m_gal->GetScreenPixelSize();
+    m_hasMainDraw = true;
+    m_mainDrawApprox = false;
+    m_contentChanged = false;
+    m_contentEdited = false;
+}
+
+
+void VIEW::RememberPreviewDraw()
+{
+    m_mainDrawMatrix = m_gal->GetWorldScreenMatrix();
+    m_mainDrawScreen = m_gal->GetScreenPixelSize();
+    m_mainDrawApprox = true;
+}
+
+
+bool VIEW::CanPreviewRedraw( double& aScale, VECTOR2D& aOffset ) const
+{
+    if( !m_hasMainDraw || m_contentEdited )
+        return false;
+
+    if( !IsTargetDirty( TARGET_CACHED ) && !IsTargetDirty( TARGET_NONCACHED ) )
+        return false;
+
+    if( m_gal->GetScreenPixelSize() != m_mainDrawScreen )
+        return false;
+
+    // screen' = cur * drawn^-1 * screen must be a uniform scale plus a move (same rotation
+    // and mirroring)
+    MATRIX3x3D t = m_gal->GetWorldScreenMatrix() * m_mainDrawMatrix.Inverse();
+    double     sx = t.m_data[0][0];
+    double     sy = t.m_data[1][1];
+
+    if( std::abs( t.m_data[0][1] ) > 1e-9 || std::abs( t.m_data[1][0] ) > 1e-9 )
+        return false;
+
+    if( sx <= 0.0 || std::abs( sx - sy ) > 1e-9 * sx || sx < 0.05 || sx > 20.0 )
+        return false;
+
+    aScale = sx;
+    aOffset = VECTOR2D( t.m_data[0][2], t.m_data[1][2] );
+    return true;
+}
+
+
+bool VIEW::CanShiftRedraw( VECTOR2I& aShift ) const
+{
+    if( !m_hasMainDraw || m_contentChanged || m_mainDrawApprox )
+        return false;
+
+    if( !IsTargetDirty( TARGET_CACHED ) && !IsTargetDirty( TARGET_NONCACHED ) )
+        return false;
+
+    const VECTOR2I   screen = m_gal->GetScreenPixelSize();
+    const MATRIX3x3D& cur = m_gal->GetWorldScreenMatrix();
+
+    if( screen != m_mainDrawScreen )
+        return false;
+
+    // Same scale, rotation and mirroring: only the translation may differ
+    for( int i = 0; i < 2; ++i )
+    {
+        for( int j = 0; j < 2; ++j )
+        {
+            if( cur.m_data[i][j] != m_mainDrawMatrix.m_data[i][j] )
+                return false;
+        }
+    }
+
+    double dx = cur.m_data[0][2] - m_mainDrawMatrix.m_data[0][2];
+    double dy = cur.m_data[1][2] - m_mainDrawMatrix.m_data[1][2];
+    double rx = std::round( dx );
+    double ry = std::round( dy );
+
+    // Whole pixels only (a fractional move would resample), and less than a screen
+    if( std::abs( dx - rx ) > 1e-3 || std::abs( dy - ry ) > 1e-3 )
+        return false;
+
+    if( std::abs( rx ) >= screen.x || std::abs( ry ) >= screen.y )
+        return false;
+
+    aShift = VECTOR2I( (int) rx, (int) ry );
+    return true;
+}
+
+
+std::vector<BOX2I> VIEW::ShiftStrips( const VECTOR2I& aShift ) const
+{
+    const VECTOR2I     screen = m_gal->GetScreenPixelSize();
+    std::vector<BOX2I> strips;
+
+    // Content moved by aShift: the uncovered pixels are on the side it moved away from
+    if( aShift.x > 0 )
+        strips.emplace_back( VECTOR2I( 0, 0 ), VECTOR2I( aShift.x, screen.y ) );
+    else if( aShift.x < 0 )
+        strips.emplace_back( VECTOR2I( screen.x + aShift.x, 0 ), VECTOR2I( -aShift.x, screen.y ) );
+
+    if( aShift.y > 0 )
+        strips.emplace_back( VECTOR2I( 0, 0 ), VECTOR2I( screen.x, aShift.y ) );
+    else if( aShift.y < 0 )
+        strips.emplace_back( VECTOR2I( 0, screen.y + aShift.y ), VECTOR2I( screen.x, -aShift.y ) );
+
+    return strips;
+}
+
+
+void VIEW::RedrawMainTargets( const BOX2I& aScreenRect )
+{
+    // The world rectangle under the screen strip, grown by a few pixels so items whose edges
+    // (anti-aliasing, line caps) reach into the strip are drawn too; the clip keeps the rest.
+    VECTOR2D a = ToWorld( VECTOR2D( aScreenRect.GetLeft() - 4, aScreenRect.GetTop() - 4 ) );
+    VECTOR2D b = ToWorld( VECTOR2D( aScreenRect.GetRight() + 4, aScreenRect.GetBottom() + 4 ) );
+    BOX2D    rect( a, b - a );
+    rect.Normalize();
+
+    bool overlay = m_dirtyTargets[TARGET_OVERLAY];
+    m_dirtyTargets[TARGET_OVERLAY] = false;
+    redrawRect( BOX2ISafe( rect ) );
+    m_dirtyTargets[TARGET_OVERLAY] = overlay;
+}
+
+
+void VIEW::RedrawOverlay()
+{
+    if( !IsTargetDirty( TARGET_OVERLAY ) )
+        return;
+
+    VECTOR2D screenSize = m_gal->GetScreenPixelSize();
+    BOX2D    rect( ToWorld( VECTOR2D( 0, 0 ) ), ToWorld( screenSize ) - ToWorld( VECTOR2D( 0, 0 ) ) );
+    rect.Normalize();
+
+    bool cached = m_dirtyTargets[TARGET_CACHED];
+    bool noncached = m_dirtyTargets[TARGET_NONCACHED];
+    m_dirtyTargets[TARGET_CACHED] = false;
+    m_dirtyTargets[TARGET_NONCACHED] = false;
+    redrawRect( BOX2ISafe( rect ) );
+    m_dirtyTargets[TARGET_CACHED] = cached;
+    m_dirtyTargets[TARGET_NONCACHED] = noncached;
+}
+
+
 void VIEW::Redraw()
 {
 #ifdef KICAD_GAL_PROFILE
@@ -1205,7 +1353,13 @@ void VIEW::Redraw()
     rect.Normalize();
     BOX2I recti = BOX2ISafe( rect );
 
+    // KICLOUD: B1.12a: remember what the main target shows, for the next pan
+    bool mainDrawn = IsTargetDirty( TARGET_CACHED ) || IsTargetDirty( TARGET_NONCACHED );
+
     redrawRect( recti );
+
+    if( mainDrawn )
+        RememberMainDraw();
 
     // All targets were redrawn, so nothing is dirty
     MarkClean();
@@ -1491,6 +1645,10 @@ void VIEW::UpdateItems()
     if( !m_hasPendingItemUpdates )
         return;
 
+    // KICLOUD: B1.12b: updates that only follow the viewport are not edits (see view.h)
+    m_applyingViewportUpdates = !m_pendingEditUpdates;
+    m_pendingEditUpdates = false;
+
     unsigned int cntGeomUpdate = 0;
     bool         anyUpdated = false;
 
@@ -1578,6 +1736,7 @@ void VIEW::UpdateItems()
               cntTotal, cntGeomUpdate, (unsigned) anyUpdated );
 
     m_hasPendingItemUpdates = false;
+    m_applyingViewportUpdates = false;      // KICLOUD: B1.12b
 }
 
 
@@ -1735,6 +1894,9 @@ void VIEW::Update( const VIEW_ITEM* aItem, int aUpdateFlags ) const
 
     viewData->m_requiredUpdate |= aUpdateFlags;
     m_hasPendingItemUpdates = true;
+
+    if( !m_viewportDependentUpdates )     // KICLOUD: B1.12b
+        m_pendingEditUpdates = true;
 }
 
 

@@ -26,6 +26,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <algorithm>   // KICLOUD: B1.12a
+#include <cmath>       // KICLOUD: B1.12a
 #include <advanced_config.h>
 #include <build_version.h>
 #include <gal/webgl/webgl_gal.h>
@@ -675,6 +677,7 @@ void WEBGL_GAL::BeginDrawing()
         // Prepare rendering target buffers
         m_compositor->Initialize();
         m_mainBuffer = m_compositor->CreateBuffer();
+        m_mainTargetShiftable = false;      // KICLOUD: B1.12a: new buffers hold no frame
         try
         {
             m_tempBuffer = m_compositor->CreateBuffer();
@@ -2057,6 +2060,7 @@ void WEBGL_GAL::ResizeScreen( int aWidth, int aHeight )
     const float scaleFactor = GetScaleFactor();
     m_compositor->Resize( aWidth * scaleFactor, aHeight * scaleFactor );
     m_isFramebufferInitialized = false;
+    m_mainTargetShiftable = false;      // KICLOUD: B1.12a
 
     wxGLCanvas::SetSize( aWidth, aHeight );
 }
@@ -2244,11 +2248,91 @@ void WEBGL_GAL::ClearTarget( RENDER_TARGET aTarget )
 
     if( aTarget != TARGET_OVERLAY )
         m_compositor->ClearBuffer( m_clearColor );
+
+    // KICLOUD: B1.12a: the main target is about to be drawn in full, so it can be shifted later
+    if( aTarget == TARGET_CACHED || aTarget == TARGET_NONCACHED )
+        m_mainTargetShiftable = true;
     else if( m_overlayBuffer )
         m_compositor->ClearBuffer( COLOR4D::BLACK );
 
     // Restore the previous state
     m_compositor->SetBuffer( oldTarget );
+}
+
+
+// KICLOUD: B1.12a pan cache (see GAL::ShiftMainTarget and docs/patches.md)
+bool WEBGL_GAL::ShiftMainTarget( int aDx, int aDy )
+{
+    if( !m_isFramebufferInitialized || !m_mainTargetShiftable )
+        return false;
+
+    // Buffers are larger than the screen by the display scale and the supersampling factor;
+    // only a whole number of buffer pixels can be moved without resampling.
+    const double ratio = GetScaleFactor() * m_compositor->GetAntialiasSupersamplingFactor();
+    const double bx = aDx * ratio;
+    const double by = aDy * ratio;
+
+    if( bx != std::round( bx ) || by != std::round( by ) )
+        return false;
+
+    return m_compositor->ShiftBuffer( m_mainBuffer, (int) bx, (int) by );
+}
+
+
+void WEBGL_GAL::SetMainTargetClip( const BOX2I* aScreenRect )
+{
+    if( !aScreenRect )
+    {
+        glDisable( GL_SCISSOR_TEST );
+        return;
+    }
+
+    const double ratio = GetScaleFactor() * m_compositor->GetAntialiasSupersamplingFactor();
+    const int    x = (int) std::floor( aScreenRect->GetLeft() * ratio );
+    const int    right = (int) std::ceil( aScreenRect->GetRight() * ratio );
+    const int    top = (int) std::floor( aScreenRect->GetTop() * ratio );
+    const int    bottom = (int) std::ceil( aScreenRect->GetBottom() * ratio );
+    const int    bufferHeight = (int) std::round( m_screenSize.y * ratio );
+
+    // GL scissor rows count from the bottom
+    glEnable( GL_SCISSOR_TEST );
+    glScissor( x, bufferHeight - bottom, right - x, bottom - top );
+
+    // Clear the strip as ClearTarget() clears the whole main target (colour, depth, stencil)
+    const unsigned int previous = m_compositor->GetBuffer();
+    m_compositor->SetBuffer( m_mainBuffer );
+    m_compositor->ClearBuffer( m_clearColor );
+    m_compositor->SetBuffer( previous );
+}
+
+
+void WEBGL_GAL::FlushMainTarget()
+{
+    // Draw what the strip queued into the main buffer now, under the strip's clip, and start
+    // the cached and non-cached managers afresh as BeginDrawing() does.
+    const unsigned int previous = m_compositor->GetBuffer();
+    m_compositor->SetBuffer( m_mainBuffer );
+
+    m_nonCachedManager->EndDrawing();
+    m_cachedManager->EndDrawing();
+
+    m_nonCachedManager->Clear();
+    m_cachedManager->BeginDrawing();
+    m_nonCachedManager->BeginDrawing();
+
+    m_compositor->SetBuffer( previous );
+}
+
+
+// KICLOUD: B1.12b instant zoom (see GAL::PreviewMainTarget and docs/patches.md)
+bool WEBGL_GAL::PreviewMainTarget( double aScale, const VECTOR2D& aOffset )
+{
+    if( !m_isFramebufferInitialized || !m_mainTargetShiftable )
+        return false;
+
+    const double ratio = GetScaleFactor() * m_compositor->GetAntialiasSupersamplingFactor();
+    return m_compositor->TransformBuffer( m_mainBuffer, aScale, aOffset.x * ratio, aOffset.y * ratio,
+                                          m_clearColor );
 }
 
 

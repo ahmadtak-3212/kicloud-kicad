@@ -90,6 +90,20 @@ public:
 
     VECTOR2I GetScreenSize() const;
     GLenum   GetBufferTexture( unsigned int aBufferHandle );
+
+    /**
+     * KICLOUD: B1.12a pan cache: move a buffer's pixels by (aDx, aDy) buffer pixels (screen
+     * orientation: +x right, +y down). The uncovered pixels are undefined; the caller redraws
+     * them. The copy is GPU-side, through a scratch texture that then becomes the buffer's.
+     */
+    bool ShiftBuffer( unsigned int aBufferHandle, int aDx, int aDy );
+
+    /**
+     * KICLOUD: B1.12b instant zoom: redraw a buffer as itself scaled by aScale and moved by
+     * (aDx, aDy) buffer pixels (screen orientation), filtered; uncovered pixels get aClear.
+     */
+    bool TransformBuffer( unsigned int aBufferHandle, double aScale, double aDx, double aDy,
+                          const COLOR4D& aClear );
     void     DrawBuffer( unsigned int aSourceHandle, unsigned int aDestHandle );
     unsigned int CreateBuffer( VECTOR2I aDimensions );
 
@@ -147,6 +161,11 @@ protected:
 
     /// Store the used FBO name in case there was more than one compositor used
     GLuint          m_curFbo;
+
+    // KICLOUD: B1.12a: scratch texture for ShiftBuffer(), the size of the last shifted buffer
+    GLuint          m_shiftTexture = 0;
+    VECTOR2I        m_shiftTextureSize;
+    GLuint          m_readFbo = 0;       ///< KICLOUD: B1.12b: reads the scratch texture
 
     GAL_ANTIALIASING_MODE m_currentAntialiasingMode;
     std::unique_ptr<OPENGL_PRESENTOR> m_antialiasing;

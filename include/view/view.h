@@ -34,6 +34,7 @@
 #include <memory>
 
 #include <math/box2.h>
+#include <math/matrix3x3.h>    // KICLOUD: B1.12a
 #include <gal/definitions.h>
 
 #include <view/view_overlay.h>
@@ -649,6 +650,15 @@ public:
     {
         wxCHECK( aTarget < TARGETS_NUMBER, /* void */ );
         m_dirtyTargets[aTarget] = true;
+
+        // KICLOUD: B1.12a: the main target's content changed (not just the viewport)
+        if( aTarget != TARGET_OVERLAY )
+        {
+            m_contentChanged = true;
+
+            if( !m_applyingViewportUpdates )
+                m_contentEdited = true;
+        }
     }
 
     /// Return true if the layer is cached.
@@ -669,7 +679,48 @@ public:
     {
         for( int i = 0; i < TARGETS_NUMBER; ++i )
             m_dirtyTargets[i] = true;
+
+        m_contentChanged = true;    // KICLOUD: B1.12a/b (viewport changes use markViewportDirty)
+        m_contentEdited = true;
     }
+
+    // KICLOUD: B1.12a pan cache. When only the viewport moved, by whole pixels, since the
+    // main target was last drawn, CanShiftRedraw() gives the move in screen pixels; the panel
+    // then shifts the main target (GAL::ShiftMainTarget) and redraws only ShiftStrips().
+    bool CanShiftRedraw( VECTOR2I& aShift ) const;
+    /**
+     * KICLOUD: B1.12b: item updates requested between true and false depend only on the
+     * viewport (e.g. pcbnew's repeated net names on tracks). They change the main target (no
+     * pan cache), but are not edits: a zoom may still be previewed.
+     */
+    void SetViewportDependentUpdates( bool aEnable ) { m_viewportDependentUpdates = aEnable; }
+
+    /// KICLOUD: B1.12a/b: every target must be redrawn because the viewport changed; the
+    /// main target's content did not (so it may be shifted or previewed).
+    void markViewportDirty()
+    {
+        for( int i = 0; i < TARGETS_NUMBER; ++i )
+            m_dirtyTargets[i] = true;
+    }
+    std::vector<BOX2I> ShiftStrips( const VECTOR2I& aShift ) const;
+
+    /// Redraw the main target's layers (cached and non-cached) inside a screen rectangle.
+    void RedrawMainTargets( const BOX2I& aScreenRect );
+
+    /// Redraw the overlay target's layers over the whole screen, if it is dirty.
+    void RedrawOverlay();
+
+    /// Record that the main target now shows the current viewport and content.
+    void RememberMainDraw();
+
+    // KICLOUD: B1.12b instant zoom. When only the viewport changed (by a scale and/or a move)
+    // since the main target was drawn, CanPreviewRedraw() gives the screen transform from the
+    // drawn frame to the current one (screen' = aScale * screen + aOffset); the panel shows the
+    // drawn frame transformed until the view settles, then redraws for real.
+    bool CanPreviewRedraw( double& aScale, VECTOR2D& aOffset ) const;
+
+    /// Record that the main target now shows an approximate (transformed) frame of the viewport.
+    void RememberPreviewDraw();
 
     /**
      * Force redraw of view on the next rendering.
@@ -906,6 +957,17 @@ protected:
 
     /// Flag to mark targets as dirty so they have to be redrawn on the next refresh event.
     bool m_dirtyTargets[TARGETS_NUMBER];
+
+    // KICLOUD: B1.12a pan cache state (see CanShiftRedraw)
+    bool       m_contentChanged = true;
+    bool       m_hasMainDraw = false;
+    bool       m_mainDrawApprox = false;    // KICLOUD: B1.12b: a preview, not a real draw
+    bool       m_contentEdited = true;      ///< KICLOUD: B1.12b: changed by more than the viewport
+    bool       m_viewportDependentUpdates = false;
+    mutable bool m_pendingEditUpdates = false;  ///< an Update() outside viewport-dependent scope
+    bool       m_applyingViewportUpdates = false;
+    MATRIX3x3D m_mainDrawMatrix;
+    VECTOR2I   m_mainDrawScreen;
 
     /// Flag to respect draw priority when drawing items.
     bool m_useDrawPriority;

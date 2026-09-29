@@ -870,6 +870,9 @@ void PCB_EDIT_FRAME::redrawNetnames()
     // Inflate to catch most of the track width
     BOX2I_MINMAX clipbox( BOX2ISafe( viewport.Inflate( pcbIUScale.mmToIU( 2.0 ) ) ) );
 
+    // KICLOUD: B1.12b: these repaints follow the viewport; they are not edits (view.h)
+    view->SetViewportDependentUpdates( true );
+
     for( PCB_TRACK* track : GetBoard()->Tracks() )
     {
         // Don't need to update vias
@@ -883,6 +886,8 @@ void PCB_EDIT_FRAME::redrawNetnames()
         if( track->ViewGetLOD( GetNetnameLayer( track->GetLayer() ), view ) < view->GetScale() )
             view->Update( track, KIGFX::REPAINT );
     }
+
+    view->SetViewportDependentUpdates( false );
 }
 
 

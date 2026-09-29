@@ -744,6 +744,36 @@ public:
      */
     virtual void ClearTarget( RENDER_TARGET aTarget ) {};
 
+    // KICLOUD: B1.12a pan cache (browser WebGL GAL; the defaults keep every other GAL unchanged).
+    // When the view only moved by whole pixels since the main target (cached + non-cached) was
+    // last drawn, the target's pixels can be moved instead of redrawing every item, and only the
+    // newly exposed strips redrawn. See docs/patches.md.
+
+    /**
+     * Move the main target's contents by (aDx, aDy) screen pixels.
+     *
+     * @return false when this GAL cannot (then the caller redraws everything as usual).
+     */
+    virtual bool ShiftMainTarget( int aDx, int aDy ) { return false; }
+
+    /**
+     * Restrict drawing into the main target to a screen rectangle and clear that rectangle,
+     * or lift the restriction (nullptr).
+     */
+    virtual void SetMainTargetClip( const BOX2I* aScreenRect ) {}
+
+    /// Draw what has been queued for the main target so far (under the current clip).
+    virtual void FlushMainTarget() {}
+
+    /**
+     * KICLOUD: B1.12b instant zoom: replace the main target's pixels with themselves
+     * transformed (screen' = aScale * screen + aOffset, in screen pixels), as a stand-in frame
+     * until the view is redrawn for real.
+     *
+     * @return false when this GAL cannot.
+     */
+    virtual bool PreviewMainTarget( double aScale, const VECTOR2D& aOffset ) { return false; }
+
     /**
      * Return true if the target exists.
      *

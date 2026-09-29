@@ -30,6 +30,8 @@
  * later compositing into a single image (OpenGL flavour).
  */
 
+#include <algorithm>   // KICLOUD: B1.12a
+#include <cmath>       // KICLOUD: B1.12a
 #include <gal/webgl/webgl_compositor.h>
 #include <gal/webgl/fullscreen_quad.h>
 #include <gal/webgl/utils.h>
@@ -473,6 +475,105 @@ void WEBGL_COMPOSITOR::DrawBuffer( unsigned int aSourceHandle, unsigned int aDes
 }
 
 
+// KICLOUD: B1.12a pan cache (see the header and docs/patches.md)
+bool WEBGL_COMPOSITOR::ShiftBuffer( unsigned int aBufferHandle, int aDx, int aDy )
+{
+    if( !m_initialized || aBufferHandle == 0 || aBufferHandle > usedBuffers() )
+        return false;
+
+    OPENGL_BUFFER& buffer = m_buffers[aBufferHandle - 1];
+    const int      w = buffer.dimensions.x;
+    const int      h = buffer.dimensions.y;
+
+    if( std::abs( aDx ) >= w || std::abs( aDy ) >= h )
+        return false;
+
+    if( m_shiftTexture == 0 || m_shiftTextureSize != buffer.dimensions )
+    {
+        if( m_shiftTexture )
+            glDeleteTextures( 1, &m_shiftTexture );
+
+        glActiveTexture( GL_TEXTURE0 );
+        glGenTextures( 1, &m_shiftTexture );
+        glBindTexture( GL_TEXTURE_2D, m_shiftTexture );
+        glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr );
+        glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+        glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+        m_shiftTextureSize = buffer.dimensions;
+    }
+
+    const unsigned int previous = GetBuffer();
+
+    // The buffer is the read framebuffer; copy its pixels into the scratch texture, moved.
+    // GL rows run bottom-up and screen rows top-down: a move of aDy screen rows is -aDy GL rows.
+    SetBuffer( aBufferHandle );
+    glActiveTexture( GL_TEXTURE0 );
+    glBindTexture( GL_TEXTURE_2D, m_shiftTexture );
+
+    const int sx = aDx;
+    const int sy = -aDy;
+    glCopyTexSubImage2D( GL_TEXTURE_2D, 0, std::max( 0, sx ), std::max( 0, sy ),
+                         std::max( 0, -sx ), std::max( 0, -sy ),
+                         w - std::abs( sx ), h - std::abs( sy ) );
+
+    // The scratch texture becomes the buffer's; SetBuffer() re-attaches whichever is current
+    std::swap( buffer.textureTarget, m_shiftTexture );
+    SetBuffer( previous );
+
+    return true;
+}
+
+
+// KICLOUD: B1.12b instant zoom (see the header and docs/patches.md)
+bool WEBGL_COMPOSITOR::TransformBuffer( unsigned int aBufferHandle, double aScale, double aDx,
+                                        double aDy, const COLOR4D& aClear )
+{
+    if( !m_initialized || aBufferHandle == 0 || aBufferHandle > usedBuffers() )
+        return false;
+
+    OPENGL_BUFFER& buffer = m_buffers[aBufferHandle - 1];
+    const int      w = buffer.dimensions.x;
+    const int      h = buffer.dimensions.y;
+
+    // Take a copy of the buffer (ShiftBuffer by zero moves nothing but leaves the frame in the
+    // scratch texture, which is swapped in; swap back so the scratch holds the copy).
+    if( !ShiftBuffer( aBufferHandle, 0, 0 ) )
+        return false;
+
+    std::swap( buffer.textureTarget, m_shiftTexture );
+
+    const unsigned int previous = GetBuffer();
+
+    // Clear the buffer, then blit the copy into it, scaled and moved
+    SetBuffer( aBufferHandle );
+    ClearBuffer( aClear );
+
+    if( m_readFbo == 0 )
+        glGenFramebuffers( 1, &m_readFbo );
+
+    glBindFramebuffer( GL_READ_FRAMEBUFFER, m_readFbo );
+    glFramebufferTexture2D( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_shiftTexture, 0 );
+    glBindFramebuffer( GL_DRAW_FRAMEBUFFER, m_mainFbo );
+
+    // Screen rows run top-down, GL rows bottom-up: a screen point (x, y) is GL (x, h - y)
+    const double x0 = aDx;
+    const double x1 = aDx + aScale * w;
+    const double yTop = aDy;
+    const double yBottom = aDy + aScale * h;
+
+    glBlitFramebuffer( 0, 0, w, h, (GLint) std::lround( x0 ), (GLint) std::lround( h - yBottom ),
+                       (GLint) std::lround( x1 ), (GLint) std::lround( h - yTop ),
+                       GL_COLOR_BUFFER_BIT, GL_LINEAR );
+
+    glFramebufferTexture2D( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0 );
+    glBindFramebuffer( GL_READ_FRAMEBUFFER, 0 );
+    glBindFramebuffer( GL_FRAMEBUFFER, m_mainFbo );
+    SetBuffer( previous );
+
+    return true;
+}
+
+
 void WEBGL_COMPOSITOR::Present()
 {
     m_antialiasing->Present();
@@ -504,6 +605,18 @@ void WEBGL_COMPOSITOR::clean()
     wxCHECK( m_initialized, /* void */ );
 
     bindFb( DIRECT_RENDERING );
+
+    // KICLOUD: B1.12a scratch texture
+    if( m_shiftTexture && glDeleteTextures )
+        glDeleteTextures( 1, &m_shiftTexture );
+
+    m_shiftTexture = 0;
+    m_shiftTextureSize = VECTOR2I();
+
+    if( m_readFbo && glDeleteFramebuffers )
+        glDeleteFramebuffers( 1, &m_readFbo );
+
+    m_readFbo = 0;
 
     for( const OPENGL_BUFFER& buffer : m_buffers )
         glDeleteTextures( 1, &buffer.textureTarget );

@@ -24,6 +24,8 @@
  * or you may write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
+#include <algorithm>  // KICLOUD: B1.12b
+#include <cstdio>     // KICLOUD: B1.12a
 #include <eda_draw_frame.h>
 #include <kiface_base.h>
 #include <macros.h>
@@ -380,7 +382,79 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint( bool aAllowSkip )
             if( m_backend == GAL_TYPE_OPENGL )
                 m_gal->ClearScreen();
 
-            if( m_view->IsDirty() )
+            // KICLOUD: B1.12a pan cache: when only the viewport moved by whole pixels since the
+            // main target was drawn, move its pixels and redraw only the uncovered strips (the
+            // browser GAL; ShiftMainTarget() is false everywhere else). See docs/patches.md.
+            VECTOR2I shift;
+            double   previewScale = 1.0;
+            VECTOR2D previewOffset;
+
+            // KICLOUD: B1.12b instant zoom: when a full redraw is slow (a large board zoomed
+            // out), a zoom (or a move that is not whole pixels) first shows the last frame
+            // scaled into place, and the real redraw follows once the view has been still for
+            // a moment. See docs/patches.md.
+            const wxLongLong previewSettleMs = 120;
+            bool             previewDue = false;
+
+            if( m_previewShown && wxGetLocalTimeMillis() - m_previewSince >= previewSettleMs )
+            {
+                m_previewShown = false;
+                m_view->MarkDirty();    // now redraw for real
+                previewDue = true;
+            }
+
+            // A board is heavy when any of its last few full redraws took longer than a frame
+            // (the cost depends on the zoom: zooming out from a cheap close-up must still preview).
+            const bool heavyBoard = *std::max_element( std::begin( m_heavyRedrawMs ),
+                                                       std::end( m_heavyRedrawMs ) ) > 16.0;
+
+            if( !previewDue && m_view->IsDirty() && heavyBoard
+                    && !( m_view->CanShiftRedraw( shift ) )
+                    && m_view->CanPreviewRedraw( previewScale, previewOffset )
+                    && m_gal->PreviewMainTarget( previewScale, previewOffset ) )
+            {
+                if( m_view->IsTargetDirty( KIGFX::TARGET_OVERLAY ) )
+                    m_gal->ClearTarget( KIGFX::TARGET_OVERLAY );
+
+                m_view->RedrawOverlay();
+                m_view->RememberPreviewDraw();
+                m_view->MarkClean();
+                m_previewShown = true;
+                m_previewSince = wxGetLocalTimeMillis();
+                m_refreshTimer.StartOnce( previewSettleMs.GetValue() + 10 );
+                isDirty = true;
+            }
+            else if( m_view->IsDirty() && m_view->CanShiftRedraw( shift )
+                    && m_gal->ShiftMainTarget( shift.x, shift.y ) )
+            {
+                if( !m_panCacheLogged )
+                {
+                    m_panCacheLogged = true;
+                    wxLogTrace( traceDrawPanel, wxS( "pan cache: shifted redraw" ) );
+                    fprintf( stderr, "[kicloud] pan cache: first shifted redraw\n" );
+                }
+
+                if( m_view->IsTargetDirty( KIGFX::TARGET_OVERLAY ) )
+                    m_gal->ClearTarget( KIGFX::TARGET_OVERLAY );
+
+                cntRedraw.Start();
+
+                for( const BOX2I& strip : m_view->ShiftStrips( shift ) )
+                {
+                    m_gal->SetMainTargetClip( &strip );
+                    m_gal->DrawGrid();
+                    m_view->RedrawMainTargets( strip );
+                    m_gal->FlushMainTarget();
+                }
+
+                m_gal->SetMainTargetClip( nullptr );
+                m_view->RedrawOverlay();
+                m_view->RememberMainDraw();
+                m_view->MarkClean();
+                cntRedraw.Stop();
+                isDirty = true;
+            }
+            else if( m_view->IsDirty() )
             {
                 if( m_backend != GAL_TYPE_OPENGL  // Already called in opengl
                         && m_view->IsTargetDirty( KIGFX::TARGET_NONCACHED ) )
@@ -394,10 +468,31 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint( bool aAllowSkip )
                 if( m_view->IsTargetDirty( KIGFX::TARGET_NONCACHED ) )
                     m_gal->DrawGrid();
 
+                // KICLOUD: B1.12b: the cost of redrawing the board layers (not the overlay alone)
+                const bool mainRedrawn = m_view->IsTargetDirty( KIGFX::TARGET_CACHED )
+                                         || m_view->IsTargetDirty( KIGFX::TARGET_NONCACHED );
+
                 cntRedraw.Start();
                 m_view->Redraw();
                 cntRedraw.Stop();
+
+                if( mainRedrawn )
+                {
+                    m_lastFullRedrawMs = cntRedraw.msecs();
+                    m_heavyRedrawMs[m_heavyRedrawNext] = m_lastFullRedrawMs;
+                    m_heavyRedrawNext = ( m_heavyRedrawNext + 1 ) % 5;
+                    m_previewShown = false;
+                }
+
                 isDirty = true;
+            }
+
+            // KICLOUD: B1.12b: a preview is on screen until the real redraw; keep its timer armed
+            // (Refresh() reuses the same timer for its throttle and may have replaced it)
+            if( m_previewShown && !m_refreshTimer.IsRunning() )
+            {
+                wxLongLong left = previewSettleMs - ( wxGetLocalTimeMillis() - m_previewSince );
+                m_refreshTimer.StartOnce( std::max( 1, (int) left.GetValue() ) + 10 );
             }
 
             m_gal->DrawCursor( cursorPos );

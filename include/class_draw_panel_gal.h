@@ -289,6 +289,14 @@ protected:
     wxLongLong               m_lastRepaintEnd;   ///< Timestamp of the last repaint end
     wxTimer                  m_refreshTimer;     ///< Timer to prevent too-frequent refreshing
 
+    // KICLOUD: B1.12a/b pan cache and instant zoom (browser GAL; see DoRePaint)
+    double                   m_lastFullRedrawMs = 0.0;   ///< cost of the last full redraw
+    double                   m_heavyRedrawMs[5] = {};    ///< costs of the last full redraws
+    int                      m_heavyRedrawNext = 0;
+    bool                     m_previewShown = false;     ///< a transformed stand-in frame is on screen
+    wxLongLong               m_previewSince = 0;         ///< when the view last changed while previewing
+    bool                     m_panCacheLogged = false;
+
     std::mutex               m_refreshMutex;     ///< Blocks multiple calls to the draw
 
     /// True if GAL is currently redrawing the view

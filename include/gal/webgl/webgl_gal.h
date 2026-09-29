@@ -266,6 +266,12 @@ public:
     /// @copydoc GAL::HasTarget()
     virtual bool HasTarget( RENDER_TARGET aTarget ) override;
 
+    // KICLOUD: B1.12a pan cache (see GAL and docs/patches.md)
+    bool ShiftMainTarget( int aDx, int aDy ) override;
+    void SetMainTargetClip( const BOX2I* aScreenRect ) override;
+    void FlushMainTarget() override;
+    bool PreviewMainTarget( double aScale, const VECTOR2D& aOffset ) override;   // KICLOUD: B1.12b
+
     /// @copydoc GAL::SetNegativeDrawMode()
     void SetNegativeDrawMode( bool aSetting ) override {}
 
@@ -372,6 +378,10 @@ private:
 
     // Internal flags
     bool                    m_isFramebufferInitialized; ///< Are the framebuffers initialized?
+
+    /// KICLOUD: B1.12a: the main buffer holds a complete frame that may be shifted (false after
+    /// the buffers are (re)created or resized, true once a full redraw clears the main target)
+    bool                    m_mainTargetShiftable = false;
     static bool             m_isBitmapFontLoaded;       ///< Is the bitmap font texture loaded?
     bool                    m_isBitmapFontInitialized;  ///< Is the shader set to use bitmap fonts?
     bool                    m_isInitialized;            ///< Basic initialization flag, has to be
