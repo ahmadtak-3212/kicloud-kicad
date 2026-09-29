@@ -152,6 +152,16 @@ set( PL_EDITOR_KIFACE_LIBRARIES
     ${wxWidgets_LIBRARIES}
     )
 
+if( EMSCRIPTEN AND KICAD_WASM_MERGED_EDITOR )
+    # KICLOUD: section 1: pl_editor is a kiface of the merged kicad_editor image (the Drawing
+    # Sheet Editor tab; the other editors' hotkey list and preferences ask every kiface).
+    target_compile_definitions( pl_editor_kiface_objects PRIVATE Kiface=PlEditorKiface )
+    set_source_files_properties( pl_editor.cpp PROPERTIES
+        COMPILE_DEFINITIONS     "COMPILING_DLL;KIFACE_GETTER=pl_editor_kiface_getter"
+        )
+    set( PL_EDITOR_KIFACE_LIBRARIES "${PL_EDITOR_KIFACE_LIBRARIES}" CACHE INTERNAL "" )
+endif()
+
 # WASM: Link kiface objects directly into pl_editor executable (static linking)
 if( EMSCRIPTEN )
     target_link_libraries( pl_editor

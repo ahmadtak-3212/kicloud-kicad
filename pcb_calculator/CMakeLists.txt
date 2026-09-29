@@ -86,7 +86,28 @@ if( APPLE )
     set( MACOSX_BUNDLE_NAME pcb_calculator )
 endif()
 
-if( EMSCRIPTEN )
+if( EMSCRIPTEN AND KICAD_WASM_MERGED_EDITOR )
+    # KICLOUD: section 1: pcb_calculator is a kiface of the merged kicad_editor image (the
+    # Calculator Tools tab). Its sources become an object library with its own Kiface() and
+    # getter names, as eeschema's; exported for wasm/editor/.
+    add_library( pcb_calculator_kiface_objects OBJECT
+        pcb_calculator.cpp
+        ${PCB_CALCULATOR_SRCS}
+        )
+    target_link_libraries( pcb_calculator_kiface_objects
+        PUBLIC
+            common
+            kicommon
+            markdown_lib
+            ${wxWidgets_LIBRARIES}
+        )
+    target_compile_definitions( pcb_calculator_kiface_objects PRIVATE Kiface=CalcKiface )
+    set_source_files_properties( pcb_calculator.cpp PROPERTIES
+        COMPILE_DEFINITIONS "COMPILING_DLL;KIFACE_GETTER=pcb_calculator_kiface_getter"
+        )
+    set( PCB_CALCULATOR_KIFACE_LIBRARIES pcb_calculator_kiface_objects common kicommon markdown_lib
+         ${wxWidgets_LIBRARIES} CACHE INTERNAL "" )
+elseif( EMSCRIPTEN )
     # WASM: single-binary build (mirrors bitmap2component pattern).
     # single_top.cpp already has a !defined(BUILD_KIWAY_DLL) branch that statically
     # resolves KIFACE_GETTER for pcb_calculator and bitmap2component, so we link
@@ -230,7 +251,9 @@ endif()
 # auto-generate pcb_calculator_datafile.h and pcb_calculator_datafile_keywords.cpp
 # for the storage data file format. On EMSCRIPTEN the kiface sources live in the
 # pcb_calculator executable; on native they live in the pcb_calculator_kiface MODULE.
-if( EMSCRIPTEN )
+if( EMSCRIPTEN AND KICAD_WASM_MERGED_EDITOR )
+    set( _PCBCALC_LEXER_TARGET pcb_calculator_kiface_objects )   # KICLOUD: section 1
+elseif( EMSCRIPTEN )
     set( _PCBCALC_LEXER_TARGET pcb_calculator )
 else()
     set( _PCBCALC_LEXER_TARGET pcb_calculator_kiface )

@@ -1055,6 +1055,12 @@ if( NOT EMSCRIPTEN OR KICAD_BUILD_3D_VIEWER_WASM )
     list( APPEND PCBNEW_KIFACE_LIBRARIES 3d-viewer )
 endif()
 
+# KICLOUD: section 1: pcbnew.cpp offers the 3D viewer's preference pages when the viewer is
+# built into the browser image too.
+if( EMSCRIPTEN AND KICAD_BUILD_3D_VIEWER_WASM )
+    target_compile_definitions( pcbnew_kiface_objects PRIVATE KICAD_BUILD_3D_VIEWER_WASM )
+endif()
+
 if( EMSCRIPTEN )
     # Export for the merged kicad_editor target (wasm/editor/), which links both kifaces'
     # library sets from outside this directory scope. Same pattern as PCBNEW_IO_LIBRARIES.

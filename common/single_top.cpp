@@ -88,6 +88,14 @@ extern "C" KIFACE* eeschema_kiface_getter( int* aKIFACEversion, int aKIWAYversio
                                            PGM_BASE* aProgram );
 extern "C" KIFACE* cvpcb_kiface_getter( int* aKIFACEversion, int aKIWAYversion,
                                         PGM_BASE* aProgram );
+// KICLOUD: section 1: the Gerber Viewer, Drawing Sheet Editor and Calculator Tools kifaces
+// (their tabs, and the hotkey list and preferences that ask every kiface).
+extern "C" KIFACE* gerbview_kiface_getter( int* aKIFACEversion, int aKIWAYversion,
+                                           PGM_BASE* aProgram );
+extern "C" KIFACE* pl_editor_kiface_getter( int* aKIFACEversion, int aKIWAYversion,
+                                            PGM_BASE* aProgram );
+extern "C" KIFACE* pcb_calculator_kiface_getter( int* aKIFACEversion, int aKIWAYversion,
+                                                 PGM_BASE* aProgram );
 #endif
 
 
@@ -407,6 +415,13 @@ bool PGM_SINGLE_TOP::OnPgmInit()
                       eeschema_kiface_getter( &kiface_version, KIFACE_VERSION, this ) );
     Kiway.set_kiface( KIWAY::FACE_CVPCB,
                       cvpcb_kiface_getter( &kiface_version, KIFACE_VERSION, this ) );
+    // KICLOUD: section 1 (see the declarations above).
+    Kiway.set_kiface( KIWAY::FACE_GERBVIEW,
+                      gerbview_kiface_getter( &kiface_version, KIFACE_VERSION, this ) );
+    Kiway.set_kiface( KIWAY::FACE_PL_EDITOR,
+                      pl_editor_kiface_getter( &kiface_version, KIFACE_VERSION, this ) );
+    Kiway.set_kiface( KIWAY::FACE_PCB_CALCULATOR,
+                      pcb_calculator_kiface_getter( &kiface_version, KIFACE_VERSION, this ) );
 
 #elif !defined(BUILD_KIWAY_DLL)
 

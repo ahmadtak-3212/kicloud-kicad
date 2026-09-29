@@ -206,6 +206,17 @@ if( EMSCRIPTEN )
         )
 endif()
 
+if( EMSCRIPTEN AND KICAD_WASM_MERGED_EDITOR )
+    # KICLOUD: section 1: gerbview is a fourth kiface of the merged kicad_editor image (the
+    # Gerber Viewer tab, and the other editors' hotkey list and preferences, which ask every
+    # kiface). Its own Kiface() and getter names, as eeschema's; exported for wasm/editor/.
+    target_compile_definitions( gerbview_kiface_objects PRIVATE Kiface=GerbviewKiface )
+    set_source_files_properties( gerbview.cpp PROPERTIES
+        COMPILE_DEFINITIONS     "COMPILING_DLL;KIFACE_GETTER=gerbview_kiface_getter"
+        )
+    set( GERBVIEW_KIFACE_LIBRARIES "${GERBVIEW_KIFACE_LIBRARIES}" CACHE INTERNAL "" )
+endif()
+
 target_link_options( gerbview_kiface PRIVATE
     $<$<BOOL:${KICAD_MAKE_LINK_MAPS}>:-Wl,--cref,-Map=_gerbview.kiface.map>
     )

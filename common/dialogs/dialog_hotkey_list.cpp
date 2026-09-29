@@ -51,16 +51,24 @@ DIALOG_LIST_HOTKEYS::DIALOG_LIST_HOTKEYS( EDA_BASE_FRAME* aParent ):
     }
 
     kiface = Kiway().KiFACE( KIWAY::FACE_SCH );
-    kiface->GetActions( m_hk_list->ActionsList() );
+
+    if( kiface )    // KICLOUD: section 1: a browser image may not contain every editor
+        kiface->GetActions( m_hk_list->ActionsList() );
 
     kiface = Kiway().KiFACE( KIWAY::FACE_PCB );
-    kiface->GetActions( m_hk_list->ActionsList() );
+
+    if( kiface )    // KICLOUD: section 1: a browser image may not contain every editor
+        kiface->GetActions( m_hk_list->ActionsList() );
 
     kiface = Kiway().KiFACE( KIWAY::FACE_GERBVIEW );
-    kiface->GetActions( m_hk_list->ActionsList() );
+
+    if( kiface )    // KICLOUD: section 1: a browser image may not contain every editor
+        kiface->GetActions( m_hk_list->ActionsList() );
 
     kiface = Kiway().KiFACE( KIWAY::FACE_PL_EDITOR );
-    kiface->GetActions( m_hk_list->ActionsList() );
+
+    if( kiface )    // KICLOUD: section 1: a browser image may not contain every editor
+        kiface->GetActions( m_hk_list->ActionsList() );
 
     // Update all of the action hotkeys. The process of loading the actions through
     // the KiFACE will only get us the default hotkeys
