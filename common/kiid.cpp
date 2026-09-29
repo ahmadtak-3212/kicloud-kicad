@@ -133,11 +133,22 @@ KIID::KIID( const std::string& aString ) :
     }
     else
     {
+        // KICLOUD: the fallback runs after the handler, not inside it (B1.9). clang calls the
+        // thread_local randomGenerator's wrapper without a "funclet" bundle, so in a catch
+        // handler the wasm EH backend dropped the call and the handler became `unreachable`
+        // (Altium board import trapped; tests/repro/wasm-eh-tls-catch).
+        bool parsed = false;
+
         try
         {
             m_uuid = stringGenerator( aString );
+            parsed = true;
         }
         catch( ... )
+        {
+        }
+
+        if( !parsed )
         {
             // Failed to parse string representation; best we can do is assign a new
             // random one.

@@ -795,11 +795,10 @@ endif()
 
 
 add_subdirectory( pcb_io/pcad )
-if( NOT EMSCRIPTEN )
-    # Altium/Allegro use std::basic_string<unsigned short> which Emscripten libc++ doesn't support
-    add_subdirectory( pcb_io/allegro )
-    add_subdirectory( pcb_io/altium )
-endif()
+# KICLOUD: Altium/Allegro build on WASM too; the char_traits<unsigned short> that
+# compoundfilereader needs is force-included from wasm/stubs/char_traits_uint16_workaround.h (B1.9).
+add_subdirectory( pcb_io/allegro )
+add_subdirectory( pcb_io/altium )
 add_subdirectory( pcb_io/cadstar )
 add_subdirectory( pcb_io/easyeda )
 add_subdirectory( pcb_io/easyedapro )
@@ -809,12 +808,6 @@ add_subdirectory( pcb_io/odbpp )
 add_subdirectory( pcb_io/pads )
 
 set( PCBNEW_IO_LIBRARIES pcad2kicadpcb allegro2pcbnew altium2pcbnew cadstar2pcbnew easyeda easyedapro fabmaster ipc2581 odbpp pads2pcbnew CACHE INTERNAL "")
-if( EMSCRIPTEN )
-    # Altium/Allegro use std::basic_string<unsigned short>, which Emscripten's libc++ doesn't
-    # support; drop them from the (cross-directory) cache so cvpcb/qa consumers stay correct.
-    list( REMOVE_ITEM PCBNEW_IO_LIBRARIES altium2pcbnew allegro2pcbnew )
-    set( PCBNEW_IO_LIBRARIES "${PCBNEW_IO_LIBRARIES}" CACHE INTERNAL "" FORCE )
-endif()
 
 #a very small program launcher for pcbnew_kiface
 add_executable( pcbnew WIN32 MACOSX_BUNDLE

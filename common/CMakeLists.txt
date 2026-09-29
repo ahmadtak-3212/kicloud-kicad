@@ -741,16 +741,15 @@ set( COMMON_IO_SRCS
     io/csv.cpp
     )
 
-# Altium import not supported on WASM (compoundfilereader uses non-standard std::basic_string<unsigned short>)
-if( NOT EMSCRIPTEN )
-    list( APPEND COMMON_IO_SRCS
-        io/altium/altium_binary_parser.cpp
-        io/altium/altium_ascii_parser.cpp
-        io/altium/altium_parser_utils.cpp
-        io/altium/altium_project_variants.cpp
-        io/altium/altium_props_utils.cpp
-    )
-endif()
+# KICLOUD: Altium import builds on WASM too; the char_traits<unsigned short> that
+# compoundfilereader needs is force-included from wasm/stubs/char_traits_uint16_workaround.h (B1.9).
+list( APPEND COMMON_IO_SRCS
+    io/altium/altium_binary_parser.cpp
+    io/altium/altium_ascii_parser.cpp
+    io/altium/altium_parser_utils.cpp
+    io/altium/altium_project_variants.cpp
+    io/altium/altium_props_utils.cpp
+)
 
 set ( COMMON_TRANSLINE_CALCULATION_SRCS
     transline_calculations/transline_calculation_base.cpp
@@ -945,9 +944,7 @@ add_dependencies( common version_header )
 if( TARGET remote_provider_schema_build_copy )
     add_dependencies( common remote_provider_schema_build_copy )
 endif()
-if( NOT EMSCRIPTEN )
-    add_dependencies( common compoundfilereader )  # used by altium_parser.cpp
-endif()
+add_dependencies( common compoundfilereader )  # used by altium_parser.cpp  # KICLOUD: also on WASM (B1.9)
 
 target_link_libraries( common
     libcontext

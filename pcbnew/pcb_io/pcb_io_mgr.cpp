@@ -37,13 +37,12 @@
 #include <pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.h>
 #include <pcb_io/kicad_legacy/pcb_io_kicad_legacy.h>
 #include <pcb_io/pcad/pcb_io_pcad.h>
-#ifndef __EMSCRIPTEN__
+// KICLOUD: the Allegro, Altium and SolidWorks importers are built for WASM too (B1.9)
 #include <pcb_io/allegro/pcb_io_allegro.h>
 #include <pcb_io/altium/pcb_io_altium_circuit_maker.h>
 #include <pcb_io/altium/pcb_io_altium_circuit_studio.h>
 #include <pcb_io/altium/pcb_io_altium_designer.h>
 #include <pcb_io/altium/pcb_io_solidworks.h>
-#endif
 #include <pcb_io/cadstar/pcb_io_cadstar_archive.h>
 #include <pcb_io/fabmaster/pcb_io_fabmaster.h>
 #include <pcb_io/easyeda/pcb_io_easyeda_plugin.h>
@@ -286,7 +285,6 @@ static PCB_IO_MGR::REGISTER_PLUGIN registerLegacyPlugin(
 
 // Keep non-KiCad plugins in alphabetical order
 
-#ifndef __EMSCRIPTEN__
 static PCB_IO_MGR::REGISTER_PLUGIN registerAllegroPlugin(
     PCB_IO_MGR::ALLEGRO,
     wxT( "Allegro" ),
@@ -306,7 +304,6 @@ static PCB_IO_MGR::REGISTER_PLUGIN registerAltiumDesignerPlugin(
         PCB_IO_MGR::ALTIUM_DESIGNER,
         wxT( "Altium Designer" ),
         []() -> PCB_IO* { return new PCB_IO_ALTIUM_DESIGNER; } );
-#endif
 
 static PCB_IO_MGR::REGISTER_PLUGIN registerCadstarArchivePlugin(
         PCB_IO_MGR::CADSTAR_PCB_ARCHIVE,
@@ -343,12 +340,10 @@ static PCB_IO_MGR::REGISTER_PLUGIN registerPcadPlugin(
         wxT( "P-Cad" ),
         []() -> PCB_IO* { return new PCB_IO_PCAD; } );
 
-#ifndef __EMSCRIPTEN__
 static PCB_IO_MGR::REGISTER_PLUGIN registerSolidworksPCBPlugin(
         PCB_IO_MGR::SOLIDWORKS_PCB,
         wxT( "Solidworks PCB" ),
         []() -> PCB_IO* { return new PCB_IO_SOLIDWORKS; } );
-#endif
 
 static PCB_IO_MGR::REGISTER_PLUGIN registerIPC2581Plugin(
         PCB_IO_MGR::IPC2581,
