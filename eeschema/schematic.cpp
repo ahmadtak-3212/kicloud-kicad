@@ -43,6 +43,7 @@
 #include <sch_bus_entry.h>
 #include <sch_commit.h>
 #include <eda_group.h>   // KICLOUD: L8.8 clean-up removals leave their group
+#include <kicloud_collab_hooks.h>   // KICLOUD: L8.8 the clean up tells the collab bridge what it changed
 #include <sch_junction.h>
 #include <sch_label.h>
 #include <sch_line.h>
@@ -1551,13 +1552,24 @@ void SCHEMATIC::CleanUp( SCH_COMMIT* aCommit, SCH_SCREEN* aScreen )
             // longer on the sheet: its saved text named a member the file does not have, and a live
             // peer resolving members by uuid could not agree with it.
             if( EDA_GROUP* group = aItem->GetParentGroup() )
+            {
                 group->RemoveItem( aItem );
+
+                if( KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified )
+                    KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified( group->AsEdaItem(), false );
+            }
 
             if( m_schematicHolder )
             {
                 m_schematicHolder->RemoveFromScreen( aItem, aScreen );
             }
             aCommit->Removed( aItem, aScreen );
+
+            // KICLOUD: L8.8 the clean up runs after the commit's listener callbacks: the live
+            // collaboration bridge is told what it removed (on any sheet: a sheet change cleans
+            // every sheet up, not only the one shown)
+            if( KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified )
+                KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified( aItem, true );
         }
     };
 
@@ -1714,6 +1726,10 @@ void SCHEMATIC::CleanUp( SCH_COMMIT* aCommit, SCH_SCREEN* aScreen )
 
                     if( mergedGroup )
                         mergedGroup->AddItem( mergedLine );
+
+                    // KICLOUD: L8.8 (see remove_item) and what it added
+                    if( KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified )
+                        KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified( mergedLine, false );
 
                     if( m_schematicHolder )
                     {

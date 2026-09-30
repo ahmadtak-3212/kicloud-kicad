@@ -31,6 +31,8 @@
 //     only to zones), a commit's connectivity or teardrop cleanup changed, added or removed it
 //     (aRemoved), or its net was removed from the board or orphaned (SanitizeNetcodes). The bridge
 //     captures what a commit touched instead of diffing the whole board after every commit.
+//     L8.8: the schematic's connectivity clean up (SCHEMATIC::CleanUp, run after a commit's
+//     listener callbacks) reports the junctions and wires it removes and the merged wires it adds.
 //   - DocumentModified (L8.3): the board editor's OnModify ran (after every commit, and after
 //     the board setup and page settings dialogs, which change the file header without a
 //     board-listener callback). The bridge checks the board settings then (COL-08). L8.8: the
