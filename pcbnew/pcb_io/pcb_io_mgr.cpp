@@ -110,6 +110,11 @@ PCB_IO_MGR::PCB_FILE_T PCB_IO_MGR::EnumFromStr( const wxString& aType )
             return plugin.m_type;
     }
 
+    // KICLOUD: the JS-bridge footprint library type is registered as KICLOUD_FP; tables saved
+    // with the old PCBJAM_FP spelling still load (B1.14m).
+    if( aType.CmpNoCase( wxT( "PCBJAM_FP" ) ) == 0 )
+        return PCB_IO_MGR::PCBJAM_FP;
+
     return PCB_IO_MGR::PCB_FILE_UNKNOWN;
 }
 
@@ -363,8 +368,9 @@ static PCB_IO_MGR::REGISTER_PLUGIN registerPadsPlugin(
 // pcbjam remote footprint library (WASM JS bridge). The name string is the
 // fp-lib-table row "type" the boot-generated table uses to select this plugin
 // (PCB_IO_MGR::EnumFromStr is registry-driven, case-insensitive).
+// KICLOUD: registered as KICLOUD_FP (B1.14m); EnumFromStr also accepts PCBJAM_FP.
 static PCB_IO_MGR::REGISTER_PLUGIN registerPcbjamFpPlugin(
         PCB_IO_MGR::PCBJAM_FP,
-        wxT( "PCBJAM_FP" ),
+        wxT( "KICLOUD_FP" ),
         []() -> PCB_IO* { return new PCB_IO_PCBJAM_FP; } );
 // clang-format on

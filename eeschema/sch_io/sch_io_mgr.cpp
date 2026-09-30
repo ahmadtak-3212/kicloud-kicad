@@ -118,7 +118,9 @@ const wxString SCH_IO_MGR::ShowType( SCH_FILE_T aType )
     case SCH_LTSPICE:         return wxString( wxT( "LTspice" ) );
     case SCH_HTTP:            return wxString( wxT( "HTTP" ) );
     case SCH_PADS:            return wxString( wxT( "PADS Logic" ) );
-    case SCH_PCBJAM:          return wxString( wxT( "PCBJAM" ) );
+    // KICLOUD: the JS-bridge library type is named KICLOUD in tables (B1.14m); EnumFromStr
+    // still reads the old PCBJAM spelling.
+    case SCH_PCBJAM:          return wxString( wxT( "KICLOUD" ) );
     case SCH_NESTED_TABLE:    return LIBRARY_TABLE_ROW::TABLE_TYPE_NAME;
     default:                  return wxString::Format( _( "Unknown SCH_FILE_T value: %d" ), aType );
     }
@@ -155,7 +157,8 @@ SCH_IO_MGR::SCH_FILE_T SCH_IO_MGR::EnumFromStr( const wxString& aType )
         return SCH_HTTP;
     else if( aType == wxT( "PADS Logic" ) )
         return SCH_PADS;
-    else if( aType == wxT( "PCBJAM" ) )
+    // KICLOUD: KICLOUD is the JS-bridge library type; PCBJAM stays accepted for saved tables (B1.14m)
+    else if( aType == wxT( "KICLOUD" ) || aType == wxT( "PCBJAM" ) )
         return SCH_PCBJAM;
     else if( aType == LIBRARY_TABLE_ROW::TABLE_TYPE_NAME )
         return SCH_NESTED_TABLE;
