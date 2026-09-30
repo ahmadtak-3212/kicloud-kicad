@@ -2314,7 +2314,17 @@ bool BOARD_NETLIST_UPDATER::UpdateNetlist( NETLIST& aNetlist )
         else if( !m_isDryRun )
         {
             if( !matched )
+            {
+                // KICLOUD: L8.8 clearing the symbol link of a footprint the netlist no longer has is a
+                // board change like the others this update makes: stage it in the commit, so it is
+                // undone with the update and the live-collaboration capture (which follows the
+                // commit) sends it. Silently, only the peer running the update lost the path (the
+                // multi-browser gate's COL-17: C9 after its symbol was deleted, progress/L8.8.md).
+                if( !footprint->GetPath().empty() )
+                    m_commit.Modify( footprint );
+
                 footprint->SetPath( KIID_PATH() );
+            }
 
             for( PAD* pad : footprint->Pads() )
             {
