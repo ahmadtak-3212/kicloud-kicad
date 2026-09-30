@@ -42,6 +42,7 @@
 #include <schematic.h>
 #include <sch_bus_entry.h>
 #include <sch_commit.h>
+#include <eda_group.h>   // KICLOUD: L8.8 clean-up removals leave their group
 #include <sch_junction.h>
 #include <sch_label.h>
 #include <sch_line.h>
@@ -1545,6 +1546,13 @@ void SCHEMATIC::CleanUp( SCH_COMMIT* aCommit, SCH_SCREEN* aScreen )
             if( aItem->IsSelected() && selectionTool )
                 selectionTool->RemoveItemFromSel( aItem, true /*quiet mode*/ );
 
+            // KICLOUD: L8.8 an item the clean up removes leaves its group, as a commit's removal
+            // does (SCH_COMMIT::pushSchEdit). The group kept listing a junction or wire that was no
+            // longer on the sheet: its saved text named a member the file does not have, and a live
+            // peer resolving members by uuid could not agree with it.
+            if( EDA_GROUP* group = aItem->GetParentGroup() )
+                group->RemoveItem( aItem );
+
             if( m_schematicHolder )
             {
                 m_schematicHolder->RemoveFromScreen( aItem, aScreen );
@@ -1695,8 +1703,17 @@ void SCHEMATIC::CleanUp( SCH_COMMIT* aCommit, SCH_SCREEN* aScreen )
 
                 if( mergedLine != nullptr )
                 {
+                    // KICLOUD: L8.8 the merged wire is a copy of one of the two: its group pointer
+                    // was copied, not a membership. It joins the group of the wires it replaces.
+                    EDA_GROUP* mergedGroup = firstLine->GetParentGroup() ? firstLine->GetParentGroup()
+                                                                         : secondLine->GetParentGroup();
+                    mergedLine->SetParentGroup( nullptr );
+
                     remove_item( firstLine );
                     remove_item( secondLine );
+
+                    if( mergedGroup )
+                        mergedGroup->AddItem( mergedLine );
 
                     if( m_schematicHolder )
                     {

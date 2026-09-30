@@ -207,10 +207,12 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
         SCH_ITEM* schCopyItem = dynamic_cast<SCH_ITEM*>( entry.m_copy );
         SCH_ITEM* schItem = dynamic_cast<SCH_ITEM*>( entry.m_item );
 
-        if( schCopyItem && schCopyItem->Type() == SCH_LINE_T )
+        // KICLOUD: L8.8 a commit of a tool manager without a frame (a headless SCHEMATIC, as in
+        // KiCad's QA fixtures and the live-collaboration test peers) has no hop-over wires to update
+        if( frame && schCopyItem && schCopyItem->Type() == SCH_LINE_T )
             frame->UpdateHopOveredWires( schCopyItem );
 
-        if( schItem && schItem->Type() == SCH_LINE_T )
+        if( frame && schItem && schItem->Type() == SCH_LINE_T )
             frame->UpdateHopOveredWires( schItem );
     }
 
@@ -444,6 +446,10 @@ void SCH_COMMIT::pushSchEdit( const wxString& aMessage, int aCommitFlags )
                 frame->UpdateHierarchyNavigator();
         }
     }
+
+    // KICLOUD: L8.8 see KICLOUD_SKIP_CLEANUP in sch_commit.h
+    if( aCommitFlags & KICLOUD_SKIP_CLEANUP )
+        connectivityCleanUp = NO_CLEANUP;
 
     if( frame )
     {

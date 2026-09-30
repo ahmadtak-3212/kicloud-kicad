@@ -33,7 +33,9 @@
 //     captures what a commit touched instead of diffing the whole board after every commit.
 //   - DocumentModified (L8.3): the board editor's OnModify ran (after every commit, and after
 //     the board setup and page settings dialogs, which change the file header without a
-//     board-listener callback). The bridge checks the board settings then (COL-08).
+//     board-listener callback). The bridge checks the board settings then (COL-08). L8.8: the
+//     schematic editor's OnModify calls it too (the page settings dialog changes a sheet's paper
+//     and title block without a schematic-listener callback).
 
 #ifndef KICLOUD_COLLAB_HOOKS_H
 #define KICLOUD_COLLAB_HOOKS_H

@@ -23,6 +23,7 @@
  */
 
 #include <algorithm>
+#include <kicloud_collab_hooks.h>   // KICLOUD: L8.8 collab sheet settings capture (DocumentModified)
 #include <api/api_handler_sch.h>
 #include <api/api_server.h>
 #include <base_units.h>
@@ -1339,6 +1340,12 @@ SEVERITY SCH_EDIT_FRAME::GetSeverity( int aErrorCode ) const
 void SCH_EDIT_FRAME::OnModify()
 {
     EDA_BASE_FRAME::OnModify();
+
+    // KICLOUD: L8.8 the page settings dialog changes a sheet's paper and title block without a
+    // schematic-listener callback; the collab bridge checks the sheet settings here (as L8.3 does
+    // for the board editor)
+    if( KICLOUD_COLLAB_HOOKS::DocumentModified )
+        KICLOUD_COLLAB_HOOKS::DocumentModified( this );
 
     if( GetScreen() )
     {

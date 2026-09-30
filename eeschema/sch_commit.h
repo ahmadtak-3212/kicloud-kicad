@@ -40,6 +40,11 @@ class SCH_TOOL_BASE;
 #define SKIP_UNDO          0x0001
 #define APPEND_UNDO        0x0002
 #define SKIP_SET_DIRTY     0x0004
+// KICLOUD: L8.8 a commit that must not run the connectivity clean up (merging wires, dropping
+// redundant junctions): a live-collaboration remote apply. The clean up makes new wires with new
+// uuids, so two peers cleaning up the same concurrent state make different objects; only the
+// author's commit cleans up, and its result travels with it. Connectivity is still recalculated.
+#define KICLOUD_SKIP_CLEANUP 0x0100
 
 class SCH_COMMIT : public COMMIT
 {
