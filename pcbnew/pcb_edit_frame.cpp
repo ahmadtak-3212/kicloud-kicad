@@ -155,6 +155,7 @@
 #include <pcbnew_scripting_helpers.h>
 #endif
 #include <richio.h>
+#include <kicloud_collab_hooks.h>   // KICLOUD: L8.3 collab settings capture (DocumentModified)
 
 using namespace std::placeholders;
 
@@ -2144,6 +2145,11 @@ void PCB_EDIT_FRAME::OnModify()
     PCB_BASE_FRAME::OnModify();
     Kiway().LocalHistory().NoteFileChange( GetBoard()->GetFileName() );
     m_ZoneFillsDirty = true;
+
+    // KICLOUD: L8.3 the collab bridge checks the board settings (the setup and page dialogs
+    // change them without a board-listener callback)
+    if( KICLOUD_COLLAB_HOOKS::DocumentModified )
+        KICLOUD_COLLAB_HOOKS::DocumentModified( this );
 
     if( m_isClosing )
         return;
