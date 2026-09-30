@@ -550,6 +550,7 @@ private:
     bool                         m_conflicting;
     int                          m_originNet;
     CN_ITEM*                     m_originPad;
+    CN_ITEM*                     m_originItem;   // KICLOUD: L8.6 the item m_originNet came from
     std::vector<CN_ITEM*>        m_items;
     std::unordered_map<int, int> m_netRanks;
 };

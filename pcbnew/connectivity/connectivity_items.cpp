@@ -419,6 +419,7 @@ CN_CLUSTER::CN_CLUSTER()
 {
     m_items.reserve( 64 );
     m_originPad = nullptr;
+    m_originItem = nullptr;
     m_originNet = -1;
     m_conflicting = false;
 }
@@ -486,6 +487,17 @@ void CN_CLUSTER::Add( CN_ITEM* item )
     {
         m_originNet = netCode;
         m_netRanks[m_originNet] = 0;
+        m_originItem = item;
+    }
+    // KICLOUD: L8.6 a cluster without a pad takes the net of its item with the lowest uuid, not
+    // the net of the first item the cluster search reached (that follows memory order, so two
+    // copies of one board could propagate different nets into a mixed-net pad-less cluster: live
+    // collaboration peers, whose DRC then disagreed). A pad still wins as before.
+    else if( !m_originPad && m_originItem && item->Parent()->m_Uuid < m_originItem->Parent()->m_Uuid )
+    {
+        m_originNet = netCode;
+        m_netRanks.try_emplace( netCode, 0 );
+        m_originItem = item;
     }
 
     if( item->Parent()->Type() == PCB_PAD_T && !static_cast<PAD*>( item->Parent() )->IsFreePad() )
