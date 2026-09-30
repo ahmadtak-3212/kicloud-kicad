@@ -347,7 +347,17 @@ void CN_CONNECTIVITY_ALGO::searchConnections()
                         return c->Parent()->Type() != PCB_ZONE_T;
                     } ) )
             {
+                // KICLOUD: L8.3a the collab bridge captures the zone net a via took (no
+                // listener hears it); this runs on every rebuild, mostly with the same net
+                const int oldNetCode = cnItem->Parent()->GetNetCode();
+
                 cnItem->Parent()->SetNetCode( netCode );
+
+                if( KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified
+                        && cnItem->Parent()->GetNetCode() != oldNetCode )
+                {
+                    KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified( cnItem->Parent(), false );
+                }
             }
         }
 

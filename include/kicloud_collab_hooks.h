@@ -27,8 +27,9 @@
 //     redo or a rollback). The bridge reports items a remote apply changed after the list
 //     was recorded (undo would overwrite a peer's edit); it does not change the outcome.
 //   - ItemChangedUnnotified (L8.3a): a board item changed without a board-listener callback:
-//     connectivity propagated a net to it, a commit's connectivity or teardrop cleanup changed,
-//     added or removed it (aRemoved), or BOARD::SanitizeNetcodes orphaned its net. The bridge
+//     connectivity propagated a net to it (a cluster's net, or a zone's net to a via connected
+//     only to zones), a commit's connectivity or teardrop cleanup changed, added or removed it
+//     (aRemoved), or its net was removed from the board or orphaned (SanitizeNetcodes). The bridge
 //     captures what a commit touched instead of diffing the whole board after every commit.
 
 #ifndef KICLOUD_COLLAB_HOOKS_H

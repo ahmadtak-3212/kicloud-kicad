@@ -1410,7 +1410,14 @@ void BOARD::Remove( BOARD_ITEM* aBoardItem, REMOVE_MODE aRemoveMode )
         for( BOARD_CONNECTED_ITEM* boardItem : AllConnectedItems() )
         {
             if( boardItem->GetNet() == netItem )
+            {
                 boardItem->SetNet( unconnected );
+
+                // KICLOUD: L8.3a the collab bridge captures the item that lost its net (the
+                // commit's listeners hear only the net's removal)
+                if( KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified )
+                    KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified( boardItem, false );
+            }
         }
 
         m_NetInfo.RemoveNet( netItem );
