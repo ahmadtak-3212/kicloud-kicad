@@ -26,11 +26,16 @@
 //   - BeforeUndoRedo: a command list is about to be put back into its previous state (undo,
 //     redo or a rollback). The bridge reports items a remote apply changed after the list
 //     was recorded (undo would overwrite a peer's edit); it does not change the outcome.
+//   - ItemChangedUnnotified (L8.3a): a board item changed without a board-listener callback:
+//     connectivity propagated a net to it, a commit's connectivity or teardrop cleanup changed,
+//     added or removed it (aRemoved), or BOARD::SanitizeNetcodes orphaned its net. The bridge
+//     captures what a commit touched instead of diffing the whole board after every commit.
 
 #ifndef KICLOUD_COLLAB_HOOKS_H
 #define KICLOUD_COLLAB_HOOKS_H
 
 class EDA_BASE_FRAME;
+class EDA_ITEM;
 class PICKED_ITEMS_LIST;
 
 struct KICLOUD_COLLAB_HOOKS
@@ -40,6 +45,8 @@ struct KICLOUD_COLLAB_HOOKS
 
     static inline void ( *BeforeUndoRedo )( EDA_BASE_FRAME* aFrame,
                                             PICKED_ITEMS_LIST* aList ) = nullptr;
+
+    static inline void ( *ItemChangedUnnotified )( EDA_ITEM* aItem, bool aRemoved ) = nullptr;
 };
 
 #endif // KICLOUD_COLLAB_HOOKS_H

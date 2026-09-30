@@ -82,6 +82,7 @@
 #include <advanced_config.h>
 #include <richio.h>
 #include <trace_helpers.h>
+#include <kicloud_collab_hooks.h> // KICLOUD: L8.3a collab capture of orphaned nets
 
 // This is an odd place for this, but CvPcb won't link if it's in board_item.cpp like I first
 // tried it.
@@ -3257,7 +3258,13 @@ void BOARD::SanitizeNetcodes()
     for( BOARD_CONNECTED_ITEM* item : AllConnectedItems() )
     {
         if( FindNet( item->GetNetCode() ) == nullptr )
+        {
             item->SetNetCode( NETINFO_LIST::ORPHANED );
+
+            // KICLOUD: L8.3a the collab bridge captures the orphaned net (no listener hears it)
+            if( KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified )
+                KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified( item, false );
+        }
     }
 }
 

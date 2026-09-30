@@ -48,6 +48,7 @@
 
 #include <functional>
 #include <project/project_file.h>
+#include <kicloud_collab_hooks.h> // KICLOUD: L8.3a collab capture of the cleanup entries
 using namespace std::placeholders;
 
 
@@ -574,6 +575,12 @@ void BOARD_COMMIT::Push( const wxString& aMessage, int aCommitFlags )
                 boardItemCopy = static_cast<BOARD_ITEM*>( entry.m_copy );
 
             wxCHECK2( boardItem, continue );
+
+            // KICLOUD: L8.3a the entries connectivity and teardrop cleanup added here never reach
+            // the board listeners (only the loop above fills their vectors); the collab bridge
+            // captures them with this commit instead of diffing the whole board.
+            if( KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified )
+                KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified( boardItem, ( entry.m_type & CHT_TYPE ) == CHT_REMOVE );
 
             if( !( aCommitFlags & SKIP_UNDO ) )
             {

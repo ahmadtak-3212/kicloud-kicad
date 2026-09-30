@@ -42,6 +42,7 @@
 #include <pcb_track.h>
 
 #include <wx/log.h>
+#include <kicloud_collab_hooks.h> // KICLOUD: L8.3a collab capture of propagated nets
 
 #ifdef PROFILE
 #include <core/profile.h>
@@ -657,6 +658,12 @@ void CN_CONNECTIVITY_ALGO::propagateConnections( BOARD_COMMIT* aCommit )
                         aCommit->Modify( item->Parent() );
 
                     item->Parent()->SetNetCode( cluster->OriginNet() );
+
+                    // KICLOUD: L8.3a the collab bridge captures the new net (no listener hears it
+                    // when the propagation runs without a commit: undo, a connectivity rebuild)
+                    if( KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified )
+                        KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified( item->Parent(), false );
+
                     n_changed++;
                 }
             }
