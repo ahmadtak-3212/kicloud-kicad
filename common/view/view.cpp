@@ -224,6 +224,7 @@ private:
 
     BOX2I                m_bbox;             /// Cached inserted Bbox for faster removals.
 
+public:
     bool                 m_hinted = false;   ///< KICLOUD: L8.7e listed in its view's update hints
 };
 
@@ -442,6 +443,13 @@ void VIEW::Remove( VIEW_ITEM* aItem )
             return;
         }
 
+        // KICLOUD: L8.7e a removed item leaves the update hints (it may be freed next)
+        if( aItem->m_viewPrivData->m_hinted )
+        {
+            std::erase( updateHints()[this].items, aItem );
+            aItem->m_viewPrivData->m_hinted = false;
+        }
+
         std::vector<VIEW_ITEM*>::iterator item = m_allItems->end();
         int                               cachedIndex = aItem->m_viewPrivData->m_cachedIndex;
 
@@ -460,13 +468,6 @@ void VIEW::Remove( VIEW_ITEM* aItem )
         {
             *item = nullptr;
             aItem->m_viewPrivData->clearUpdateFlags();
-
-            // KICLOUD: L8.7e a removed item leaves the update hints (it may be freed next)
-            if( aItem->m_viewPrivData->m_hinted )
-            {
-                std::erase( updateHints()[this].items, aItem );
-                aItem->m_viewPrivData->m_hinted = false;
-            }
 
             s_gcCounter++;
 
@@ -492,7 +493,9 @@ void VIEW::Remove( VIEW_ITEM* aItem )
         // KICLOUD: L8.7e a removed item repaints the area it was drawn in (see UpdateItems)
         const bool recording = m_recordingRepaintAreas;
         m_recordingRepaintAreas = recordEditArea( m_layers, aItem->m_viewPrivData->m_layers, *bbox,
-                                                  m_hasMainDraw && !m_contentChanged && !m_mainDrawApprox, m_repaintAreas );
+                                                  m_hasMainDraw && !m_contentChanged
+                                                          && !m_mainDrawApprox,
+                                                  m_repaintAreas );
 
         for( int layer : aItem->m_viewPrivData->m_layers )
         {
