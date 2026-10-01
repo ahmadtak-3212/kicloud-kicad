@@ -2933,9 +2933,15 @@ void PCB_CONTROL::rehatchBoardItem( BOARD_ITEM* aItem )
 {
     if( aItem->Type() == PCB_SHAPE_T )
     {
-        static_cast<PCB_SHAPE*>( aItem )->UpdateHatching();
+        PCB_SHAPE* shape = static_cast<PCB_SHAPE*>( aItem );
 
-        if( view() )
+        shape->UpdateHatching();
+
+        // KICLOUD: L8.7e only a hatched shape draws its hatching: every commit posts this action,
+        // and updating every shape of the board made each edit recache all of them (about 1,000
+        // on cm5_minima, 4 ms a commit, local or applied from a live session) and redraw the
+        // whole board. See docs/patches.md.
+        if( view() && shape->IsHatchedFill() )
             view()->Update( aItem );
     }
 }
