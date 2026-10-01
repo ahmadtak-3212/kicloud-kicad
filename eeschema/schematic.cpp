@@ -1657,7 +1657,14 @@ void SCHEMATIC::CleanUp( SCH_COMMIT* aCommit, SCH_SCREEN* aScreen )
         std::sort( lines.begin(), lines.end(),
                    [&]( const SCH_LINE* a, const SCH_LINE* b )
                    {
-                       return minX( a ) < minX( b );
+                       // KICLOUD: L8.8 ties by uuid. Which of two overlapping wires a merge keeps
+                       // (MergeOverlap copies the first) followed the R-tree's traversal order,
+                       // which differs between two sessions of one process with the same wires;
+                       // the clean up's result is now a function of the wires alone.
+                       if( minX( a ) != minX( b ) )
+                           return minX( a ) < minX( b );
+
+                       return a->m_Uuid < b->m_Uuid;
                    } );
 
         for( auto it1 = lines.begin(); it1 != lines.end(); ++it1 )
