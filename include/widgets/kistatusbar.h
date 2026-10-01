@@ -32,6 +32,7 @@
 #include <unordered_map>
 #include <widgets/report_severity.h>
 #include <wx/statusbr.h>
+#include <wx/settings.h> // KICLOUD: B1.20, GetDefaultAttributes below
 
 class wxGauge;
 class wxButton;
@@ -75,6 +76,19 @@ public:
                  STYLE_FLAGS aFlags = DEFAULT_STYLE );
 
     ~KISTATUSBAR();
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: the browser editor's status bar sits on the panel colour with muted text (B1.20,
+    // IDEAS.md #8). Default attributes, not SetBackgroundColour, so a theme switch (the wx port's
+    // system colour table) repaints it in the new colours.
+    wxVisualAttributes GetDefaultAttributes() const override
+    {
+        wxVisualAttributes attrs = wxStatusBar::GetDefaultAttributes();
+        attrs.colBg = wxSystemSettings::GetColour( wxSYS_COLOUR_MENUBAR );
+        attrs.colFg = wxSystemSettings::GetColour( wxSYS_COLOUR_GRAYTEXT );
+        return attrs;
+    }
+#endif
 
     /**
      * Set the text in a field using wxELLIPSIZE_MIDDLE option to adjust the text size
