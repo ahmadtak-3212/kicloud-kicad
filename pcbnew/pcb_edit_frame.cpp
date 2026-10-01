@@ -3215,6 +3215,11 @@ void PCB_EDIT_FRAME::CommonSettingsChanged( int aFlags )
 void PCB_EDIT_FRAME::ThemeChanged()
 {
     PCB_BASE_EDIT_FRAME::ThemeChanged();
+
+    // KICLOUD: B1.20, the toolbars' own theme handlers run after this one and reset every tool
+    // to its action's icon, which replaced the layer pair indicator (the two route layers'
+    // colours) with the generic layer pair icon after a theme switch. Redraw it afterwards.
+    CallAfter( [this]() { PrepareLayerIndicator( true ); } );
 }
 
 

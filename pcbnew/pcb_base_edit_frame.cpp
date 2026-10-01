@@ -322,6 +322,12 @@ void PCB_BASE_EDIT_FRAME::onDarkModeToggle( wxSysColourChangedEvent& aEvent )
 
     if( viewer )
         viewer->OnDarkModeToggle();
+
+    // KICLOUD: B1.20, let the frame's own handler (EDA_BASE_FRAME::onSystemColorChange: the icon
+    // theme, toolbar bitmaps, menu bar) and the child windows see the change too. This handler is
+    // bound, so it runs first and used to consume the event: after a live theme switch the PCB
+    // editor's toolbars kept the previous theme's icons.
+    aEvent.Skip();
 }
 
 
