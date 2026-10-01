@@ -41,6 +41,7 @@
 #include <gal/painter.h>
 #include <algorithm>
 #include <cmath>     // KICLOUD: B1.12a
+#include <unordered_map> // KICLOUD: L8.7e
 
 #include <core/profile.h>
 
@@ -222,7 +223,78 @@ private:
     std::vector<int>     m_layers;           /// Stores layer numbers used by the item.
 
     BOX2I                m_bbox;             /// Cached inserted Bbox for faster removals.
+
+    bool                 m_hinted = false;   ///< KICLOUD: L8.7e listed in its view's update hints
 };
+
+
+// KICLOUD: L8.7e incremental item updates (docs/patches.md). VIEW::UpdateItems() scanned every item
+// of the view twice for each repaint that followed an edit (a 2-4 ms floor per edited frame on a
+// large board, e.g. each remote edit a live session applies). VIEW::Update() now lists the items
+// it flags and UpdateItems() visits only those. A bulk flagging (UpdateAllItems*, the layer
+// reorder), an overflow, or a view whose items are shared (DataReference) scans everything as
+// before. The state lives here, not in VIEW, so view.h (included by most of KiCad) is unchanged.
+namespace
+{
+struct VIEW_UPDATE_HINTS
+{
+    std::vector<VIEW_ITEM*> items;
+    bool                    fullScan = false;
+};
+
+constexpr size_t MAX_UPDATE_HINTS = 4096;
+
+// KICLOUD: L8.7e the most areas an edit records for the pan cache before the frame is redrawn
+// in full instead (VIEW::RepaintRects merges more than 24 into one rectangle anyway)
+constexpr size_t MAX_EDIT_AREAS = 4096;
+
+std::unordered_map<const VIEW*, VIEW_UPDATE_HINTS>& updateHints()
+{
+    static std::unordered_map<const VIEW*, VIEW_UPDATE_HINTS> hints;
+    return hints;
+}
+
+// KICLOUD: L8.7e an edit to an item drawn in the main target (cached or non-cached layers; the
+// overlay is redrawn whole) records the item's area for the pan cache's repaint instead of
+// invalidating the whole drawn frame, while that frame is a real draw (aFrameKept) and the list
+// has room. Returns whether the area was recorded; when not, the edit marks the frame changed
+// as before (a full redraw).
+template <class LAYER_MAP>
+bool recordEditArea( const LAYER_MAP& aLayers, const std::vector<int>& aItemLayers, const BOX2I& aBox,
+                     bool aFrameKept, std::vector<BOX2I>& aAreas )
+{
+    if( !aFrameKept || aAreas.size() >= MAX_EDIT_AREAS )
+        return false;
+
+    bool main = false;
+
+    for( int layer : aItemLayers )
+    {
+        auto it = aLayers.find( layer );
+
+        if( it != aLayers.end() && it->second.target != TARGET_OVERLAY )
+            main = true;
+    }
+
+    if( main )
+        aAreas.push_back( aBox );
+
+    // Nothing of the main target changes when the item is drawn on the overlay only
+    return true;
+}
+
+
+void dropHints( VIEW_UPDATE_HINTS& aHints )
+{
+    for( VIEW_ITEM* item : aHints.items )
+    {
+        if( item->viewPrivData() )
+            item->viewPrivData()->m_hinted = false;
+    }
+
+    aHints.items.clear();
+}
+} // namespace
 
 
 void VIEW::OnDestroy( VIEW_ITEM* aItem )
@@ -295,6 +367,15 @@ VIEW::VIEW() :
 VIEW::~VIEW()
 {
     Remove( m_preview.get() );
+
+    // KICLOUD: L8.7e
+    auto it = updateHints().find( this );
+
+    if( it != updateHints().end() )
+    {
+        dropHints( it->second );
+        updateHints().erase( it );
+    }
 }
 
 
@@ -329,12 +410,20 @@ void VIEW::Add( VIEW_ITEM* aItem, int aDrawPriority )
 
     m_allItems->push_back( aItem );
 
+    // KICLOUD: L8.7e an added item repaints its own area of the drawn frame (see UpdateItems)
+    const bool recording = m_recordingRepaintAreas;
+    m_recordingRepaintAreas = recordEditArea( m_layers, layers, bbox,
+                                              m_hasMainDraw && !m_contentChanged && !m_mainDrawApprox,
+                                              m_repaintAreas );
+
     for( int layer : layers )
     {
         VIEW_LAYER& l = m_layers[layer];
         l.items->Insert( aItem, bbox );
         MarkTargetDirty( l.target );
     }
+
+    m_recordingRepaintAreas = recording;
 
     SetVisible( aItem, true );
     Update( aItem, KIGFX::INITIAL_ADD );
@@ -372,6 +461,13 @@ void VIEW::Remove( VIEW_ITEM* aItem )
             *item = nullptr;
             aItem->m_viewPrivData->clearUpdateFlags();
 
+            // KICLOUD: L8.7e a removed item leaves the update hints (it may be freed next)
+            if( aItem->m_viewPrivData->m_hinted )
+            {
+                std::erase( updateHints()[this].items, aItem );
+                aItem->m_viewPrivData->m_hinted = false;
+            }
+
             s_gcCounter++;
 
             if( s_gcCounter > 4096 )
@@ -393,6 +489,11 @@ void VIEW::Remove( VIEW_ITEM* aItem )
 
         const BOX2I* bbox = &aItem->m_viewPrivData->m_bbox;
 
+        // KICLOUD: L8.7e a removed item repaints the area it was drawn in (see UpdateItems)
+        const bool recording = m_recordingRepaintAreas;
+        m_recordingRepaintAreas = recordEditArea( m_layers, aItem->m_viewPrivData->m_layers, *bbox,
+                                                  m_hasMainDraw && !m_contentChanged && !m_mainDrawApprox, m_repaintAreas );
+
         for( int layer : aItem->m_viewPrivData->m_layers )
         {
             VIEW_LAYER& l = m_layers[layer];
@@ -405,6 +506,8 @@ void VIEW::Remove( VIEW_ITEM* aItem )
             if( prevGroup >= 0 )
                 m_gal->DeleteGroup( prevGroup );
         }
+
+        m_recordingRepaintAreas = recording;
 
         aItem->m_viewPrivData->deleteGroups();
         aItem->m_viewPrivData->m_view = nullptr;
@@ -730,6 +833,8 @@ void VIEW::ReorderLayerData( std::unordered_map<int, int> aReorderMap )
         viewData->m_requiredUpdate |= COLOR;
         m_hasPendingItemUpdates = true;
     }
+
+    updateHints()[this].fullScan = true;   // KICLOUD: L8.7e
 
     UpdateItems();
 }
@@ -1165,6 +1270,10 @@ void VIEW::Clear()
             item->m_viewPrivData->m_view = nullptr;
     }
 
+    // KICLOUD: L8.7e the hinted items are still alive here (a destroyed item leaves its view)
+    dropHints( updateHints()[this] );
+    updateHints()[this].fullScan = false;
+
     m_allItems->clear();
 
     for( auto& [_, layer] : m_layers )
@@ -1362,8 +1471,18 @@ void VIEW::RedrawMainTargets( const BOX2I& aScreenRect )
 
     bool overlay = m_dirtyTargets[TARGET_OVERLAY];
     m_dirtyTargets[TARGET_OVERLAY] = false;
+
+    // KICLOUD: L8.7e the clip cleared both main layers' pixels in the rectangle: redraw both, also
+    // when an edit made only one of them dirty
+    bool cached = m_dirtyTargets[TARGET_CACHED];
+    bool noncached = m_dirtyTargets[TARGET_NONCACHED];
+    m_dirtyTargets[TARGET_CACHED] = true;
+    m_dirtyTargets[TARGET_NONCACHED] = true;
+
     redrawRect( BOX2ISafe( rect ) );
     m_dirtyTargets[TARGET_OVERLAY] = overlay;
+    m_dirtyTargets[TARGET_CACHED] = cached;
+    m_dirtyTargets[TARGET_NONCACHED] = noncached;
 }
 
 
@@ -1695,10 +1814,26 @@ void VIEW::UpdateItems()
     m_applyingViewportUpdates = !m_pendingEditUpdates;
     m_pendingEditUpdates = false;
 
+    // KICLOUD: L8.7e the items Update() listed, or every item (see VIEW_UPDATE_HINTS)
+    VIEW_UPDATE_HINTS&       hints = updateHints()[this];
+    const bool               fullScan = hints.fullScan || m_allItems.use_count() > 1;
+    std::vector<VIEW_ITEM*>  listed;
+
+    listed.swap( hints.items );
+    hints.fullScan = false;
+
+    for( VIEW_ITEM* item : listed )
+    {
+        if( item->viewPrivData() )
+            item->viewPrivData()->m_hinted = false;
+    }
+
+    const std::vector<VIEW_ITEM*>& candidates = fullScan ? *m_allItems : listed;
+
     unsigned int cntGeomUpdate = 0;
     bool         anyUpdated = false;
 
-    for( VIEW_ITEM* item : *m_allItems )
+    for( VIEW_ITEM* item : candidates )
     {
         if( !item )
             continue;
@@ -1770,20 +1905,34 @@ void VIEW::UpdateItems()
 
         // KICLOUD: B1.12a: viewport-dependent repaints record their areas, before and after,
         // instead of invalidating the whole drawn frame for the pan cache (see view.h)
-        m_recordingRepaintAreas = m_applyingViewportUpdates;
-
-        for( VIEW_ITEM* item : *m_allItems.get() )
+        // KICLOUD: L8.7e and so do edits, while the drawn frame is kept (recordEditArea)
+        for( VIEW_ITEM* item : candidates )
         {
             if( item && item->viewPrivData() && item->viewPrivData()->m_requiredUpdate != NONE )
             {
-                if( m_recordingRepaintAreas )
-                    m_repaintAreas.push_back( item->viewPrivData()->m_bbox );
+                VIEW_ITEM_DATA* vpd = item->viewPrivData();
 
-                invalidateItem( item, item->viewPrivData()->m_requiredUpdate );
-                item->viewPrivData()->m_requiredUpdate = NONE;
+                m_recordingRepaintAreas =
+                        m_applyingViewportUpdates
+                        || recordEditArea( m_layers, vpd->m_layers, vpd->m_bbox,
+                                           m_hasMainDraw && !m_contentChanged && !m_mainDrawApprox,
+                                           m_repaintAreas );
+
+                if( m_recordingRepaintAreas && m_applyingViewportUpdates )
+                    m_repaintAreas.push_back( vpd->m_bbox );
+
+                invalidateItem( item, vpd->m_requiredUpdate );
+                vpd->m_requiredUpdate = NONE;
 
                 if( m_recordingRepaintAreas )
-                    m_repaintAreas.push_back( item->ViewBBox() );
+                {
+                    // The item's area now, on the layers it is on now
+                    if( m_applyingViewportUpdates )
+                        m_repaintAreas.push_back( item->ViewBBox() );
+                    else if( !recordEditArea( m_layers, vpd->m_layers, vpd->m_bbox, true,
+                                              m_repaintAreas ) )
+                        m_contentChanged = true;
+                }
             }
         }
 
@@ -1803,6 +1952,8 @@ void VIEW::UpdateAllItems( int aUpdateFlags )
     if( aUpdateFlags == NONE )
         return;
 
+    updateHints()[this].fullScan = true;   // KICLOUD: L8.7e
+
     for( VIEW_ITEM* item : *m_allItems )
     {
         if( item && item->viewPrivData() )
@@ -1819,6 +1970,8 @@ void VIEW::UpdateAllItemsConditionally( int aUpdateFlags,
 {
     if( aUpdateFlags == NONE )
         return;
+
+    updateHints()[this].fullScan = true;   // KICLOUD: L8.7e
 
     for( VIEW_ITEM* item : *m_allItems )
     {
@@ -1839,6 +1992,8 @@ void VIEW::UpdateAllItemsConditionally( int aUpdateFlags,
 
 void VIEW::UpdateAllItemsConditionally( std::function<int( VIEW_ITEM* )> aItemFlagsProvider )
 {
+    updateHints()[this].fullScan = true;   // KICLOUD: L8.7e
+
     for( VIEW_ITEM* item : *m_allItems )
     {
         if( !item )
@@ -1955,6 +2110,23 @@ void VIEW::Update( const VIEW_ITEM* aItem, int aUpdateFlags ) const
 
     if( !m_viewportDependentUpdates )     // KICLOUD: B1.12b
         m_pendingEditUpdates = true;
+
+    // KICLOUD: L8.7e list the item for UpdateItems() (an item of another view, or too many
+    // items, and the next UpdateItems() scans the whole view instead)
+    VIEW_UPDATE_HINTS& hints = updateHints()[this];
+
+    if( !hints.fullScan && !viewData->m_hinted )
+    {
+        if( viewData->m_view == this && hints.items.size() < MAX_UPDATE_HINTS )
+        {
+            hints.items.push_back( const_cast<VIEW_ITEM*>( aItem ) );
+            viewData->m_hinted = true;
+        }
+        else
+        {
+            hints.fullScan = true;
+        }
+    }
 }
 
 
