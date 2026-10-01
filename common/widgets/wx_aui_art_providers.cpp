@@ -17,6 +17,7 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
 #include <wx/aui/aui.h>
 #include <wx/aui/framemanager.h>
 #include <wx/aui/auibook.h>
@@ -132,6 +133,43 @@ void WX_AUI_TOOLBAR_ART::DrawButton( wxDC& aDc, wxWindow* aWindow, const wxAuiTo
 
     bool isThemeDark = KIPLATFORM::UI::IsDarkTheme();
 
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: the browser editor's tool shapes (B1.20, IDEAS.md #8): a round hover in the
+    // panel's stronger tone, and the soft accent fill with an accent edge for an active or
+    // pressed tool. The colours are the wx port's system table (src/wasm/settings.cpp, the
+    // editor's theme tokens). Icon positions are unchanged.
+    if( !( aItem.GetState() & wxAUI_BUTTON_STATE_DISABLED ) )
+    {
+        const int     state = aItem.GetState();
+        const bool    active = ( state & wxAUI_BUTTON_STATE_CHECKED ) || ( state & wxAUI_BUTTON_STATE_PRESSED );
+        const bool    hover = ( state & wxAUI_BUTTON_STATE_HOVER ) || aItem.IsSticky();
+        const wxColour soft = wxSystemSettings::GetColour( wxSYS_COLOUR_MENUHILIGHT );
+        const wxColour accent = wxSystemSettings::GetColour( wxSYS_COLOUR_HIGHLIGHT );
+        wxRect        r = aRect;
+        r.Deflate( 1 );
+        const double  radius = std::min( r.width, r.height ) / 2.0;
+
+        if( active || hover )
+        {
+            if( active )
+            {
+                // the edge: the accent mixed into the soft fill, so it reads as one shape
+                wxColour edge( ( soft.Red() + accent.Red() ) / 2, ( soft.Green() + accent.Green() ) / 2,
+                               ( soft.Blue() + accent.Blue() ) / 2 );
+                aDc.SetPen( wxPen( edge ) );
+                aDc.SetBrush( wxBrush( hover ? soft.ChangeLightness( isThemeDark ? 115 : 97 ) : soft ) );
+            }
+            else
+            {
+                const wxColour fill = wxSystemSettings::GetColour( wxSYS_COLOUR_INACTIVECAPTION );
+                aDc.SetPen( wxPen( fill ) );
+                aDc.SetBrush( wxBrush( fill ) );
+            }
+
+            aDc.DrawRoundedRectangle( r, radius );
+        }
+    }
+#else
     if( !( aItem.GetState() & wxAUI_BUTTON_STATE_DISABLED ) )
     {
         if( aItem.GetState() & wxAUI_BUTTON_STATE_PRESSED )
@@ -162,6 +200,7 @@ void WX_AUI_TOOLBAR_ART::DrawButton( wxDC& aDc, wxWindow* aWindow, const wxAuiTo
             aDc.DrawRectangle( aRect );
         }
     }
+#endif
 
     if( bmp.IsOk() )
         aDc.DrawBitmap( bmp, bmpX, bmpY, true );
@@ -196,6 +235,56 @@ void WX_AUI_TOOLBAR_ART::UpdateColoursFromSystem()
     wxAuiDefaultToolBarArt::UpdateColoursFromSystem();
     saturateHighlightColor();
 }
+
+
+#ifdef __EMSCRIPTEN__
+// KICLOUD: flat toolbars in the browser editor (B1.20). wxSYS_COLOUR_MENUBAR is the editor's panel
+// colour in the wx port's table (toolbars, menu bar and dock), BTNSHADOW its strong line colour.
+void WX_AUI_TOOLBAR_ART::DrawBackground( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect )
+{
+    DrawPlainBackground( aDc, aWindow, aRect );
+}
+
+
+void WX_AUI_TOOLBAR_ART::DrawPlainBackground( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect )
+{
+    const wxColour panel = wxSystemSettings::GetColour( wxSYS_COLOUR_MENUBAR );
+    aDc.SetBrush( wxBrush( panel ) );
+    aDc.SetPen( wxPen( panel ) );
+    wxRect r = aRect;
+    r.height++;
+    aDc.DrawRectangle( r );
+}
+
+
+void WX_AUI_TOOLBAR_ART::DrawSeparator( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect )
+{
+    const bool horizontal = !( m_flags & wxAUI_TB_VERTICAL );
+    wxRect     r = aRect;
+
+    if( horizontal )
+    {
+        int h = std::min( r.height, aWindow->FromDIP( 18 ) );
+        r.x += r.width / 2;
+        r.width = aWindow->FromDIP( 1 );
+        r.y += ( r.height - h ) / 2;
+        r.height = h;
+    }
+    else
+    {
+        int w = std::min( r.width, aWindow->FromDIP( 18 ) );
+        r.y += r.height / 2;
+        r.height = aWindow->FromDIP( 1 );
+        r.x += ( r.width - w ) / 2;
+        r.width = w;
+    }
+
+    const wxColour line = wxSystemSettings::GetColour( wxSYS_COLOUR_BTNSHADOW );
+    aDc.SetBrush( wxBrush( line ) );
+    aDc.SetPen( *wxTRANSPARENT_PEN );
+    aDc.DrawRectangle( r );
+}
+#endif
 
 
 class ToolbarCommandCapture : public wxEvtHandler
@@ -322,7 +411,39 @@ WX_AUI_DOCK_ART::WX_AUI_DOCK_ART() :
 
     // Turn off the ridiculous looking gradient
     m_gradientType = wxAUI_GRADIENT_NONE;
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: the base class constructor ran its own version (B1.20)
+    UpdateColoursFromSystem();
+#endif
 }
+
+
+#ifdef __EMSCRIPTEN__
+// KICLOUD: quiet pane captions and a panel-coloured dock in the browser editor (B1.20): the
+// captions (Appearance, Properties, ...) take the panel colour with normal text, and the sashes
+// and borders the panel and line colours, from the wx port's system table.
+void WX_AUI_DOCK_ART::UpdateColoursFromSystem()
+{
+    wxAuiDefaultDockArt::UpdateColoursFromSystem();
+
+    const wxColour panel = wxSystemSettings::GetColour( wxSYS_COLOUR_MENUBAR );
+    const wxColour line = wxSystemSettings::GetColour( wxSYS_COLOUR_BTNSHADOW );
+    const wxColour text = wxSystemSettings::GetColour( wxSYS_COLOUR_BTNTEXT );
+
+    m_baseColour = panel;
+    m_backgroundBrush = wxBrush( panel );
+    m_sashBrush = wxBrush( panel );
+    m_gripperBrush = wxBrush( panel );
+    m_borderPen = wxPen( line );
+    m_activeCaptionColour = panel;
+    m_activeCaptionGradientColour = panel;
+    m_activeCaptionTextColour = text;
+    m_inactiveCaptionColour = panel;
+    m_inactiveCaptionGradientColour = panel;
+    m_inactiveCaptionTextColour = text;
+}
+#endif
 
 
 void WX_AUI_TAB_ART::DrawTab( wxDC& dc, wxWindow* wnd, const wxAuiNotebookPage& page, const wxRect& in_rect,

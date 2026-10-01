@@ -50,6 +50,14 @@ public:
 
     int ShowDropDown( wxWindow* wnd, const wxAuiToolBarItemArray& items ) override;
 
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: the browser editor's flat toolbars (B1.20): a plain panel background and thin
+    // separators instead of wx's gradients.
+    void DrawBackground( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect ) override;
+    void DrawPlainBackground( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect ) override;
+    void DrawSeparator( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect ) override;
+#endif
+
 private:
     void saturateHighlightColor();
 };
@@ -59,6 +67,11 @@ class WX_AUI_DOCK_ART : public wxAuiDefaultDockArt
 {
 public:
     WX_AUI_DOCK_ART();
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: quiet pane captions and a panel-coloured dock in the browser editor (B1.20)
+    void UpdateColoursFromSystem() override;
+#endif
 };
 
 
