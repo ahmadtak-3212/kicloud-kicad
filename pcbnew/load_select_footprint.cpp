@@ -23,6 +23,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <kicloud_place.h>   // KICLOUD: P3-I item 5
 #include <functional>
 using namespace std::placeholders;
 
@@ -196,7 +197,14 @@ FOOTPRINT* PCB_BASE_FRAME::SelectFootprintFromLibrary( LIB_ID aPreselect )
 
     static wxString lastComponentName;
 
-    if( KIWAY_PLAYER* frame = Kiway().Player( FRAME_FOOTPRINT_CHOOSER, true, this ) )
+    // KICLOUD: P3-I item 5 (docs/patches.md): a part named by kicloud's Parts panel ("Place")
+    // is taken as the chooser's answer
+    if( std::optional<std::string> pending = KICLOUD_PLACE::TakePending( KICLOUD_PLACE::FOOTPRINT ) )
+    {
+        footprintName = wxString::FromUTF8( pending->c_str() );
+        fpid.Parse( UTF8( footprintName ) );
+    }
+    else if( KIWAY_PLAYER* frame = Kiway().Player( FRAME_FOOTPRINT_CHOOSER, true, this ) )
     {
         if( frame->ShowModal( &footprintName, this ) )
             fpid.Parse( UTF8( footprintName ) );

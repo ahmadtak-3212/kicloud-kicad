@@ -872,6 +872,7 @@ set( COMMON_SRCS
     tool/zoom_menu.cpp
     tool/zoom_tool.cpp
     tool/kicloud_annotate_tool.cpp     # KICLOUD: P3-I item 4, comment boxes (docs/patches.md)
+    kicloud_place.cpp                  # KICLOUD: P3-I item 5, Place from the Parts panel
 
     settings/cvpcb_settings.cpp
 

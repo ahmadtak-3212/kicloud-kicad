@@ -46,6 +46,7 @@
 #include <project_sch.h>
 
 #include <dialog_symbol_chooser.h>
+#include <kicloud_place.h>   // KICLOUD: P3-I item 5
 
 PICKED_SYMBOL SCH_BASE_FRAME::PickSymbolFromLibrary( const SYMBOL_LIBRARY_FILTER* aFilter,
                                                      std::vector<PICKED_SYMBOL>&  aHistoryList,
@@ -58,6 +59,21 @@ PICKED_SYMBOL SCH_BASE_FRAME::PickSymbolFromLibrary( const SYMBOL_LIBRARY_FILTER
     // One DIALOG_SYMBOL_CHOOSER dialog at a time.  User probably can't handle more anyway.
     if( !dialogLock.try_lock() )
         return PICKED_SYMBOL();
+
+    // KICLOUD: P3-I item 5 (docs/patches.md): a part named by kicloud's Parts panel ("Place")
+    // is taken as the chooser's answer
+    if( std::optional<std::string> pending = KICLOUD_PLACE::TakePending( KICLOUD_PLACE::SYMBOL ) )
+    {
+        PICKED_SYMBOL sel;
+
+        if( sel.LibId.Parse( UTF8( *pending ) ) >= 0 || !sel.LibId.IsValid() )
+            return PICKED_SYMBOL();
+
+        sel.Unit = 1;
+        std::erase_if( aHistoryList, [&sel]( PICKED_SYMBOL const& i ) { return i.LibId == sel.LibId; } );
+        aHistoryList.insert( aHistoryList.begin(), sel );
+        return sel;
+    }
 
     bool aCancelled = false;
 
