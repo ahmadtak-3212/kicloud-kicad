@@ -88,6 +88,7 @@
 #include <tool/properties_tool.h>
 #include <tool/selection.h>
 #include <tool/zoom_tool.h>
+#include <tool/kicloud_annotate_tool.h>   // KICLOUD: P3-I item 4
 #include <tools/array_tool.h>
 #include <tools/pcb_grid_helper.h>
 #include <tools/pcb_selection_tool.h>
@@ -967,6 +968,14 @@ void PCB_EDIT_FRAME::setupTools()
     m_toolManager->RegisterTool( new COMMON_TOOLS );
     m_toolManager->RegisterTool( new PCB_SELECTION_TOOL );
     m_toolManager->RegisterTool( new ZOOM_TOOL );
+    // KICLOUD: P3-I item 4, Add Comment Box (draws nothing into the board; docs/patches.md)
+    m_toolManager->RegisterTool( new KICLOUD_ANNOTATE_TOOL( "pcb",
+            [this]()
+            {
+                KICLOUD_ANNOTATE_PLACE place;
+                place.layer = LSET::Name( GetActiveLayer() ).ToStdString();
+                return place;
+            } ) );
     m_toolManager->RegisterTool( new PCB_PICKER_TOOL );
     m_toolManager->RegisterTool( new ROUTER_TOOL );
     m_toolManager->RegisterTool( new EDIT_TOOL );

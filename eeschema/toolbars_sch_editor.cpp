@@ -49,6 +49,7 @@
 #include <widgets/sch_properties_panel.h>
 #include <widgets/sch_search_pane.h>
 #include <toolbars_sch_editor.h>
+#include <tool/kicloud_annotate_tool.h>   // KICLOUD: P3-I item 4
 #include <wx/choice.h>
 #include <wx/stattext.h>
 
@@ -138,7 +139,10 @@ std::optional<TOOLBAR_CONFIGURATION> SCH_EDIT_TOOLBAR_SETTINGS::DefaultToolbarCo
               .AppendAction( SCH_ACTIONS::placeSchematicText )
               .AppendAction( SCH_ACTIONS::drawTextBox )
               .AppendAction( SCH_ACTIONS::drawTable )
-              .AppendAction( SCH_ACTIONS::drawRectangle )
+              // KICLOUD: P3-I item 4, Add Comment Box grouped with Draw Rectangle (docs/patches.md)
+              .AppendGroup( TOOLBAR_GROUP_CONFIG( _( "Rectangles and comment boxes" ) )
+                            .AddAction( SCH_ACTIONS::drawRectangle )
+                            .AddAction( KICLOUD_ACTIONS::commentBox ) )
               .AppendAction( SCH_ACTIONS::drawCircle )
               .AppendAction( SCH_ACTIONS::drawArc )
               .AppendAction( SCH_ACTIONS::drawBezier )

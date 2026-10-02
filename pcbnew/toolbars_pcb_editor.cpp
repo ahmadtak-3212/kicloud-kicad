@@ -40,6 +40,7 @@
 #include <kiplatform/ui.h>
 #include <macros.h>
 #include <pcb_edit_frame.h>
+#include <tool/kicloud_annotate_tool.h>   // KICLOUD: P3-I item 4
 #include <pcb_field.h>
 #include <pcb_layer_box_selector.h>
 #include <pcbnew_id.h>
@@ -276,7 +277,10 @@ std::optional<TOOLBAR_CONFIGURATION> PCB_EDIT_TOOLBAR_SETTINGS::DefaultToolbarCo
 
                       return menu;
                   } )
-              .AppendAction( PCB_ACTIONS::drawRectangle )
+              // KICLOUD: P3-I item 4, Add Comment Box grouped with Draw Rectangle (docs/patches.md)
+              .AppendGroup( TOOLBAR_GROUP_CONFIG( _( "Rectangles and comment boxes" ) )
+                            .AddAction( PCB_ACTIONS::drawRectangle )
+                            .AddAction( KICLOUD_ACTIONS::commentBox ) )
               .AppendAction( PCB_ACTIONS::drawCircle )
               .AppendAction( PCB_ACTIONS::drawPolygon )
               .AppendAction( PCB_ACTIONS::drawBezier )

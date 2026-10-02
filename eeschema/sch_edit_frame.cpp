@@ -83,6 +83,7 @@
 #include <tool/tool_dispatcher.h>
 #include <tool/tool_manager.h>
 #include <tool/zoom_tool.h>
+#include <tool/kicloud_annotate_tool.h>   // KICLOUD: P3-I item 4
 #include <tools/sch_actions.h>
 #include <tools/sch_align_tool.h>
 #include <tools/ee_grid_helper.h>
@@ -697,6 +698,18 @@ void SCH_EDIT_FRAME::setupTools()
     m_toolManager->RegisterTool( new COMMON_CONTROL );
     m_toolManager->RegisterTool( new COMMON_TOOLS );
     m_toolManager->RegisterTool( new ZOOM_TOOL );
+    // KICLOUD: P3-I item 4, Add Comment Box (draws nothing into the schematic; docs/patches.md)
+    m_toolManager->RegisterTool( new KICLOUD_ANNOTATE_TOOL( "sch",
+            [this]()
+            {
+                KICLOUD_ANNOTATE_PLACE place;
+                place.sheetPath = GetCurrentSheet().PathAsString().ToStdString();
+
+                if( GetCurrentSheet().Last() )
+                    place.sheetName = GetCurrentSheet().Last()->GetName().ToStdString();
+
+                return place;
+            } ) );
     m_toolManager->RegisterTool( new SCH_SELECTION_TOOL );
     m_toolManager->RegisterTool( new PICKER_TOOL );
     m_toolManager->RegisterTool( new SCH_DRAWING_TOOLS );
