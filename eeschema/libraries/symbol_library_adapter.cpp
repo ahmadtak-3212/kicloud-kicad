@@ -216,6 +216,16 @@ std::vector<wxString> SYMBOL_LIBRARY_ADAPTER::GetSymbolNames( const wxString& aN
 
 LIB_SYMBOL* SYMBOL_LIBRARY_ADAPTER::LoadSymbol( const wxString& aNickname, const wxString& aName )
 {
+    // KICLOUD: P3-I (docs/patches.md): this port loads table libraries lazily, so a library added
+    // to a table after startup (My Parts, a team library, a project copy) is not LOADED until a
+    // chooser opens it. Load it now instead of answering "not found"; a library that failed to
+    // load is not retried here.
+    if( std::optional<LIB_STATUS> st = GetLibraryStatus( aNickname ); !st || st->load_status != LOAD_STATUS::LOADED )
+    {
+        if( !st || st->load_status != LOAD_STATUS::LOAD_ERROR )
+            LoadLibraryEntry( aNickname );
+    }
+
     if( std::optional<const LIB_DATA*> lib = fetchIfLoaded( aNickname ) )
     {
         if( LIB_SYMBOL* symbol = schplugin( *lib )->LoadSymbol( getUri( ( *lib )->row ), aName ) )

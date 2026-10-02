@@ -385,6 +385,16 @@ FOOTPRINT* FOOTPRINT_LIBRARY_ADAPTER::LoadFootprint( const wxString& aNickname, 
         }
     }
 
+    // KICLOUD: P3-I (docs/patches.md): this port loads table libraries lazily, so a library added
+    // to a table after startup (My Parts, a team library, a project copy) is not LOADED until a
+    // chooser opens it. Load it now instead of answering "not found"; a library that failed to
+    // load is not retried here.
+    if( std::optional<LIB_STATUS> st = GetLibraryStatus( aNickname ); !st || st->load_status != LOAD_STATUS::LOADED )
+    {
+        if( !st || st->load_status != LOAD_STATUS::LOAD_ERROR )
+            LoadLibraryEntry( aNickname );
+    }
+
     // Footprint not found in PreloadedFootprints, fall back to plugin.
     // This re-parses the file but is needed for footprints not yet enumerated.
     if( std::optional<const LIB_DATA*> lib = fetchIfLoaded( aNickname ) )

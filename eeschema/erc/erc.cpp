@@ -1680,6 +1680,16 @@ int ERC_TESTER::TestLibSymbolIssues()
             std::optional<const LIBRARY_TABLE_ROW*> optRow =
                     manager.GetRow( LIBRARY_TABLE_TYPE::SYMBOL, libName );
 
+            // KICLOUD: P3-I (docs/patches.md): a table library this port has not loaded yet (lazy
+            // loading) is loaded now, not reported as missing; a failed load is not retried
+            if( optRow && !( *optRow )->Disabled() && !adapter->IsLibraryLoaded( libName ) )
+            {
+                std::optional<LIB_STATUS> st = adapter->GetLibraryStatus( libName );
+
+                if( !st || st->load_status != LOAD_STATUS::LOAD_ERROR )
+                    adapter->LoadLibraryEntry( libName );
+            }
+
             if( !optRow || ( *optRow )->Disabled() )
             {
                 if( m_settings.IsTestEnabled( ERCE_LIB_SYMBOL_ISSUES ) )
