@@ -28,6 +28,7 @@
 #include <tool/actions.h>
 #include <tool/tools_holder.h>
 #include <tool/tool_manager.h>
+#include <pcbjam_read_only.h>   // KICLOUD: P3-I item 3, read-only view links
 
 
 TOOLS_HOLDER::TOOLS_HOLDER() :
@@ -43,6 +44,24 @@ TOOLS_HOLDER::TOOLS_HOLDER() :
 void TOOLS_HOLDER::RegisterUIUpdateHandler( const TOOL_ACTION& aAction,
                                             const ACTION_CONDITIONS& aConditions )
 {
+    // KICLOUD: P3-I item 3 (view links, docs/patches.md): in the read-only viewer mode the tool
+    // manager already swallows every action outside PCBJAM_READ_ONLY's view-only allowlist; the
+    // menu items and toolbar buttons of those actions are greyed out too, so nothing looks usable
+    // that does nothing. Evaluated on every UI update, so the mode can change at run time.
+    if( !PCBJAM_READ_ONLY::IsActionAllowed( aAction.GetName() ) )
+    {
+        ACTION_CONDITIONS cond = aConditions;
+        SELECTION_CONDITION enable = aConditions.enableCondition;
+
+        cond.enableCondition = [enable]( const SELECTION& aSel )
+        {
+            return !PCBJAM_READ_ONLY::IsReadOnly() && enable( aSel );
+        };
+
+        RegisterUIUpdateHandler( aAction.GetUIId(), cond );
+        return;
+    }
+
     RegisterUIUpdateHandler( aAction.GetUIId(), aConditions );
 }
 

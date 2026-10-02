@@ -136,6 +136,13 @@ bool IsActionAllowed( const std::string& aActionName )
         "eeschema.NavigateTool.enterSheet",
         "eeschema.NavigateTool.leaveSheet",
 
+        // KICLOUD: P3-I items 3 and 4 (docs/patches.md): a commenter's read-only view still
+        // draws comment boxes (they change nothing in the design), and a viewer may turn the
+        // board over.
+        "common.Kicloud.commentBox",
+        "common.Kicloud.commentPin",
+        "pcbnew.Control.flipBoard",
+
         "common.Interactive.cancel",
         "common.Interactive.updateMenu",
         "common.InteractiveSelection",
