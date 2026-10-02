@@ -626,8 +626,17 @@ void PCB_IO_PCBJAM_FP::FootprintSave( const wxString& aLibraryPath, const FOOTPR
 
     // Throws IO_ERROR if the provider rejects the write (the library adapter
     // catches it and reports the save as failed).
-    request( "save", aLibraryPath,
-             wxString::FromUTF8( payloadStr.c_str(), payloadStr.size() ) );
+    std::string saved = request( "save", aLibraryPath,   // KICLOUD: P3-I item 2 (the answer is read)
+                                 wxString::FromUTF8( payloadStr.c_str(), payloadStr.size() ) );
+
+    // KICLOUD: P3-I item 2: a refusal with a reason ({"error": "<message>"}) fails the save with it
+    if( saved.rfind( "{\"error\"", 0 ) == 0 )
+    {
+        nlohmann::json j = nlohmann::json::parse( saved, nullptr, false );
+        m_lastError = j.is_object() && j["error"].is_string() ? wxString::FromUTF8( j["error"].get<std::string>() )
+                                                              : wxString( _( "the library refused the save" ) );
+        THROW_IO_ERROR( m_lastError );
+    }
 
     // Drop any stale cached master so the next load reflects the saved body.
     wxString key = aLibraryPath + wxS( "|" ) + aFootprint->GetFPID().GetLibItemName().wx_str();
