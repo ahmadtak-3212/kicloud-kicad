@@ -450,9 +450,22 @@ void PCB_IO_PCBJAM_FP::fatLoad( const wxString& aLibraryPath )
     const auto&    arr = header.at( "footprints" );
 
     // KICLOUD: P3-I item 2: the provider says here whether the library is writable (each list
-    // again, so a changed answer is taken; no field: read-only)
-    m_writable[aLibraryPath] = header.contains( "writable" ) && header["writable"].is_boolean()
-                               && header["writable"].get<bool>();
+    // again, so a changed answer is taken). Without the field, a library outside the standard
+    // mounts (/mnt/pcbjam/sym/, /mnt/pcbjam/fp/) is asked with a "writable" request, here where
+    // the list request was just made ("1"/"true": writable); otherwise it is read-only.
+    if( header.contains( "writable" ) && header["writable"].is_boolean() )
+    {
+        m_writable[aLibraryPath] = header["writable"].get<bool>();
+    }
+    else if( !aLibraryPath.StartsWith( wxS( "/mnt/pcbjam/sym/" ) ) && !aLibraryPath.StartsWith( wxS( "/mnt/pcbjam/fp/" ) ) )
+    {
+        std::optional<std::string> w = requestOpt( "writable", aLibraryPath, wxEmptyString );
+        m_writable[aLibraryPath] = w && ( *w == "1" || *w == "true" );
+    }
+    else
+    {
+        m_writable[aLibraryPath] = false;
+    }
 
     offs.reserve( arr.size() );
     lens.reserve( arr.size() );
