@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2026 kicloud contributors.
+ * Copyright (C) 2026 Ahmad Taka.
  *
  * KICLOUD: original file for the browser WebGL GAL (docs/patches.md, B1.6c).
  *
