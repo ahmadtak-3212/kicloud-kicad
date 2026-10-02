@@ -179,6 +179,8 @@ protected:
     // Blit shader for compositing (replacing legacy fixed-function pipeline)
     std::unique_ptr<SHADER> m_blitShader;
     int                     m_blitTexUniform;       ///< Location of texture uniform
+    /// KICLOUD: B1.19: the WebGL context the blit shader was linked in (see ValidateShaders)
+    uintptr_t               m_blitContext = 0;
 
     /**
      * Initialize the blit shader for texture compositing.

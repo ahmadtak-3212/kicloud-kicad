@@ -40,6 +40,7 @@
 
 #include <cassert>
 #include <memory>
+#include <emscripten/html5_webgl.h>   // KICLOUD: B1.19
 #include <stdexcept>
 #include <wx/log.h>
 #include <wx/debug.h>
@@ -98,6 +99,7 @@ void WEBGL_COMPOSITOR::initBlitShader()
     m_blitShader->LoadShaderFromStrings( KIGFX::SHADER_TYPE_FRAGMENT, blitFragmentShader );
     m_blitShader->Link();
     checkGlError( "linking blit shader", __FILE__, __LINE__ );
+    m_blitContext = (uintptr_t) emscripten_webgl_get_current_context();   // KICLOUD: B1.19
 
     m_blitTexUniform = m_blitShader->AddParameter( "u_texture" );
     checkGlError( "getting blit texture uniform", __FILE__, __LINE__ );
@@ -113,7 +115,14 @@ bool WEBGL_COMPOSITOR::ValidateShaders()
     if( !m_initialized )
         return true;  // Not initialized yet, nothing to validate
 
-    if( !m_blitShader || !m_blitShader->IsValid() )
+    // KICLOUD: B1.19: SHADER::IsValid() asks the GL (glIsProgram), a synchronous round trip to
+    // the browser's GPU process, and this runs at the start of every frame. A linked program
+    // goes stale only with its context: when the context is lost, or when the canvas got a new
+    // one (emscripten never reuses a context handle). Both are known without a round trip.
+    const EMSCRIPTEN_WEBGL_CONTEXT_HANDLE ctx = emscripten_webgl_get_current_context();
+
+    if( !m_blitShader || !m_blitShader->IsLinked() || !ctx
+        || (uintptr_t) ctx != m_blitContext || emscripten_is_webgl_context_lost( ctx ) )
     {
         fprintf( stderr, "[COMPOSITOR] Blit shader invalid (stale GL context?), "
                  "hasShader=%d linked=%d — forcing full re-initialization\n",
