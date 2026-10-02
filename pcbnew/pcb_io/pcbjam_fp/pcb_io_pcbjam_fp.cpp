@@ -449,6 +449,10 @@ void PCB_IO_PCBJAM_FP::fatLoad( const wxString& aLibraryPath )
     nlohmann::json header = nlohmann::json::parse( body.substr( 0, nl ) );
     const auto&    arr = header.at( "footprints" );
 
+    // KICLOUD: P3-I item 2: the provider may say here whether the library is writable
+    if( header.contains( "writable" ) && header["writable"].is_boolean() )
+        m_writable[aLibraryPath] = header["writable"].get<bool>();
+
     offs.reserve( arr.size() );
     lens.reserve( arr.size() );
     names.reserve( arr.size() );
@@ -548,6 +552,53 @@ FOOTPRINT* PCB_IO_PCBJAM_FP::loadOne( const wxString& aLibraryPath, const wxStri
                                     aName, aLibraryPath );
     wxLogTrace( wxS( "PCBJAM_FP" ), m_lastError );
     return nullptr;
+}
+
+
+// KICLOUD: P3-I item 2 (docs/patches.md): the provider's answer, asked once per library. The
+// standard libraries' provider answers nothing: read-only, as on the desktop.
+bool PCB_IO_PCBJAM_FP::IsLibraryWritable( const wxString& aLibraryPath )
+{
+    if( !aLibraryPath.StartsWith( wxS( "/mnt/pcbjam/" ) ) )
+        return false;
+
+    if( auto it = m_writable.find( aLibraryPath ); it != m_writable.end() )
+        return it->second;
+
+    std::optional<std::string> res = requestOpt( "writable", aLibraryPath, wxEmptyString );
+    bool                       writable = res && ( *res == "true" || *res == "1" );
+
+    m_writable[aLibraryPath] = writable;
+    return writable;
+}
+
+
+// KICLOUD: P3-I item 2: delete one footprint through the provider ("delete", library, name). A
+// refusal is null, or {"error": "<message>"}; both fail the operation with KiCad's own message.
+// A rename is a save of the new name and a delete of the old one, as KiCad does it.
+void PCB_IO_PCBJAM_FP::FootprintDelete( const wxString& aLibraryPath, const wxString& aFootprintName,
+                                        const std::map<std::string, UTF8>* aProperties )
+{
+    std::string res = request( "delete", aLibraryPath, aFootprintName );
+
+    if( res.rfind( "{\"error\"", 0 ) == 0 )
+    {
+        nlohmann::json j = nlohmann::json::parse( res, nullptr, false );
+        m_lastError = j.is_object() && j["error"].is_string() ? wxString::FromUTF8( j["error"].get<std::string>() )
+                                                              : wxString( _( "the library refused the delete" ) );
+        THROW_IO_ERROR( m_lastError );
+    }
+
+    wxString key = aLibraryPath + wxS( "|" ) + aFootprintName;
+
+    if( auto it = m_cache.find( key ); it != m_cache.end() )
+    {
+        delete it->second;
+        m_cache.erase( it );
+    }
+
+    m_loadedLibs.erase( aLibraryPath );
+    m_libNames.erase( aLibraryPath );
 }
 
 

@@ -492,6 +492,10 @@ void SCH_IO_PCBJAM_LIB::fatLoad( const wxString& aLibraryPath )
         nlohmann::json header = nlohmann::json::parse( body.substr( 0, nl ) );
         const auto&    arr = header.at( "symbols" );
 
+        // KICLOUD: P3-I item 2: the provider may say here whether the library is writable
+        if( header.contains( "writable" ) && header["writable"].is_boolean() )
+            m_writable[aLibraryPath] = header["writable"].get<bool>();
+
         offs.reserve( arr.size() );
         lens.reserve( arr.size() );
         names.reserve( arr.size() );
@@ -662,4 +666,51 @@ void SCH_IO_PCBJAM_LIB::SaveLibrary( const wxString& aFileName,
     // No-op: each SaveSymbol already persisted its item through the bridge, and
     // there is no aggregate library file to flush.  Overridden purely so the
     // base class's NOT_IMPLEMENTED throw doesn't fail the save.
+}
+
+
+// KICLOUD: P3-I item 2 (docs/patches.md): the provider's answer, asked once per library. The
+// standard libraries' provider answers nothing: read-only, as on the desktop.
+bool SCH_IO_PCBJAM_LIB::IsLibraryWritable( const wxString& aLibraryPath )
+{
+    if( !aLibraryPath.StartsWith( wxS( "/mnt/pcbjam/" ) ) )
+        return false;
+
+    if( auto it = m_writable.find( aLibraryPath ); it != m_writable.end() )
+        return it->second;
+
+    std::optional<std::string> res = requestOpt( "writable", aLibraryPath, wxEmptyString );
+    bool                       writable = res && ( *res == "true" || *res == "1" );
+
+    m_writable[aLibraryPath] = writable;
+    return writable;
+}
+
+
+// KICLOUD: P3-I item 2: delete one symbol through the provider ("delete", library, name). A
+// refusal is null, or {"error": "<message>"}; both fail the operation with KiCad's own message.
+// The symbol editor renames by deleting the old name and saving the new one.
+void SCH_IO_PCBJAM_LIB::DeleteSymbol( const wxString& aLibraryPath, const wxString& aSymbolName,
+                                      const std::map<std::string, UTF8>* aProperties )
+{
+    std::string res = request( "delete", aLibraryPath, aSymbolName );
+
+    if( res.rfind( "{\"error\"", 0 ) == 0 )
+    {
+        nlohmann::json j = nlohmann::json::parse( res, nullptr, false );
+        m_lastError = j.is_object() && j["error"].is_string() ? wxString::FromUTF8( j["error"].get<std::string>() )
+                                                              : wxString( _( "the library refused the delete" ) );
+        THROW_IO_ERROR( m_lastError );
+    }
+
+    wxString key = aLibraryPath + wxS( "|" ) + aSymbolName;
+
+    if( auto it = m_cache.find( key ); it != m_cache.end() )
+    {
+        delete it->second;
+        m_cache.erase( it );
+    }
+
+    m_loadedLibs.erase( aLibraryPath );
+    m_libNames.erase( aLibraryPath );
 }

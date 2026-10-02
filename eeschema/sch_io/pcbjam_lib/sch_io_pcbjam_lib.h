@@ -88,11 +88,13 @@ public:
     void SaveLibrary( const wxString& aFileName,
                       const std::map<std::string, UTF8>* aProperties = nullptr ) override;
 
-    /// Every pcbjam lib is writable; save semantics are server-side policy.
-    bool IsLibraryWritable( const wxString& aLibraryPath ) override
-    {
-        return aLibraryPath.StartsWith( wxS( "/mnt/pcbjam/" ) );
-    }
+    // KICLOUD: P3-I item 2 (docs/patches.md): the provider says which libraries are writable
+    // (a "writable" field in the list header, else a "writable" request; read-only without an
+    // answer), so KiCad offers Save As for the read-only ones; deleting goes to the provider.
+    bool IsLibraryWritable( const wxString& aLibraryPath ) override;
+
+    void DeleteSymbol( const wxString& aLibraryPath, const wxString& aSymbolName,
+                       const std::map<std::string, UTF8>* aProperties = nullptr ) override;
 
     const wxString& GetError() const override { return m_lastError; }
 
@@ -145,4 +147,6 @@ private:
     std::map<wxString, std::vector<wxString>> m_libNames;
 
     wxString m_lastError;
+
+    std::map<wxString, bool> m_writable;   // KICLOUD: P3-I item 2
 };
