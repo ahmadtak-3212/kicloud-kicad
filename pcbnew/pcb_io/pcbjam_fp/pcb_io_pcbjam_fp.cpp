@@ -449,9 +449,10 @@ void PCB_IO_PCBJAM_FP::fatLoad( const wxString& aLibraryPath )
     nlohmann::json header = nlohmann::json::parse( body.substr( 0, nl ) );
     const auto&    arr = header.at( "footprints" );
 
-    // KICLOUD: P3-I item 2: the provider may say here whether the library is writable
-    if( header.contains( "writable" ) && header["writable"].is_boolean() )
-        m_writable[aLibraryPath] = header["writable"].get<bool>();
+    // KICLOUD: P3-I item 2: the provider says here whether the library is writable (each list
+    // again, so a changed answer is taken; no field: read-only)
+    m_writable[aLibraryPath] = header.contains( "writable" ) && header["writable"].is_boolean()
+                               && header["writable"].get<bool>();
 
     offs.reserve( arr.size() );
     lens.reserve( arr.size() );
