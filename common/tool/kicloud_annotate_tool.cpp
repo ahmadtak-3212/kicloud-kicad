@@ -100,23 +100,27 @@ const EDA_ITEM* topLevel( const EDA_ITEM* aItem )
 }
 
 
-void emit( const std::string& aJson )
+// aStarted: the tool started (onStart), else it ended with a box, a pin or nothing (onDone)
+void emit( const std::string& aJson, bool aStarted = false )
 {
 #ifdef __EMSCRIPTEN__
     EM_ASM( {
         // A throwing listener must never unwind the wasm frame that called it (JSPI)
         try
         {
-            if( window.kicloudAnnotate && window.kicloudAnnotate.onDone )
-                window.kicloudAnnotate.onDone( UTF8ToString( $0 ) );
+            var hook = window.kicloudAnnotate;
+            var fn = hook && ( $1 ? hook.onStart : hook.onDone );
+            if( fn )
+                fn( UTF8ToString( $0 ) );
         }
         catch( e )
         {
             console.error( '[kicloud annotate] listener threw', e );
         }
-    }, aJson.c_str() );
+    }, aJson.c_str(), aStarted ? 1 : 0 );
 #else
     (void) aJson;
+    (void) aStarted;
 #endif
 }
 } // namespace
@@ -173,6 +177,7 @@ int KICLOUD_ANNOTATE_TOOL::Annotate( const TOOL_EVENT& aEvent )
 
     setCursor();
     frame->DisplayToolMsg( hint );
+    emit( nlohmann::json( { { "doc", m_doc }, { "kind", pin ? "pin" : "box" } } ).dump(), true );
 
     bool     started = false;    // the first corner is set
     bool     dragged = false;    // started with a drag: the button's release ends it

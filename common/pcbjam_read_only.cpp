@@ -142,6 +142,14 @@ bool IsActionAllowed( const std::string& aActionName )
         "common.Kicloud.commentBox",
         "common.Kicloud.commentPin",
         "pcbnew.Control.flipBoard",
+        // and looks things up (search, find, select all, measure): view only
+        "common.Interactive.search",
+        "common.Interactive.find",
+        "common.Interactive.findNext",
+        "common.Interactive.findPrevious",
+        "common.Interactive.findNextMarker",
+        "common.Interactive.selectAll",
+        "common.Interactive.measureTool",
 
         "common.Interactive.cancel",
         "common.Interactive.updateMenu",

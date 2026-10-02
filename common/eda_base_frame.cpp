@@ -92,6 +92,9 @@
 #include <api/api_server.h>
 #endif
 
+#include <pcbjam_read_only.h>   // KICLOUD: P3-I item 3
+#include <set>
+
 
 // Minimum window size
 static const wxSize minSizeLookup( FRAME_T aFrameType, wxWindow* aWindow )
@@ -570,12 +573,39 @@ void EDA_BASE_FRAME::UnregisterUIUpdateHandler( int aID )
 }
 
 
+// KICLOUD: P3-I item 3 (docs/patches.md): in the read-only viewer mode, the menu items and
+// toolbar buttons of actions without enable conditions (Fill All Zones, Edit Track & Via
+// Properties, ...) are greyed out too when the action is outside the view-only allowlist (the
+// tool manager swallows them anyway). The UI ids of the disallowed actions are collected once:
+// action ids are process-global.
+static bool kicloudReadOnlyDisallowsId( TOOL_MANAGER* aToolMgr, int aId )
+{
+    static std::set<int> disallowed;
+    static bool          built = false;
+
+    if( !built && aToolMgr && aToolMgr->GetActionManager() )
+    {
+        for( const auto& [name, action] : aToolMgr->GetActionManager()->GetActions() )
+        {
+            if( action && !PCBJAM_READ_ONLY::IsActionAllowed( name ) )
+                disallowed.insert( action->GetUIId() );
+        }
+
+        built = true;
+    }
+
+    return disallowed.count( aId ) > 0;
+}
+
+
 void EDA_BASE_FRAME::onUpdateUI( wxUpdateUIEvent& aEvent )
 {
     const auto it = m_uiUpdateMap.find( aEvent.GetId() );
 
     if( it != m_uiUpdateMap.end() )
         it->second( aEvent );
+    else if( PCBJAM_READ_ONLY::IsReadOnly() && kicloudReadOnlyDisallowsId( m_toolManager, aEvent.GetId() ) )
+        aEvent.Enable( false );   // KICLOUD: P3-I item 3
     else
         aEvent.Skip();
 }
