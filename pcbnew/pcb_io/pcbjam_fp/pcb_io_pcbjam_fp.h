@@ -95,8 +95,8 @@ public:
 
     /// Every pcbjam lib is writable; save semantics are server-side policy.
     // KICLOUD: P3-I item 2 (docs/patches.md): the provider says which libraries are writable
-    // (a "writable" field in the list header, else a "writable" request; read-only without an
-    // answer), so KiCad offers Save As for the read-only ones; deleting goes to the provider.
+    // (a "writable" field in the header of the library's list; read-only without it), so KiCad
+    // offers Save As for the read-only ones; deleting goes to the provider.
     bool IsLibraryWritable( const wxString& aLibraryPath ) override;
 
     void FootprintDelete( const wxString& aLibraryPath, const wxString& aFootprintName,

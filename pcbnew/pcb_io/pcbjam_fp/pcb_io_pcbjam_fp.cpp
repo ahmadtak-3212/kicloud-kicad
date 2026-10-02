@@ -555,21 +555,17 @@ FOOTPRINT* PCB_IO_PCBJAM_FP::loadOne( const wxString& aLibraryPath, const wxStri
 }
 
 
-// KICLOUD: P3-I item 2 (docs/patches.md): the provider's answer, asked once per library. The
-// standard libraries' provider answers nothing: read-only, as on the desktop.
+// KICLOUD: P3-I item 2 (docs/patches.md): the provider's answer, given in the header of the
+// library's list (fatLoad). No request here: KiCad asks this while painting its library tree,
+// where a provider round trip (a nested wait) must not happen. No answer: read-only, as the
+// standard libraries are on the desktop.
 bool PCB_IO_PCBJAM_FP::IsLibraryWritable( const wxString& aLibraryPath )
 {
     if( !aLibraryPath.StartsWith( wxS( "/mnt/pcbjam/" ) ) )
         return false;
 
-    if( auto it = m_writable.find( aLibraryPath ); it != m_writable.end() )
-        return it->second;
-
-    std::optional<std::string> res = requestOpt( "writable", aLibraryPath, wxEmptyString );
-    bool                       writable = res && ( *res == "true" || *res == "1" );
-
-    m_writable[aLibraryPath] = writable;
-    return writable;
+    auto it = m_writable.find( aLibraryPath );
+    return it != m_writable.end() && it->second;
 }
 
 
