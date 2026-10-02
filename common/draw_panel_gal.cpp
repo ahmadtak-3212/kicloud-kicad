@@ -76,6 +76,10 @@ static std::set<EDA_DRAW_PANEL_GAL*>& livePanels()
 
 static int s_fullMainRedraws = 0;
 
+// KICLOUD: B1.23-FU: board-layer repaints of any size (a full redraw, or B1.19's repaint of only
+// the edited areas), so a test can wait for the first repaint after a remote edit.
+static int s_mainRepaints = 0;
+
 extern "C" EMSCRIPTEN_KEEPALIVE void kicloud_view_full_redraw( int aRebuild )
 {
     if( !wxTheApp )
@@ -101,6 +105,11 @@ extern "C" EMSCRIPTEN_KEEPALIVE void kicloud_view_full_redraw( int aRebuild )
 extern "C" EMSCRIPTEN_KEEPALIVE int kicloud_view_full_redraw_count()
 {
     return s_fullMainRedraws;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE int kicloud_view_main_repaint_count()
+{
+    return s_mainRepaints;
 }
 #endif
 
@@ -506,6 +515,11 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint( bool aAllowSkip )
                     m_gal->FlushMainTarget();
                 }
 
+#ifdef __EMSCRIPTEN__
+                if( !rects.empty() )
+                    s_mainRepaints++;    // KICLOUD: B1.23-FU, see kicloud_view_main_repaint_count()
+#endif
+
                 m_gal->SetMainTargetClip( nullptr );
                 m_view->RedrawOverlay();
                 m_view->RememberMainDraw();
@@ -543,6 +557,7 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint( bool aAllowSkip )
                     m_previewShown = false;
 #ifdef __EMSCRIPTEN__
                     s_fullMainRedraws++;
+                    s_mainRepaints++;
 #endif
                 }
 
