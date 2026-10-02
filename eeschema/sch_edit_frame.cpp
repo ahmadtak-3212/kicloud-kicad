@@ -999,6 +999,7 @@ void SCH_EDIT_FRAME::setupUIConditions()
     CURRENT_TOOL( SCH_ACTIONS::drawSheetFromFile );
     CURRENT_TOOL( SCH_ACTIONS::drawSheetFromDesignBlock );
     CURRENT_TOOL( SCH_ACTIONS::drawRectangle );
+    CURRENT_TOOL( KICLOUD_ACTIONS::commentBox );   // KICLOUD: P3-I item 4 (pressed while active)
     CURRENT_TOOL( SCH_ACTIONS::drawCircle );
     CURRENT_TOOL( SCH_ACTIONS::drawArc );
     CURRENT_TOOL( SCH_ACTIONS::drawBezier );

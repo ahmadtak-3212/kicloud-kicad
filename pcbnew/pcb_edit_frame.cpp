@@ -1365,6 +1365,7 @@ void PCB_EDIT_FRAME::setupUIConditions()
     CURRENT_EDIT_TOOL( PCB_ACTIONS::drawRuleArea );
     CURRENT_EDIT_TOOL( PCB_ACTIONS::drawLine );
     CURRENT_EDIT_TOOL( PCB_ACTIONS::drawRectangle );
+    CURRENT_TOOL( KICLOUD_ACTIONS::commentBox );   // KICLOUD: P3-I item 4 (pressed while active)
     CURRENT_EDIT_TOOL( PCB_ACTIONS::drawCircle );
     CURRENT_EDIT_TOOL( PCB_ACTIONS::drawArc );
     CURRENT_EDIT_TOOL( PCB_ACTIONS::drawPolygon );
