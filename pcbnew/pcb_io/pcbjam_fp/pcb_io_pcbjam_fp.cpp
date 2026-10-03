@@ -262,12 +262,35 @@ PCB_IO_PCBJAM_FP::~PCB_IO_PCBJAM_FP()
 }
 
 
+// KICLOUD: P3-I T14 the library mount is /mnt/kicloud/ (the browser shows table URIs, and the
+// PCBJam name must not appear); tables saved with the old /mnt/pcbjam/ mount still load. The length
+// of the mount prefix aUri starts with, 0 if none.
+size_t PCB_IO_PCBJAM_FP::MountPrefixLength( const wxString& aUri )
+{
+    if( aUri.StartsWith( wxS( "/mnt/kicloud/" ) ) )
+        return 13;
+
+    if( aUri.StartsWith( wxS( "/mnt/pcbjam/" ) ) )
+        return 12;
+
+    return 0;
+}
+
+
+// A standard-library mount (sym/ or fp/ right after the prefix)
+static bool kicloudIsStandardMount( const wxString& aUri )
+{
+    const size_t n = PCB_IO_PCBJAM_FP::MountPrefixLength( aUri );
+    return n && ( aUri.Mid( n ).StartsWith( wxS( "sym/" ) ) || aUri.Mid( n ).StartsWith( wxS( "fp/" ) ) );
+}
+
+
 bool PCB_IO_PCBJAM_FP::CanReadLibrary( const wxString& aFileName ) const
 {
     // Single mount root for every pcbjam lib.  PCB_IO_MGR::GuessPluginTypeFromLibPath
     // probes this too (used as a legacy-format gate on the save path), so the type
     // is recognised from the URI without touching pcb_io_mgr's selection logic.
-    return aFileName.StartsWith( wxS( "/mnt/pcbjam/" ) );
+    return MountPrefixLength( aFileName ) > 0;   // KICLOUD: P3-I T14
 }
 
 
@@ -457,7 +480,7 @@ void PCB_IO_PCBJAM_FP::fatLoad( const wxString& aLibraryPath )
     {
         m_writable[aLibraryPath] = header["writable"].get<bool>();
     }
-    else if( !aLibraryPath.StartsWith( wxS( "/mnt/pcbjam/sym/" ) ) && !aLibraryPath.StartsWith( wxS( "/mnt/pcbjam/fp/" ) ) )
+    else if( !kicloudIsStandardMount( aLibraryPath ) )   // KICLOUD: P3-I T14
     {
         std::optional<std::string> w = requestOpt( "writable", aLibraryPath, wxEmptyString );
         m_writable[aLibraryPath] = w && ( *w == "1" || *w == "true" );
@@ -575,7 +598,7 @@ FOOTPRINT* PCB_IO_PCBJAM_FP::loadOne( const wxString& aLibraryPath, const wxStri
 // standard libraries are on the desktop.
 bool PCB_IO_PCBJAM_FP::IsLibraryWritable( const wxString& aLibraryPath )
 {
-    if( !aLibraryPath.StartsWith( wxS( "/mnt/pcbjam/" ) ) )
+    if( !MountPrefixLength( aLibraryPath ) )   // KICLOUD: P3-I T14
         return false;
 
     auto it = m_writable.find( aLibraryPath );

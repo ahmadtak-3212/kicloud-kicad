@@ -50,7 +50,10 @@ VERTEX_CONTAINER* VERTEX_CONTAINER::MakeContainer( bool aCached )
         return new CACHED_CONTAINER_SPLIT;
     }
 
-    return new NONCACHED_CONTAINER;
+    // KICLOUD: P3-I T14 start small: every GAL canvas has three non-cached managers, and the
+    // default 1M vertices (32 MB each) cost 96 MB of wasm memory per canvas, a preview canvas
+    // included (Zone Manager, choosers). The container doubles when a frame needs more.
+    return new NONCACHED_CONTAINER( 65536 );
 }
 
 

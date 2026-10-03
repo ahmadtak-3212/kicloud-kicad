@@ -79,6 +79,12 @@ private:
 #endif /* __WXMSW__ */
 
     double m_dpi = 72.0;
+
+#ifdef __EMSCRIPTEN__
+    ///< KICLOUD: P3-I T14 the DC the page image is drawn on when the context is destroyed
+    wxDC*    m_targetDC = nullptr;
+    wxImage* m_ownImage = nullptr;
+#endif
 };
 
 

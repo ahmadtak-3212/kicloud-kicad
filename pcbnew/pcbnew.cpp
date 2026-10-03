@@ -132,7 +132,7 @@ static const std::map<std::string, std::vector<PCBJAM_FP_INDEX_ENTRY>>* pcbjamFp
     // caller falls back to per-lib loads, and retry on the next call (the JS
     // side caches a definitive miss, so the retry crossing stays cheap).
     std::optional<std::string> raw =
-            PCB_IO_PCBJAM_FP::BridgeRequest( "index", wxS( "/mnt/pcbjam/" ), wxEmptyString );
+            PCB_IO_PCBJAM_FP::BridgeRequest( "index", wxS( "/mnt/kicloud/" ), wxEmptyString );   // KICLOUD: P3-I T14
 
     if( !raw )
         return nullptr;
@@ -286,13 +286,14 @@ static wxString filterFootprints( const wxString& aFilterJson )
                 std::optional<LIBRARY_TABLE_ROW*> row = adapter->GetRow( nickname );
                 wxString uri = row ? LIBRARY_MANAGER::GetFullURI( *row, true ) : wxString();
 
-                if( uri.StartsWith( wxS( "/mnt/pcbjam/" ) ) )
+                // KICLOUD: P3-I T14 /mnt/kicloud/ (or the old /mnt/pcbjam/)
+                if( const size_t mountLen = PCB_IO_PCBJAM_FP::MountPrefixLength( uri ) )
                 {
                     if( !fpIndex )
                         continue;
 
                     auto it = fpIndex->find(
-                            std::string( uri.Mid( strlen( "/mnt/pcbjam/" ) ).utf8_str() ) );
+                            std::string( uri.Mid( mountLen ).utf8_str() ) );
 
                     if( it == fpIndex->end() )
                         continue;

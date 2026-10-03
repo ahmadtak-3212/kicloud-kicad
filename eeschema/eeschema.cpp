@@ -224,12 +224,10 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
         }
 
         case FRAME_SCH_VIEWER:
-#ifdef __EMSCRIPTEN__
-            // WASM build: symbol viewer is not supported.
-            return nullptr;
-#else
+            // KICLOUD: P3-I T14 the Symbol Library Browser runs in the browser (libraries load
+            // on demand like the Footprint Library Browser's); the base returned no frame here,
+            // so View > Symbol Library Browser did nothing
             return new SYMBOL_VIEWER_FRAME( aKiway, aParent );
-#endif
 
         case FRAME_SYMBOL_CHOOSER:
         {

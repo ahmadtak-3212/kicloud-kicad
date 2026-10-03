@@ -300,6 +300,28 @@ int COMMON_CONTROL::ShowHelp( const TOOL_EVENT& aEvent )
     const wxString baseUrl = URL_DOCUMENTATION + GetMajorMinorVersion() + wxT( "/" )
                              + Pgm().GetLocale()->GetName().BeforeLast( '_' ) + wxT( "/" );
 
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: P3-I T14 the browser has no help files, so the "File Not Found ... access the
+    // online help?" question always came: open KiCad's online documentation for this version
+    // (docs.kicad.org/<major.minor>/<language>/<name>/<name>.html) in a new tab instead
+    {
+        wxString lang = Pgm().GetLocale() ? Pgm().GetLocale()->GetName().BeforeLast( '_' )
+                                          : wxString();
+
+        if( lang.IsEmpty() || lang == wxS( "C" ) )
+            lang = wxS( "en" );
+
+        const wxString name = aEvent.IsAction( &ACTIONS::gettingStarted )
+                                      ? wxString( wxS( "getting_started_in_kicad" ) )
+                                      : m_frame->help_name();
+
+        wxLaunchDefaultBrowser( wxS( "https://docs.kicad.org/" ) + GetMajorMinorVersion()
+                                + wxS( "/" ) + lang.Lower() + wxS( "/" ) + name + wxS( "/" ) + name
+                                + wxS( ".html" ) );
+        return 0;
+    }
+#endif
+
     /* We have to get document for beginners,
      * or the full specific doc
      * if event id is wxID_INDEX, we want the document for beginners.

@@ -73,6 +73,35 @@ CAIRO_PRINT_CTX::CAIRO_PRINT_CTX( wxImage* aImage, double aDPI ) :
 
 CAIRO_PRINT_CTX::CAIRO_PRINT_CTX( wxDC* aDC )
 {
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: P3-I T14 the browser port has no native graphics context for Cairo (the GTK,
+    // Windows and macOS branches below; nothing was set up, so printing used an invalid Cairo
+    // context and crashed the page). Draw into an image surface of the DC's size at the DC's
+    // resolution, and draw the image onto the DC when done (the page DC of the port's printer,
+    // src/wasm/utils.cpp in the wx fork, reports its print resolution).
+    {
+        wxSize size = aDC->GetSize();
+        m_dpi = aDC->GetPPI().x;
+        m_ownImage = new wxImage( std::max( size.x, 1 ), std::max( size.y, 1 ) );
+        m_ownImage->InitAlpha();
+        m_targetImage = m_ownImage;
+        m_targetDC = aDC;
+        m_surface = cairo_image_surface_create( CAIRO_FORMAT_ARGB32, m_ownImage->GetWidth(),
+                                                m_ownImage->GetHeight() );
+
+        if( !m_surface || cairo_surface_status( m_surface ) != CAIRO_STATUS_SUCCESS )
+            throw std::runtime_error( "Could not create Cairo surface" );
+
+        m_ctx = cairo_create( m_surface );
+
+        if( !m_ctx || cairo_status( m_ctx ) != CAIRO_STATUS_SUCCESS )
+            throw std::runtime_error( "Could not create Cairo context" );
+
+        cairo_set_antialias( m_ctx, CAIRO_ANTIALIAS_GOOD );
+        return;
+    }
+#endif
+
     if( wxPrinterDC* printerDC = dynamic_cast<wxPrinterDC*>( aDC ) )
         m_gcdc = new wxGCDC( *printerDC );
     else if( wxMemoryDC* memoryDC = dynamic_cast<wxMemoryDC*>( aDC ) )
@@ -193,6 +222,14 @@ CAIRO_PRINT_CTX::~CAIRO_PRINT_CTX()
 
     if( m_ctx )
         cairo_destroy( m_ctx );
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: P3-I T14 the drawn page onto the DC (see the constructor)
+    if( m_targetDC && m_ownImage )
+        m_targetDC->DrawBitmap( wxBitmap( *m_ownImage ), 0, 0, true );
+
+    delete m_ownImage;
+#endif
 
     delete m_gcdc;
 }

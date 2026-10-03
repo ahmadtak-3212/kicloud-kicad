@@ -127,8 +127,10 @@ void ZONE_PREVIEW_NOTEBOOK::OnZoneSelectionChanged( ZONE* aZone )
         }
     }
 
+    // KICLOUD: P3-I T14 delete the old previews: a removed page (a GAL canvas per layer) stayed
+    // alive, hidden, until the dialog closed, so every new selection added canvases
     while( GetPageCount() )
-        RemovePage( 0 );
+        DeletePage( 0 );
 
     if( !aZone )
         return;

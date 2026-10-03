@@ -114,6 +114,10 @@ public:
      * fat-loading any body.  Returns nullopt when the provider is absent, has
      * no index, or fails (and always outside Emscripten builds).
      */
+    /// KICLOUD: P3-I T14 the length of the library mount prefix aUri starts with
+    /// ("/mnt/kicloud/", or "/mnt/pcbjam/" in tables saved before), 0 if none
+    static size_t MountPrefixLength( const wxString& aUri );
+
     static std::optional<std::string> BridgeRequest( const std::string& aOp, const wxString& aLib,
                                                      const wxString& aArg );
 

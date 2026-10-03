@@ -106,8 +106,10 @@ DIALOG_PRINT::DIALOG_PRINT( SCH_EDIT_FRAME* aParent ) :
                             { wxID_APPLY,  _( "Print Preview" ) },
                             { wxID_CANCEL, _( "Close" )         } } );
 
-#ifdef __WXMAC__
+#if defined( __WXMAC__ ) || defined( __EMSCRIPTEN__ )
     // Problems with modal on wx-2.9 - Anyway preview is standard for OSX
+    // KICLOUD: P3-I T14 and in the browser, whose print dialog previews (as the PCB print
+    // dialog, DIALOG_PRINT_GENERIC, already does)
     m_sdbSizerApply->Hide();
 #endif
 #if defined(__WXGTK__)
