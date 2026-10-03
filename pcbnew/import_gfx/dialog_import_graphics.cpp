@@ -75,6 +75,12 @@ DIALOG_IMPORT_GRAPHICS::DIALOG_IMPORT_GRAPHICS( PCB_BASE_FRAME* aParent ) :
     for( const std::pair<const DXF_IMPORT_UNITS, wxString>& unitEntry : dxfUnitsMap )
         m_dxfUnitsChoice->Append( unitEntry.second );
 
+    // KICLOUD: P3-K the choice and the layer box start with a value (the browser's <select> has
+    // no selection after Append, and a saved dialog state restores its own choice afterwards)
+    m_dxfUnitsChoice->SetSelection( std::distance( dxfUnitsMap.begin(),
+                                                   dxfUnitsMap.find( DXF_IMPORT_UNITS::MM ) ) );
+    m_SelLayerBox->SetLayerSelection( m_parent->GetActiveLayer() );
+
     m_browseButton->SetBitmap( KiBitmapBundle( BITMAPS::small_folder ) );
 
     wxCommandEvent dummy;

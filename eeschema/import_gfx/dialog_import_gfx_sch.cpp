@@ -73,6 +73,15 @@ DIALOG_IMPORT_GFX_SCH::DIALOG_IMPORT_GFX_SCH( SCH_BASE_FRAME* aParent ) :
 {
     m_browseButton->SetBitmap( KiBitmapBundle( BITMAPS::small_folder ) );
 
+    // KICLOUD: P3-K the DXF units choice was never filled (dxfUnitsMap was unused here), and the
+    // scale started empty (a scale of 0): fill both as the PCB editor's dialog does
+    for( const std::pair<const DXF_IMPORT_UNITS, wxString>& unitEntry : dxfUnitsMap )
+        m_choiceDxfUnits->Append( unitEntry.second );
+
+    m_choiceDxfUnits->SetSelection( std::distance( dxfUnitsMap.begin(),
+                                                   dxfUnitsMap.find( DXF_IMPORT_UNITS::MM ) ) );
+    m_importScaleCtrl->SetValue( wxS( "1.0" ) );
+
     if( SYMBOL_EDIT_FRAME* symFrame = dynamic_cast<SYMBOL_EDIT_FRAME*>( aParent ) )
         m_importer = std::make_unique<GRAPHICS_IMPORTER_LIB_SYMBOL>( symFrame->GetCurSymbol(), symFrame->GetUnit() );
     else if( dynamic_cast<SCH_EDIT_FRAME*>( aParent ) )
