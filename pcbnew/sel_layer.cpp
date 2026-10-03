@@ -679,6 +679,11 @@ public:
 
         SetFocus();
 
+        // KICLOUD: P3-K the empty presets grid is sized to its column widths plus its scrollbar
+        // and a few rows: laid out at its bare best size (an empty grid) the browser's grid got
+        // a horizontal scrollbar that covered its header (a garbled empty bar)
+        m_presetsGrid->SetMinSize( FromDIP( wxSize( 360, 110 ) ) );
+
         GetSizer()->SetSizeHints( this );
         Center();
     }
