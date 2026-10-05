@@ -388,12 +388,20 @@ extern "C" EMSCRIPTEN_KEEPALIVE void pcbjam_libctx_entry( int id, intptr_t vp )
     }
 
     c->started = true;
-    wasm_fcontext* prev = g_current;
     g_current = c;
 
     c->fn( vp ); // callerStub; returns only via the finishing-yield path
 
-    g_current = prev;
+    // KICLOUD: PERF (docs/patches.md), D3: when the body finishes in a RESUMED slice (it parked
+    // on a foreign wait such as a suspending main-thread pool wait, wasm/shims/main_thread_wait.c,
+    // and the scheduler resumed it), the g_current from before the entry is the enterer, which is
+    // itself parked waiting for this coroutine. Pointing g_current at it would let the next
+    // activation the event loop runs (a timer, an input job) attribute its own suspension, and the
+    // coroutines it enters, to that parked enterer (cross-wired resumes, later "yield-no-cur").
+    // The scheduler re-points g_current before every resume, and js_libctx_start restores the
+    // caller's handle after a synchronous first slice, so "no coroutine running" (root) is the
+    // only correct value here. (KiCad restored the g_current from before the entry.)
+    g_current = &g_root;
     c->finished = true;
 
     if( c->region )

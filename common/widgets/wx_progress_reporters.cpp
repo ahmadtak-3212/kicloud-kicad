@@ -28,6 +28,27 @@
 #include <widgets/wx_event_utils.h>
 #include <widgets/wx_progress_reporters.h>
 
+#ifdef __EMSCRIPTEN__
+#include <map>
+#include <memory>
+#include <wx/utils.h>
+
+// KICLOUD: PERF (docs/patches.md), D3: one wxWindowDisabler per progress dialog for its whole
+// life (created at its first update, destroyed with the dialog). On the desktop, input that
+// arrives during a long operation waits in the toolkit's queue and is only read inside the
+// dialog's Update(), while its own wxWindowDisabler is active, so clicks on other windows are
+// dropped. In the browser the page takes input between updates (the main thread suspends while
+// it waits for the thread pool, wasm/shims/main_thread_wait.c) and the port queues it for windows
+// that are enabled at that moment; keeping the other windows disabled for the whole operation
+// drops that input as the desktop does, so no handler runs over a half-done board or schematic.
+// Only the dialog (its Cancel button) stays usable. Keyed by the reporter; main thread only.
+static std::map<const WX_PROGRESS_REPORTER*, std::unique_ptr<wxWindowDisabler>>& kicloudDisablers()
+{
+    static std::map<const WX_PROGRESS_REPORTER*, std::unique_ptr<wxWindowDisabler>> s_disablers;
+    return s_disablers;
+}
+#endif
+
 
 WX_PROGRESS_REPORTER::WX_PROGRESS_REPORTER( wxWindow* aParent, const wxString& aTitle,
                                             int aNumPhases, int aCanAbort,
@@ -54,19 +75,24 @@ WX_PROGRESS_REPORTER::WX_PROGRESS_REPORTER( wxWindow* aParent, const wxString& a
 
 WX_PROGRESS_REPORTER::~WX_PROGRESS_REPORTER()
 {
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: PERF (docs/patches.md), D3: re-enable the other windows (see kicloudDisablers)
+    kicloudDisablers().erase( this );
+#endif
 }
 
 
 bool WX_PROGRESS_REPORTER::updateUI()
 {
 #ifdef __EMSCRIPTEN__
-    // KiCad-WASM: wxProgressDialog::Update() pumps a nested event loop (wxYield).
-    // Mid-way through a long-running operation such as loading a schematic that
-    // hands the browser arbitrary events (and a suspension point) while the op is
-    // half-done. Skip the UI pump entirely and report "not cancelled" so the
-    // work runs straight through synchronously. No progress dialog updates in wasm.
-    return true;
-#else
+    // KICLOUD: PERF (docs/patches.md), D3: PCBJam returned true here (no progress, no Cancel):
+    // Update()'s yield ran queued input over the half-done operation. The update now runs as
+    // on the desktop, so the dialog shows progress and Cancel works; the other windows stay
+    // disabled for the whole operation, which drops input aimed at them (kicloudDisablers).
+    // Called on the main thread only (KeepRefreshing); worker threads only report progress.
+    if( !kicloudDisablers().count( this ) )
+        kicloudDisablers()[this] = std::make_unique<wxWindowDisabler>( this );
+#endif
     int cur = CurrentProgress();
 
     if( cur < 0 || cur > 1000 )
@@ -107,7 +133,6 @@ bool WX_PROGRESS_REPORTER::updateUI()
     DrainPendingEvents();
 
     return diag;
-#endif
 }
 
 
