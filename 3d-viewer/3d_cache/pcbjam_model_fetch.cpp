@@ -244,6 +244,31 @@ wxString PCBJAM_3D::NormalizeModelRef( const wxString& aModelRef )
 }
 
 
+// KICLOUD: C3 - the project-relative form of a "${KIPRJMOD}/<path>" (or "$(KIPRJMOD)/<path>") model
+// reference: "<path>" with forward slashes and no leading separator, "" for anything else. A project
+// that is still downloading in the page (a cloud project opens in two phases) has these files
+// arriving after KiCad started; EnsureModelFile asks the page for them by this relative path.
+wxString PCBJAM_3D::ProjectModelRef( const wxString& aModelRef )
+{
+    wxString ref = aModelRef;
+    ref.Trim( true ).Trim( false );
+
+    const wxString braces = wxT( "${KIPRJMOD}" );
+    const wxString parens = wxT( "$(KIPRJMOD)" );
+
+    if( !ref.StartsWith( braces ) && !ref.StartsWith( parens ) )
+        return wxEmptyString;
+
+    ref = ref.Mid( braces.length() );
+    ref.Replace( wxT( "\\" ), wxT( "/" ) );
+
+    while( !ref.empty() && ref[0] == '/' )
+        ref = ref.Mid( 1 );
+
+    return ref;
+}
+
+
 wxString PCBJAM_3D::FindStagedModel( const wxString& aModelRef )
 {
     const wxString rel = NormalizeModelRef( aModelRef );
@@ -291,6 +316,51 @@ wxString PCBJAM_3D::FindStagedModel( const wxString& aModelRef )
 wxString PCBJAM_3D::EnsureModelFile( const wxString& aModelRef )
 {
 #ifdef __EMSCRIPTEN__
+    // KICLOUD: C3 - a ${KIPRJMOD} model the stock resolver could not find is usually a project file the
+    // page is still downloading. Ask the page for it (kind "project3d"): the page moves the file to the
+    // front of its download queue and answers with the absolute MEMFS path once the file is written,
+    // or "" when the project has no such file or it could not be fetched. Only a found path is
+    // memoized: a failed or missing file is asked again the next time the scene is built, so a
+    // download that fails once is not lost for the whole session.
+    const wxString projectRel = ProjectModelRef( aModelRef );
+
+    if( !projectRel.empty() )
+    {
+        static std::mutex                   projectMemoMutex;
+        static std::map<wxString, wxString> projectResolved;
+
+        {
+            std::lock_guard<std::mutex> lock( projectMemoMutex );
+            auto it = projectResolved.find( projectRel );
+
+            if( it != projectResolved.end() )
+                return it->second;
+        }
+
+        wxString projectPath;
+        char*    projectRes = pcbjam_3d_request_dispatch( "ensure", "", projectRel.utf8_str().data(), "project3d" );
+
+        if( projectRes )
+        {
+            projectPath = wxString::FromUTF8( projectRes );
+            free( projectRes );
+
+            if( !projectPath.StartsWith( wxT( "/" ) ) )
+                projectPath.clear();
+        }
+
+        if( !projectPath.empty() )
+        {
+            std::lock_guard<std::mutex> lock( projectMemoMutex );
+            projectResolved[projectRel] = projectPath;
+        }
+
+        std::printf( "[pcbjam-3d] ensure project %s -> %s\n", (const char*) projectRel.utf8_str(),
+                     projectPath.empty() ? "(unserved)" : (const char*) projectPath.utf8_str() );
+
+        return projectPath;
+    }
+
     const wxString rel = NormalizeModelRef( aModelRef );
 
     if( rel.empty() )

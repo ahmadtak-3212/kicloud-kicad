@@ -42,7 +42,9 @@ namespace PCBJAM_3D
     // expansion working inside the wasm runtime.
     //
     // Never throws and never re-crosses for repeat refs: results (the path, or
-    // "" for a ref the provider can't serve) are memoized per session.
+    // "" for a ref the provider can't serve) are memoized per session. KICLOUD: a
+    // ${KIPRJMOD} ref is also sent (kind "project3d", the project-relative path), because a
+    // cloud project's files arrive after KiCad starts; only a found path is memoized for those.
     wxString EnsureModelFile( const wxString& aModelRef );
 
     // Normalize a footprint model reference to its lib-relative form:
@@ -51,6 +53,11 @@ namespace PCBJAM_3D
     // relative refs pass through; anything not served by the model libs
     // (absolute, ${KIPRJMOD}, URIs) → "".
     wxString NormalizeModelRef( const wxString& aModelRef );
+
+    // KICLOUD: C3 - "${KIPRJMOD}/<path>" (or "$(KIPRJMOD)/<path>") -> "<path>", the project-relative
+    // form; "" for any other reference. EnsureModelFile uses it to ask the page (request kind
+    // "project3d") for a project model that is still downloading.
+    wxString ProjectModelRef( const wxString& aModelRef );
 
     // Resolve a footprint model reference against files ALREADY staged under
     // MODELS_MEMFS_ROOT — a pure path probe, no JS bridge, usable where the
