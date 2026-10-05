@@ -181,8 +181,44 @@ protected:
     int m_multiDraw;
 
     ///< KICLOUD: first vertex and vertex count of each merged range for glMultiDrawArraysWEBGL
+    ///< (and, without WEBGL_multi_draw, the input of the fallback's draw plan)
     std::vector<GLint>   m_drawFirsts;
     std::vector<GLsizei> m_drawCounts;
+
+    /**
+     * KICLOUD: one step of the fallback draw plan used when WEBGL_multi_draw is missing
+     * (Firefox). Either a direct glDrawArrays of one merged vertex range (aIndexed false:
+     * m_first / m_count are vertex numbers) or a glDrawElements of a slice of the element
+     * buffer (aIndexed true: m_first / m_count are positions in the index array).
+     */
+    struct DRAW_STEP
+    {
+        bool    m_indexed;
+        GLint   m_first;
+        GLsizei m_count;
+    };
+
+    ///< KICLOUD: build m_fallbackPlan (and the index array behind it) from m_drawFirsts /
+    ///< m_drawCounts, unless the merged ranges equal the previous frame's (then the element
+    ///< buffer already on the GPU is reused as it is). Returns true when the index array changed
+    ///< and must be uploaded.
+    bool buildFallbackPlan();
+
+    ///< KICLOUD: the fallback's draw steps, in the original draw order
+    std::vector<DRAW_STEP> m_fallbackPlan;
+
+    ///< KICLOUD: the merged ranges the current plan and element buffer were built from (the
+    ///< key of the one-entry cache: same ranges, same indices)
+    std::vector<GLint>   m_planFirsts;
+    std::vector<GLsizei> m_planCounts;
+
+    ///< KICLOUD: number of indices the plan uses, and the element buffer's allocated size in
+    ///< indices (the buffer only grows; uploads go through glBufferSubData)
+    unsigned int m_planIndexCount;
+    unsigned int m_eboCapacity;
+
+    ///< KICLOUD: false until a plan has been uploaded to m_ebo (and after the buffer is lost)
+    bool m_planValid;
 };
 
 

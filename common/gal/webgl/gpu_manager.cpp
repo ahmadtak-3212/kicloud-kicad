@@ -117,7 +117,10 @@ GPU_CACHED_MANAGER::GPU_CACHED_MANAGER( VERTEX_CONTAINER* aContainer ) :
         m_indexBufMaxSize( 0 ),
         m_curVrangeSize( 0 ),
         m_ebo( 0 ),
-        m_multiDraw( -1 )
+        m_multiDraw( -1 ),
+        m_planIndexCount( 0 ),
+        m_eboCapacity( 0 ),
+        m_planValid( false )
 {
 }
 
@@ -191,9 +194,6 @@ void GPU_CACHED_MANAGER::EndDrawing()
         m_multiDraw = ( ctx > 0 && emscripten_webgl_enable_WEBGL_multi_draw( ctx ) ) ? 1 : 0;
     }
 
-    if( m_multiDraw != 1 )
-        resizeIndices( m_indexBufMaxSize );
-
     if( m_enableDepthTest )
         glEnable( GL_DEPTH_TEST );
     else
@@ -213,101 +213,104 @@ void GPU_CACHED_MANAGER::EndDrawing()
     PROF_TIMER cntDraw( "gl-draw-elements" );
 
     // KICLOUD: draw every visible range with one glMultiDrawArraysWEBGL call. PCBJam's path
-    // below rebuilds an index per vertex on the CPU and uploads it every frame (hundreds of MB
-    // while panning a large board) plus one glDrawArrays per large item. Adjacent ranges are
-    // merged; the draw order is unchanged. Falls back to that path without WEBGL_multi_draw.
-    // See docs/patches.md (B1.6).
-    bool drawn = false;
+    // rebuilt an index per vertex on the CPU and uploaded it every frame (hundreds of MB while
+    // panning a large board) plus one glDrawArrays per large item. Adjacent ranges are merged;
+    // the draw order is unchanged. See docs/patches.md (B1.6).
+    //
+    // Without WEBGL_multi_draw (Firefox) the same merged ranges feed a draw plan
+    // (buildFallbackPlan): long ranges are drawn directly, only short ones go through the
+    // element buffer, and the buffer is uploaded only when the merged ranges differ from the
+    // previous frame's. See docs/patches.md (bug 38).
     int  drawCalls = 0;
+    unsigned int uploadedIndices = 0;
+
+    m_drawFirsts.clear();
+    m_drawCounts.clear();
+
+    for( const VRANGE& range : m_vranges )
+    {
+        GLint   first = range.m_start;
+        GLsizei count = range.m_end - range.m_start + 1;
+
+        if( !m_drawFirsts.empty() && m_drawFirsts.back() + m_drawCounts.back() == first )
+            m_drawCounts.back() += count;
+        else
+        {
+            m_drawFirsts.push_back( first );
+            m_drawCounts.push_back( count );
+        }
+    }
 
     if( m_multiDraw == 1 )
     {
-        m_drawFirsts.clear();
-        m_drawCounts.clear();
-
-        for( const VRANGE& range : m_vranges )
-        {
-            GLint   first = range.m_start;
-            GLsizei count = range.m_end - range.m_start + 1;
-
-            if( !m_drawFirsts.empty() && m_drawFirsts.back() + m_drawCounts.back() == first )
-                m_drawCounts.back() += count;
-            else
-            {
-                m_drawFirsts.push_back( first );
-                m_drawCounts.push_back( count );
-            }
-        }
-
         if( !m_drawFirsts.empty() )
         {
             glMultiDrawArraysWEBGL( GL_TRIANGLES, m_drawFirsts.data(), m_drawCounts.data(),
                                     (GLsizei) m_drawFirsts.size() );
             drawCalls = 1;
         }
-
-        drawn = true;
     }
-
-    int     n_ranges = drawn ? 0 : m_vranges.size();
-    int     n = 0;
-    GLuint* iptr = m_indices.get();
-    GLuint  icnt = 0;
-
-    // Lazily create element buffer object for indexed drawing
-    // WebGL 2.0 does not support client-side index arrays in glDrawElements
-    if( !drawn && m_ebo == 0 )
-        glGenBuffers( 1, &m_ebo );
-
-    while( n < n_ranges )
+    else if( !m_drawFirsts.empty() )
     {
-        VRANGE* cur = &m_vranges[n];
+        bool changed = buildFallbackPlan();
 
-        if( cur->m_isContinuous )
-        {
-            if( icnt > 0 )
-            {
-                glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, m_ebo );
-                glBufferData( GL_ELEMENT_ARRAY_BUFFER, icnt * sizeof( GLuint ),
-                              m_indices.get(), GL_STREAM_DRAW );
-                glDrawElements( GL_TRIANGLES, icnt, GL_UNSIGNED_INT, (GLvoid*) 0 );
-                glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
-                drawCalls++;
-            }
-
-            icnt = 0;
-            iptr = m_indices.get();
-
-            glDrawArrays( GL_TRIANGLES, cur->m_start, cur->m_end - cur->m_start + 1 );
-            drawCalls++;
-        }
+        if( m_planIndexCount == 0 )
+            m_planValid = true;     // nothing to upload: the plan is complete as it is
         else
         {
-            for( GLuint i = cur->m_start; i <= cur->m_end; i++ )
+            if( m_ebo == 0 )
             {
-                *iptr++ = i;
-                icnt++;
+                glGenBuffers( 1, &m_ebo );
+                m_eboCapacity = 0;
+                changed = true;
+            }
+
+            glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, m_ebo );
+
+            if( changed || !m_planValid )
+            {
+                // Grow the GPU buffer by half again so a slowly growing view does not
+                // reallocate it every frame; otherwise overwrite the start of it in place.
+                if( m_planIndexCount > m_eboCapacity )
+                {
+                    m_eboCapacity = m_planIndexCount + m_planIndexCount / 2;
+                    glBufferData( GL_ELEMENT_ARRAY_BUFFER, m_eboCapacity * sizeof( GLuint ),
+                                  nullptr, GL_DYNAMIC_DRAW );
+                }
+
+                glBufferSubData( GL_ELEMENT_ARRAY_BUFFER, 0, m_planIndexCount * sizeof( GLuint ),
+                                 m_indices.get() );
+                uploadedIndices = m_planIndexCount;
+                m_planValid = true;
             }
         }
 
-        n++;
-    }
+        for( const DRAW_STEP& step : m_fallbackPlan )
+        {
+            if( step.m_indexed )
+            {
+                glDrawElements( GL_TRIANGLES, step.m_count, GL_UNSIGNED_INT,
+                                (GLvoid*) ( (uintptr_t) step.m_first * sizeof( GLuint ) ) );
+            }
+            else
+            {
+                glDrawArrays( GL_TRIANGLES, step.m_first, step.m_count );
+            }
 
-    if( icnt > 0 )
-    {
-        glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, m_ebo );
-        glBufferData( GL_ELEMENT_ARRAY_BUFFER, icnt * sizeof( GLuint ),
-                      m_indices.get(), GL_STREAM_DRAW );
-        glDrawElements( GL_TRIANGLES, icnt, GL_UNSIGNED_INT, (GLvoid*) 0 );
-        glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
-        drawCalls++;
+            drawCalls++;
+        }
+
+        if( m_planIndexCount > 0 )
+            glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
     }
 
     cntDraw.Stop();
 
     KI_TRACE( traceGalProfile,
-              "Cached manager size: VBO size %u iranges %zu max elt size %u drawcalls %u\n",
-              cached->AllItemsSize(), m_vranges.size(), m_indexBufMaxSize, drawCalls );
+              "Cached manager size: VBO size %u iranges %zu merged %zu multidraw %d drawcalls %d "
+              "indices uploaded %u\n",
+              cached->AllItemsSize(), m_vranges.size(), m_drawFirsts.size(), m_multiDraw,
+              drawCalls, uploadedIndices );
     KI_TRACE( traceGalProfile, "Timing: %s\n", cntDraw.to_string() );
 
     glBindBuffer( GL_ARRAY_BUFFER, 0 );
@@ -330,6 +333,84 @@ void GPU_CACHED_MANAGER::EndDrawing()
     glBindVertexArray( 0 );
 
     m_isDrawing = false;
+}
+
+
+// KICLOUD (bug 38): the draw plan for browsers without WEBGL_multi_draw.
+//
+// Purpose: draw the merged visible ranges (m_drawFirsts / m_drawCounts, already in draw order)
+// with as little CPU work and upload as possible when glMultiDrawArraysWEBGL is missing.
+// Why: PCBJam's fallback wrote one index per visible vertex and uploaded the whole index array
+// with glBufferData on every frame, so each pan or zoom step of a large board in Firefox cost
+// tens of MB of index writes and uploads.
+// How:
+//  - When there are few merged ranges, each one is a glDrawArrays (no indices at all).
+//  - Otherwise ranges of at least DIRECT_MIN vertices are drawn directly and only the shorter
+//    ones are written to the index array; consecutive short ranges share one glDrawElements.
+//    The steps keep the original order, so overlapping items are painted exactly as before.
+//  - One-entry cache: if the merged ranges are the same as for the plan already built, nothing
+//    is rebuilt and the element buffer on the GPU is reused. Indices only name vertex numbers,
+//    so the cache stays correct when vertex data (colour, depth, position) changes in place.
+// Result: true when the index array changed and must be uploaded; m_fallbackPlan,
+// m_planIndexCount and the cache key are updated. m_indices grows as needed (never shrinks).
+bool GPU_CACHED_MANAGER::buildFallbackPlan()
+{
+    // At most this many merged ranges: all of them are drawn directly
+    constexpr size_t   ALL_DIRECT_MAX = 64;
+    // A range at least this long is drawn directly even when there are many ranges
+    constexpr GLsizei  DIRECT_MIN = 3000;
+
+    if( m_planValid && m_planFirsts == m_drawFirsts && m_planCounts == m_drawCounts )
+        return false;
+
+    m_planFirsts = m_drawFirsts;
+    m_planCounts = m_drawCounts;
+    m_fallbackPlan.clear();
+    m_planIndexCount = 0;
+
+    const size_t n = m_drawFirsts.size();
+    const bool   allDirect = n <= ALL_DIRECT_MAX;
+
+    if( !allDirect )
+    {
+        size_t needed = 0;
+
+        for( size_t i = 0; i < n; i++ )
+        {
+            if( m_drawCounts[i] < DIRECT_MIN )
+                needed += m_drawCounts[i];
+        }
+
+        resizeIndices( (unsigned int) needed );
+    }
+
+    GLuint* iptr = m_indices.get();
+
+    for( size_t i = 0; i < n; i++ )
+    {
+        const GLint   first = m_drawFirsts[i];
+        const GLsizei count = m_drawCounts[i];
+
+        if( allDirect || count >= DIRECT_MIN )
+        {
+            m_fallbackPlan.push_back( { false, first, count } );
+            continue;
+        }
+
+        // A short range: append its vertex numbers and extend (or start) an indexed step
+        if( m_fallbackPlan.empty() || !m_fallbackPlan.back().m_indexed )
+            m_fallbackPlan.push_back( { true, (GLint) m_planIndexCount, 0 } );
+
+        for( GLsizei v = 0; v < count; v++ )
+            *iptr++ = (GLuint) ( first + v );
+
+        m_fallbackPlan.back().m_count += count;
+        m_planIndexCount += count;
+    }
+
+    // The plan changed; the caller uploads m_indices (when any are used) and marks it valid
+    m_planValid = false;
+    return true;
 }
 
 
