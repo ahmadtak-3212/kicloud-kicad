@@ -776,6 +776,21 @@ void EDA_DRAW_PANEL_GAL::SetTopLayer( int aLayer )
 
 bool EDA_DRAW_PANEL_GAL::SwitchBackend( GAL_TYPE aGalType )
 {
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: Browser startup selects KiCad's existing software renderer when WebGL2
+    // creation is denied. Honour that selection at every 2D backend switch, including
+    // temporary/preview canvases that request OpenGL before frame settings are loaded.
+    // Do not alter saved preferences or the separate 3D viewer's WebGL requirement.
+    wxString softwareRendering;
+
+    if( aGalType == GAL_TYPE_OPENGL
+            && wxGetEnv( "KICAD_SOFTWARE_RENDERING", &softwareRendering )
+            && softwareRendering == "1" )
+    {
+        aGalType = GAL_TYPE_CAIRO;
+    }
+#endif
+
     // Do not do anything if the currently used GAL is correct
     if( aGalType == m_backend && m_gal != nullptr )
         return true;
