@@ -279,6 +279,11 @@ protected:
     void onIdle( wxIdleEvent& aEvent );
     void onRefreshTimer( wxTimerEvent& aEvent );
     void onShowEvent( wxShowEvent& aEvent );
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: PERF idle (docs/patches.md): see ForceRefresh's waiting-for-show path
+    void onPaintWhileHidden( wxPaintEvent& aEvent );
+    void stopWaitingForShow();
+#endif
 
     bool recoverFromGalError( const std::exception& aErr );
 
@@ -304,6 +309,13 @@ protected:
 
     /// Flag that determines if VIEW may use GAL for redrawing the screen.
     bool                     m_drawingEnabled;
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: PERF idle (docs/patches.md): a hidden canvas waits for a paint/size instead of
+    // polling every 100 ms; the poll backs off (m_showRetryMs) as a backstop only.
+    bool                     m_waitingForShow = false;
+    int                      m_showRetryMs = 100;
+#endif
 
     /// True when canvas needs to be refreshed from idle handler
     bool                     m_needIdleRefresh;

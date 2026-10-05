@@ -617,6 +617,16 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint( bool aAllowSkip )
 
 void EDA_DRAW_PANEL_GAL::onSize( wxSizeEvent& aEvent )
 {
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: PERF idle (docs/patches.md): a canvas waiting to be shown (ForceRefresh) that now
+    // has a non-empty size may be drawable: retry soon instead of at the backed-off delay.
+    if( m_waitingForShow && !m_drawingEnabled && !GetClientRect().IsEmpty() )
+    {
+        m_showRetryMs = 100;
+        m_refreshTimer.StartOnce( 1 );
+    }
+#endif
+
     // If we get a second wx update call before the first finishes, don't crash
     if( m_gal->IsContextLocked() )
         return;
@@ -673,6 +683,7 @@ void EDA_DRAW_PANEL_GAL::Refresh( bool aEraseBackground, const wxRect* aRect )
     if( galInitialized && m_gal->GetSwapInterval() == 0 )
         minPeriodMs = 16;
 
+
     if( delta >= minPeriodMs )
     {
         if( !DoRePaint() )
@@ -691,6 +702,9 @@ void EDA_DRAW_PANEL_GAL::ForceRefresh()
     {
         if( m_gal && m_gal->IsInitialized() )
         {
+#ifdef __EMSCRIPTEN__
+            stopWaitingForShow();   // KICLOUD: PERF idle, see below
+#endif
             Connect( wxEVT_PAINT, wxPaintEventHandler( EDA_DRAW_PANEL_GAL::onPaint ), nullptr,
                      this );
 
@@ -700,14 +714,72 @@ void EDA_DRAW_PANEL_GAL::ForceRefresh()
         }
         else
         {
+#ifdef __EMSCRIPTEN__
+            // KICLOUD: PERF idle (docs/patches.md). The GAL is not ready because this canvas is
+            // not on screen yet (a hidden editor frame, a dialog page not shown, a zero-size
+            // pane: OPENGL_GAL::IsInitialized() is "shown and non-empty"). Desktop KiCad polls
+            // every 100 ms; in the browser each poll is a timer wake that also costs the
+            // event-driven wx loop a tick with idle processing over every window, so a few hidden
+            // canvases kept an idle page at ~10 wakes/s each. Instead we wait for the event that
+            // makes the canvas drawable: wx paints a window when it (or a parent) is shown, and
+            // sends a size event when it gets a non-empty size. Both retry at once (see
+            // onPaintWhileHidden, onSize). The timer stays as a backstop for anything that
+            // becomes drawable without either event, backing off 100 ms -> 200 -> ... -> 2 s.
+            // State: m_waitingForShow / m_showRetryMs, cleared by stopWaitingForShow() once the
+            // canvas draws (or StopDrawing()). Drawing results are unchanged: only when the first
+            // ForceRefresh retry happens moves.
+            if( !m_waitingForShow )
+            {
+                m_waitingForShow = true;
+                m_showRetryMs = 100;
+                Bind( wxEVT_PAINT, &EDA_DRAW_PANEL_GAL::onPaintWhileHidden, this );
+            }
+
+            m_refreshTimer.StartOnce( m_showRetryMs );
+            m_showRetryMs = std::min( m_showRetryMs * 2, 2000 );
+            return;
+#else
             // Try again soon
             m_refreshTimer.StartOnce( 100 );
             return;
+#endif
         }
     }
 
     DoRePaint( false );
 }
+
+
+#ifdef __EMSCRIPTEN__
+// KICLOUD: PERF idle (docs/patches.md). A paint while ForceRefresh waits for this canvas to be
+// shown means it is on screen now: retry on the next timer turn (1 ms, not from inside the paint
+// walk, so the GAL is created outside the paint sweep as the 100 ms poll did). The event is
+// skipped so any other paint handler still runs. Input: the paint event (unused). No effect once
+// drawing is enabled (the binding is removed then).
+void EDA_DRAW_PANEL_GAL::onPaintWhileHidden( wxPaintEvent& aEvent )
+{
+    aEvent.Skip();
+
+    if( m_waitingForShow && !m_drawingEnabled )
+    {
+        m_showRetryMs = 100;
+        m_refreshTimer.StartOnce( 1 );
+    }
+}
+
+
+// KICLOUD: PERF idle (docs/patches.md). Leave the waiting-for-show state: drop the temporary
+// paint binding and reset the backstop delay. Safe to call when not waiting.
+void EDA_DRAW_PANEL_GAL::stopWaitingForShow()
+{
+    if( !m_waitingForShow )
+        return;
+
+    m_waitingForShow = false;
+    m_showRetryMs = 100;
+    Unbind( wxEVT_PAINT, &EDA_DRAW_PANEL_GAL::onPaintWhileHidden, this );
+}
+#endif
 
 
 bool EDA_DRAW_PANEL_GAL::GetScreenshot( wxImage& aDstImage )
@@ -744,6 +816,9 @@ void EDA_DRAW_PANEL_GAL::StartDrawing()
 void EDA_DRAW_PANEL_GAL::StopDrawing()
 {
     m_refreshTimer.Stop();
+#ifdef __EMSCRIPTEN__
+    stopWaitingForShow();   // KICLOUD: PERF idle
+#endif
     m_drawingEnabled = false;
 
     Disconnect( wxEVT_PAINT, wxPaintEventHandler( EDA_DRAW_PANEL_GAL::onPaint ), nullptr, this );
