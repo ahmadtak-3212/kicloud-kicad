@@ -507,6 +507,67 @@ bool ZONE_FILLER::Fill( const std::vector<ZONE*>& aZones, bool aCheck, wxWindow*
                 return false;
             };
 
+    // KICLOUD: PERF (docs/patches.md), D3: a cancelled fill leaves the board as it was. The zones
+    // and teardrops changed below go through m_commit, which the caller reverts on cancel, but the
+    // conditional via/pad flashing state (zone layer overrides, saved in the board file) is set
+    // directly on the vias and pads. Remember every via's and pad's overrides here and, if the
+    // user cancels (the progress reporter says so when Fill returns), put them back, so Cancel
+    // changes nothing. A fill that completes, or ends for any other reason, keeps KiCad's own
+    // result untouched: the algorithm is unchanged. Main thread only (Fill's caller).
+    struct KICLOUD_OVERRIDES_ON_CANCEL
+    {
+        PROGRESS_REPORTER* reporter = nullptr;
+        std::vector<std::pair<PCB_VIA*, std::vector<ZONE_LAYER_OVERRIDE>>> vias;
+        std::vector<std::pair<PAD*, std::vector<ZONE_LAYER_OVERRIDE>>>     pads;
+        std::vector<PCB_LAYER_ID>                                          layers;
+
+        ~KICLOUD_OVERRIDES_ON_CANCEL()
+        {
+            if( !reporter || !reporter->IsCancelled() )
+                return;
+
+            for( auto& [via, saved] : vias )
+                for( size_t i = 0; i < layers.size(); ++i )
+                    via->SetZoneLayerOverride( layers[i], saved[i] );
+
+            for( auto& [pad, saved] : pads )
+                for( size_t i = 0; i < layers.size(); ++i )
+                    pad->SetZoneLayerOverride( layers[i], saved[i] );
+        }
+    } kicloudRestoreOnCancel;
+
+    if( m_progressReporter )
+    {
+        kicloudRestoreOnCancel.reporter = m_progressReporter;
+
+        for( PCB_LAYER_ID layer : LSET::AllCuMask().Seq() )
+            kicloudRestoreOnCancel.layers.push_back( layer );
+
+        auto snapshot = [&]( auto* aItem )
+        {
+            std::vector<ZONE_LAYER_OVERRIDE> saved;
+            saved.reserve( kicloudRestoreOnCancel.layers.size() );
+
+            for( PCB_LAYER_ID layer : kicloudRestoreOnCancel.layers )
+                saved.push_back( aItem->GetZoneLayerOverride( layer ) );
+
+            return saved;
+        };
+
+        for( PCB_TRACK* track : m_board->Tracks() )
+        {
+            if( track->Type() == PCB_VIA_T )
+            {
+                PCB_VIA* via = static_cast<PCB_VIA*>( track );
+                kicloudRestoreOnCancel.vias.emplace_back( via, snapshot( via ) );
+            }
+        }
+
+        for( FOOTPRINT* footprint : m_board->Footprints() )
+            for( PAD* pad : footprint->Pads() )
+                kicloudRestoreOnCancel.pads.emplace_back( pad, snapshot( pad ) );
+    }
+
     // Determine state of conditional via flashing
     // This is now done completely deterministically prior to filling due to the pathological
     // case presented in https://gitlab.com/kicad/code/kicad/-/issues/12964.

@@ -1415,14 +1415,47 @@ void SCH_SHEET_LIST::GetSheetsWithinPath( std::vector<SCH_SHEET_PATH>& aSheets,
 std::optional<SCH_SHEET_PATH> SCH_SHEET_LIST::GetSheetPathByKIIDPath( const KIID_PATH& aPath,
                                                                       bool aIncludeLastSheet ) const
 {
+    // KICLOUD: PERF (docs/patches.md), field report "Page Unresponsive" (2026-10-05): compare in
+    // place instead of building each sheet path's KIID_PATH (a vector allocation per sheet path per
+    // call). The schematic writer calls this for every instance of every symbol, so writing a
+    // hierarchy with repeated sheets (the live session's model of every sheet file, a save) cost
+    // instances x sheet paths allocations per symbol. Same result as before: the path a sheet path
+    // stands for is its sheets' UUIDs, without a virtual root (niluuid) first sheet, and without
+    // the last sheet unless aIncludeLastSheet; the first sheet path that equals aPath wins.
     for( const SCH_SHEET_PATH& sheet : *this )
     {
-        KIID_PATH testPath = sheet.Path();
+        const size_t count = sheet.size();
+
+        if( count == 0 )
+        {
+            // an empty sheet path stands for an empty KIID_PATH (KiCad dropped the last element of
+            // it without checking; an empty path never matches without the last sheet)
+            if( aIncludeLastSheet && aPath.empty() )
+                return SCH_SHEET_PATH( sheet );
+
+            continue;
+        }
+
+        const size_t first = sheet.at( 0 )->m_Uuid == niluuid ? 1 : 0;
+        size_t       last = count;   // one past the last sheet compared
 
         if( !aIncludeLastSheet )
-            testPath.pop_back();
+        {
+            if( last - first == 0 )
+                continue;   // KiCad popped from an empty path here (undefined); nothing matches
 
-        if( testPath == aPath )
+            --last;
+        }
+
+        if( last - first != aPath.size() )
+            continue;
+
+        bool same = true;
+
+        for( size_t i = first; i < last && same; ++i )
+            same = sheet.at( i )->m_Uuid == aPath[i - first];
+
+        if( same )
             return SCH_SHEET_PATH( sheet );
     }
 
