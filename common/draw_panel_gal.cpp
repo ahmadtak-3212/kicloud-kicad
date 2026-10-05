@@ -780,7 +780,7 @@ bool EDA_DRAW_PANEL_GAL::SwitchBackend( GAL_TYPE aGalType )
     // KICLOUD: Browser startup selects KiCad's existing software renderer when WebGL2
     // creation is denied. Honour that selection at every 2D backend switch, including
     // temporary/preview canvases that request OpenGL before frame settings are loaded.
-    // Do not alter saved preferences or the separate 3D viewer's WebGL requirement.
+    // Leave settings persistence to KiCad and keep the separate 3D WebGL requirement.
     wxString softwareRendering;
 
     if( aGalType == GAL_TYPE_OPENGL
@@ -811,7 +811,10 @@ bool EDA_DRAW_PANEL_GAL::SwitchBackend( GAL_TYPE aGalType )
         case GAL_TYPE_OPENGL:
         {
 #ifdef __EMSCRIPTEN__
-            // Use WebGL GAL for Emscripten builds (pure WebGL 2.0, no LEGACY_GL_EMULATION)
+            // KICLOUD: Context construction failures are handled below. Avoid queueing
+            // wx error dialogs for a failure that native Cairo can recover from; the
+            // catch path retains the reason in stderr or in the unrecoverable dialog.
+            wxLogNull contextConstructionLogs;
             new_gal = new KIGFX::WEBGL_GAL( GetVcSettings(), m_options, this, this, this );
 #else
             // Use OpenGL GAL for native builds
@@ -876,7 +879,10 @@ bool EDA_DRAW_PANEL_GAL::SwitchBackend( GAL_TYPE aGalType )
                 new_gal = new KIGFX::CAIRO_GAL( m_options, this, this, this );
                 aGalType = GAL_TYPE_CAIRO;
                 wxSetEnv( "KICAD_SOFTWARE_RENDERING", "1" );
-                wxLogWarning( "WebGL initialization failed; using software rendering: %s", failure );
+                // A recovered failure is a diagnostic, not a wx modal: users must
+                // still be able to interact with the successfully rendered project.
+                fprintf( stderr, "WebGL initialization failed; using software rendering: %s\n",
+                         failure.ToUTF8().data() );
             }
             catch( std::runtime_error& softwareError )
             {
