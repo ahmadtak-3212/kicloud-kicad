@@ -683,6 +683,38 @@ void EDA_DRAW_PANEL_GAL::Refresh( bool aEraseBackground, const wxRect* aRect )
     if( galInitialized && m_gal->GetSwapInterval() == 0 )
         minPeriodMs = 16;
 
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: PERF drag (docs/patches.md). WebGL has no swap interval (0), so the ceiling above
+    // is 16 ms counted from the END of the last repaint: a repaint every 16 ms + its own duration.
+    // Pointer moves arrive at most once per display frame (browsers align them to frames), so at
+    // 60 moves a second each move landed a little later behind its predecessor's repaint until two
+    // moves shared one timer repaint, and a step of a drag was never drawn (57 of 60 drawn on a
+    // small board). In the browser the ceiling counts from the START of the last repaint instead
+    // (at most one repaint per ~12 ms: one per 60 Hz frame, ~83 Hz for faster input), plus a short
+    // gap after its end (4 ms) so a slow repaint on a large board still lets the moves queued
+    // behind it collapse into one timer repaint instead of each drawing in turn. Same inputs and
+    // result (a repaint now, or the refresh timer armed for the remaining time); only when the
+    // throttle lets a repaint through changes.
+    if( galInitialized && m_gal->GetSwapInterval() == 0 )
+    {
+        const wxLongLong sinceStart = now - m_lastRepaintStart;
+        const wxLongLong waitStart = 12 - sinceStart;
+        const wxLongLong waitEnd = 4 - delta;
+        const wxLongLong wait = std::max( waitStart, waitEnd );
+
+        if( wait <= 0 )
+        {
+            if( !DoRePaint() )
+                RequestRefresh();
+        }
+        else if( !m_refreshTimer.IsRunning() )
+        {
+            m_refreshTimer.StartOnce( wait.GetValue() );
+        }
+
+        return;
+    }
+#endif
 
     if( delta >= minPeriodMs )
     {
