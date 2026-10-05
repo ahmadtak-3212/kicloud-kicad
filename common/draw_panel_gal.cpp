@@ -690,16 +690,18 @@ void EDA_DRAW_PANEL_GAL::Refresh( bool aEraseBackground, const wxRect* aRect )
     // 60 moves a second each move landed a little later behind its predecessor's repaint until two
     // moves shared one timer repaint, and a step of a drag was never drawn (57 of 60 drawn on a
     // small board). In the browser the ceiling counts from the START of the last repaint instead
-    // (at most one repaint per ~12 ms: one per 60 Hz frame, ~83 Hz for faster input), plus a short
-    // gap after its end (4 ms) so a slow repaint on a large board still lets the moves queued
-    // behind it collapse into one timer repaint instead of each drawing in turn. Same inputs and
-    // result (a repaint now, or the refresh timer armed for the remaining time); only when the
-    // throttle lets a repaint through changes.
+    // (at most one repaint per ~12 ms: one per 60 Hz frame, ~83 Hz for faster input), plus a gap
+    // after its end: 4 ms after a quick repaint, and desktop's 16 ms after a slow one (12 ms or
+    // more: a large board, the software renderer), so the moves queued behind a slow repaint
+    // collapse into one timer repaint and the page keeps time for input between repaints. Same
+    // inputs and result (a repaint now, or the refresh timer armed for the remaining time); only
+    // when the throttle lets a repaint through changes.
     if( galInitialized && m_gal->GetSwapInterval() == 0 )
     {
         const wxLongLong sinceStart = now - m_lastRepaintStart;
+        const wxLongLong lastCost = m_lastRepaintEnd - m_lastRepaintStart;
         const wxLongLong waitStart = 12 - sinceStart;
-        const wxLongLong waitEnd = 4 - delta;
+        const wxLongLong waitEnd = ( lastCost >= 12 ? 16 : 4 ) - delta;
         const wxLongLong wait = std::max( waitStart, waitEnd );
 
         if( wait <= 0 )
@@ -756,7 +758,8 @@ void EDA_DRAW_PANEL_GAL::ForceRefresh()
             // makes the canvas drawable: wx paints a window when it (or a parent) is shown, and
             // sends a size event when it gets a non-empty size. Both retry at once (see
             // onPaintWhileHidden, onSize). The timer stays as a backstop for anything that
-            // becomes drawable without either event, backing off 100 ms -> 200 -> ... -> 2 s.
+            // becomes drawable without either event, backing off 100 ms -> 200 -> ... -> 10 s (at 2 s, two
+            // never-shown canvases still cost an idle page ~1 wake a second, ~2 % of a core in Firefox).
             // State: m_waitingForShow / m_showRetryMs, cleared by stopWaitingForShow() once the
             // canvas draws (or StopDrawing()). Drawing results are unchanged: only when the first
             // ForceRefresh retry happens moves.
@@ -768,7 +771,7 @@ void EDA_DRAW_PANEL_GAL::ForceRefresh()
             }
 
             m_refreshTimer.StartOnce( m_showRetryMs );
-            m_showRetryMs = std::min( m_showRetryMs * 2, 2000 );
+            m_showRetryMs = std::min( m_showRetryMs * 2, 10000 );
             return;
 #else
             // Try again soon
