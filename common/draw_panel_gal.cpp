@@ -861,11 +861,39 @@ bool EDA_DRAW_PANEL_GAL::SwitchBackend( GAL_TYPE aGalType )
     }
     catch( std::runtime_error& err )
     {
-        // Create a dummy GAL
-        new_gal = new KIGFX::GAL( m_options );
-        aGalType = GAL_TYPE_NONE;
-        DisplayErrorMessage( m_parent, _( "Error switching GAL backend" ), wxString( err.what() ) );
-        result = false;
+        wxString failure( err.what() );
+
+#ifdef __EMSCRIPTEN__
+        // KICLOUD: A disposable browser probe can succeed while the real canvas fails
+        // (different framebuffer requirements or GPU resources). Recover using native
+        // Cairo here, before publishing a dummy canvas as an apparently open editor.
+        // Keep software rendering for this instance so other tabs/previews do not retry
+        // the failed backend. If Cairo also fails, retain both diagnostics and fail.
+        if( aGalType == GAL_TYPE_OPENGL )
+        {
+            try
+            {
+                new_gal = new KIGFX::CAIRO_GAL( m_options, this, this, this );
+                aGalType = GAL_TYPE_CAIRO;
+                wxSetEnv( "KICAD_SOFTWARE_RENDERING", "1" );
+                wxLogWarning( "WebGL initialization failed; using software rendering: %s", failure );
+            }
+            catch( std::runtime_error& softwareError )
+            {
+                failure += "\nSoftware rendering also failed: " + wxString( softwareError.what() );
+            }
+        }
+#endif
+
+        if( !new_gal )
+        {
+            // Both the selected renderer and any permitted fallback failed. Keep a
+            // safe stub for callers, but report failure instead of claiming success.
+            new_gal = new KIGFX::GAL( m_options );
+            aGalType = GAL_TYPE_NONE;
+            DisplayErrorMessage( m_parent, _( "Error switching GAL backend" ), failure );
+            result = false;
+        }
     }
 
     // trigger update of the gal options in case they differ from the defaults
