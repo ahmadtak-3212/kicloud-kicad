@@ -56,19 +56,18 @@ void FormatStreamData( OUTPUTFORMATTER& aOut, const wxStreamBuffer& aStream )
 {
     aOut.Print( "(data" );
 
-    const wxString out = wxBase64Encode( aStream.GetBufferStart(), aStream.GetBufferSize() );
+    // KICLOUD: PERF (docs/patches.md): base64 is plain ASCII, so convert it to a byte string once and
+    // cut the lines from that. Cutting the wxString itself is quadratic when wxString stores UTF-8
+    // (the browser build: every cut walks the string from the start), which made saving a file
+    // with images or embedded files take tens of seconds. The written text is identical.
+    const std::string out = wxBase64Encode( aStream.GetBufferStart(), aStream.GetBufferSize() ).ToStdString();
 
     // Apparently the MIME standard character width for base64 encoding is 76 (unconfirmed)
     // so use it in a vein attempt to be standard like.
-    static constexpr unsigned MIME_BASE64_LENGTH = 76;
+    static constexpr size_t MIME_BASE64_LENGTH = 76;
 
-    size_t first = 0;
-
-    while( first < out.Length() )
-    {
-        aOut.Print( "\n\"%s\"", TO_UTF8( out( first, MIME_BASE64_LENGTH ) ) );
-        first += MIME_BASE64_LENGTH;
-    }
+    for( size_t first = 0; first < out.size(); first += MIME_BASE64_LENGTH )
+        aOut.Print( "\n\"%s\"", out.substr( first, MIME_BASE64_LENGTH ).c_str() );
 
     aOut.Print( ")" ); // Closes data token.
 }
