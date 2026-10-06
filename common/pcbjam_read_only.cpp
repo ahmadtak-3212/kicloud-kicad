@@ -139,6 +139,9 @@ bool IsActionAllowed( const std::string& aActionName )
         // KICLOUD: P3-I items 3 and 4 (docs/patches.md): a commenter's read-only view still
         // draws comment boxes (they change nothing in the design), and a viewer may turn the
         // board over.
+        // KICLOUD: GUESTFIX: the comment tool's own activation (TA_ACTIVATE "common.Kicloud"), so its
+        // toolbar button and Shift+D start it in a commenter's read-only editor (approved by Ahmad 2026-10-05).
+        "common.Kicloud",
         "common.Kicloud.commentBox",
         "common.Kicloud.commentPin",
         "pcbnew.Control.flipBoard",
