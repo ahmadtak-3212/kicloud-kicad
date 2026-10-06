@@ -65,6 +65,7 @@ using namespace KIGFX;
 // The current font is "Ubuntu Mono" available under Ubuntu Font Licence 1.0
 // (see ubuntu-font-licence-1.0.txt for details)
 #include <gal/webgl/gl_resources.h>
+#include <emscripten/html5_webgl.h>   // KICLOUD: GUESTFIX: the image program's context
 #include <glsl_kicad_frag.h>
 #include <glsl_kicad_vert.h>
 using namespace KIGFX::BUILTIN_FONT;
@@ -262,7 +263,26 @@ GLuint GL_BITMAP_CACHE::cacheBitmap( const BITMAP_BASE* aBitmap )
     if( !imgPtr )
         return std::numeric_limits< GLuint >::max();
 
-    const wxImage& imgData = *imgPtr;
+    // KICLOUD: GUESTFIX: a texture larger than the GPU allows (GL_MAX_TEXTURE_SIZE: 16384 on
+    // most GPUs, 8192 in SwiftShader) is refused by WebGL, and the image would not be drawn: a
+    // copy scaled down to fit is uploaded instead (only the texture; the image itself and the
+    // saved file keep every pixel). Asked on a cache miss only, not per frame.
+    GLint maxTexture = 0;
+    glGetIntegerv( GL_MAX_TEXTURE_SIZE, &maxTexture );
+
+    std::unique_ptr<wxImage> fitted;
+    const int srcW = imgPtr->GetSize().x;
+    const int srcH = imgPtr->GetSize().y;
+
+    if( maxTexture > 0 && ( srcW > maxTexture || srcH > maxTexture ) )
+    {
+        const double k = std::min( (double) maxTexture / srcW, (double) maxTexture / srcH );
+        fitted = std::make_unique<wxImage>( imgPtr->Scale( std::max( 1, (int) ( srcW * k ) ),
+                                                           std::max( 1, (int) ( srcH * k ) ),
+                                                           wxIMAGE_QUALITY_NORMAL ) );
+    }
+
+    const wxImage& imgData = fitted ? *fitted : *imgPtr;
 
     bmp.w = imgData.GetSize().x;
     bmp.h = imgData.GetSize().y;
@@ -530,6 +550,15 @@ WEBGL_GAL::~WEBGL_GAL()
         delete m_overlayManager;
         delete m_tempManager;
     }
+
+    // KICLOUD: GUESTFIX: the image program's objects, if this context made them
+    if( m_bitmapContext && m_bitmapContext == (uintptr_t) emscripten_webgl_get_current_context() )
+    {
+        glDeleteBuffers( 1, &m_bitmapVbo );
+        glDeleteVertexArrays( 1, &m_bitmapVao );
+    }
+
+    m_bitmapShader.reset();
 
     // KICLOUD: this GAL's own font texture (B1.6d)
     if( m_isBitmapFontLoaded )
@@ -1650,9 +1679,34 @@ void WEBGL_GAL::DrawCurve( const VECTOR2D& aStartPoint, const VECTOR2D& aControl
 }
 
 
+// KICLOUD: GUESTFIX: image drawing (docs/patches.md). The port used to queue an image as six
+// vertices of the main shader's font mode. That mode samples the font atlas (texture unit 2), not
+// the image texture bound to unit 0, and the queued vertices are drawn later anyway, when another
+// texture may be bound: every image came out as a block of KiCad font glyphs, while the Cairo
+// renderer and the Image Properties preview showed the photo. Now the image is drawn at once,
+// like upstream's OpenGL GAL does (immediate mode there), by a small program of its own that
+// samples the image texture. Images are on non-cached layers in every KiCad editor (schematic
+// LAYER_DRAW_BITMAPS, the PCB's BITMAP_LAYER_FOR(), the drawing sheet), so drawing at call time
+// in the frame being drawn is what upstream does too.
+//
+// Inputs: the image (pixels come from the per-GAL texture cache) and an opacity 0..1.
+// State: may create the texture, the image program and its buffers (once per context); draws
+// into the render target of the current target (main or overlay buffer).
+// Failure: a missing texture or a program the browser refused skips the image (nothing is
+// drawn), it never falls back to the font atlas. Inside a cached group (no editor does this)
+// the image is skipped and logged once, since a group is replayed later without the image.
 void WEBGL_GAL::DrawBitmap( const BITMAP_BASE& aBitmap, double alphaBlend )
 {
     GLfloat alpha = std::clamp( alphaBlend, 0.0, 1.0 );
+
+    if( m_isGrouping )
+    {
+        if( !m_bitmapGroupWarned )
+            fprintf( stderr, "[GAL] an image on a cached layer is not drawn by the WebGL GAL\n" );
+
+        m_bitmapGroupWarned = true;
+        return;
+    }
 
     // We have to calculate the pixel size in users units to draw the image.
     // m_worldUnitLength is a factor used for converting IU to inches
@@ -1671,80 +1725,196 @@ void WEBGL_GAL::DrawBitmap( const BITMAP_BASE& aBitmap, double alphaBlend )
     float texStartY = aBitmap.IsMirroredY() ? 1.0f : 0.0f;
     float texEndY   = aBitmap.IsMirroredY() ? 0.0f : 1.0f;
 
-    // Handle rotation by rotating texture coordinates around center (0.5, 0.5)
+    // Each corner gets its own texture coordinate so a rotation (around the image centre, as
+    // upstream's texture matrix does) can move them independently.
+    float uv[4][2] = { { texStartX, texStartY }, { texEndX, texStartY },
+                       { texStartX, texEndY },   { texEndX, texEndY } };
+
     double rotRad = aBitmap.Rotation().AsRadians();
+
     if( std::abs( rotRad ) > 0.001 )
     {
-        auto rotateTexCoord = [rotRad]( float& u, float& v )
+        const float cosR = static_cast<float>( cos( rotRad ) );
+        const float sinR = static_cast<float>( sin( rotRad ) );
+
+        for( auto& t : uv )
         {
-            float cu = u - 0.5f;
-            float cv = v - 0.5f;
-            float cosR = static_cast<float>( cos( rotRad ) );
-            float sinR = static_cast<float>( sin( rotRad ) );
-            u = cu * cosR - cv * sinR + 0.5f;
-            v = cu * sinR + cv * cosR + 0.5f;
-        };
-        rotateTexCoord( texStartX, texStartY );
-        rotateTexCoord( texEndX, texStartY );
-        rotateTexCoord( texEndX, texEndY );
-        rotateTexCoord( texStartX, texEndY );
+            const float cu = t[0] - 0.5f;
+            const float cv = t[1] - 0.5f;
+            t[0] = cu * cosR - cv * sinR + 0.5f;
+            t[1] = cu * sinR + cv * cosR + 0.5f;
+        }
     }
 
-    // Bind the bitmap texture
-    glActiveTexture( GL_TEXTURE0 );
-    glBindTexture( GL_TEXTURE_2D, texture_id );
+    // Corners in strip order (v0 v1 v2 v3 = top-left, top-right, bottom-left, bottom-right),
+    // moved by the painter's current transformation (Save/Translate/Scale before this call),
+    // which the vertex managers would otherwise apply to queued vertices.
+    const glm::mat4& xform = m_currentManager->GetTransformation();
+    const double     cx[4] = { -w / 2, w / 2, -w / 2, w / 2 };
+    const double     cy[4] = { -h / 2, -h / 2, h / 2, h / 2 };
+    GLfloat          verts[20];
 
-    // Setup for drawing
-    glDepthFunc( GL_ALWAYS );
-    glEnable( GL_BLEND );
-    // Use separate blend functions for RGB and alpha (same as main initialization)
-    glBlendFuncSeparate( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
-                         GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
+    for( int i = 0; i < 4; i++ )
+    {
+        glm::vec4 p = xform * glm::vec4( (float) cx[i], (float) cy[i], 0.0f, 1.0f );
+        verts[i * 5 + 0] = p.x;
+        verts[i * 5 + 1] = p.y;
+        verts[i * 5 + 2] = (GLfloat) m_layerDepth;
+        verts[i * 5 + 3] = uv[i][0];
+        verts[i * 5 + 4] = uv[i][1];
+    }
 
-    // Use the vertex manager to draw a textured quad (same pattern as DrawGlyph)
-    // The shader uses texture coordinates from SHADER_FONT parameters
-    m_currentManager->Reserve( 6 );
-    m_currentManager->Color( 1.0f, 1.0f, 1.0f, alpha );
-
-    // Quad vertices: centered at origin, width w, height h
-    /* Quad layout:
-     * v0 (-w/2, -h/2)    v1 (w/2, -h/2)
-     *       +---------------+
-     *       |   /           |
-     *       |  /            |
-     *       | /             |
-     *       |/              |
-     *       +---------------+
-     * v2 (-w/2, h/2)     v3 (w/2, h/2)
-     */
-
-    // Triangle 1: v0, v1, v2
-    m_currentManager->Shader( SHADER_FONT, texStartX, texStartY );
-    m_currentManager->Vertex( -w / 2, -h / 2, m_layerDepth );  // v0
-
-    m_currentManager->Shader( SHADER_FONT, texEndX, texStartY );
-    m_currentManager->Vertex( w / 2, -h / 2, m_layerDepth );   // v1
-
-    m_currentManager->Shader( SHADER_FONT, texStartX, texEndY );
-    m_currentManager->Vertex( -w / 2, h / 2, m_layerDepth );   // v2
-
-    // Triangle 2: v1, v3, v2
-    m_currentManager->Shader( SHADER_FONT, texEndX, texStartY );
-    m_currentManager->Vertex( w / 2, -h / 2, m_layerDepth );   // v1
-
-    m_currentManager->Shader( SHADER_FONT, texEndX, texEndY );
-    m_currentManager->Vertex( w / 2, h / 2, m_layerDepth );    // v3
-
-    m_currentManager->Shader( SHADER_FONT, texStartX, texEndY );
-    m_currentManager->Vertex( -w / 2, h / 2, m_layerDepth );   // v2
-
-    // Note: texture unbinding and state restoration happens in EndDrawing
-
-    glDepthFunc( GL_LESS );
+    drawBitmapQuad( texture_id, verts, alpha );
 
 #ifdef DISABLE_BITMAP_CACHE
     glDeleteTextures( 1, &texture_id );
 #endif
+}
+
+
+// KICLOUD: GUESTFIX: the image program (see DrawBitmap). Built lazily, the first time an image
+// is drawn, in the GAL's own context (several editors in one instance each have one, B1.6d).
+// Result: true when the program can be used. A context that changed (the canvas got a new one)
+// has none of these objects: they are created again; the old handles died with the old context.
+bool WEBGL_GAL::ensureBitmapProgram()
+{
+    const uintptr_t ctx = (uintptr_t) emscripten_webgl_get_current_context();
+
+    if( m_bitmapShader && m_bitmapShader->IsLinked() && ctx == m_bitmapContext )
+        return true;
+
+    // Position in world units (x, y, depth) through the same matrix as every other vertex, and
+    // the same antialiasing sample offset the main vertex shader adds.
+    static const char* vertexSource =
+            "#version 300 es\n"
+            "precision highp float;\n"
+            "layout(location = 0) in vec3 a_position;\n"
+            "layout(location = 1) in vec2 a_texCoord;\n"
+            "uniform mat4 u_mvp;\n"
+            "uniform vec2 u_aaOffset;\n"
+            "out vec2 v_texCoord;\n"
+            "void main()\n"
+            "{\n"
+            "    gl_Position = u_mvp * vec4( a_position, 1.0 );\n"
+            "    gl_Position.xy += u_aaOffset;\n"
+            "    v_texCoord = a_texCoord;\n"
+            "}\n";
+
+    // The image's own colours with its alpha times the requested opacity; nearly transparent
+    // texels are discarded (upstream's alpha test, GL_GREATER 0.01) so they write no depth.
+    static const char* fragmentSource =
+            "#version 300 es\n"
+            "precision highp float;\n"
+            "uniform sampler2D u_texture;\n"
+            "uniform float u_alpha;\n"
+            "in vec2 v_texCoord;\n"
+            "layout(location = 0) out vec4 fragColor;\n"
+            "void main()\n"
+            "{\n"
+            "    vec4 c = texture( u_texture, v_texCoord );\n"
+            "    c.a *= u_alpha;\n"
+            "    if( c.a <= 0.01 )\n"
+            "        discard;\n"
+            "    fragColor = c;\n"
+            "}\n";
+
+    m_bitmapShader = std::make_unique<SHADER>();
+
+    if( !m_bitmapShader->LoadShaderFromStrings( SHADER_TYPE_VERTEX, vertexSource )
+        || !m_bitmapShader->LoadShaderFromStrings( SHADER_TYPE_FRAGMENT, fragmentSource )
+        || !m_bitmapShader->Link() )
+    {
+        fprintf( stderr, "[GAL] the image shader did not compile; images are not drawn\n" );
+        m_bitmapShader.reset();
+        return false;
+    }
+
+    ufm_bitmapMvp = m_bitmapShader->AddParameter( "u_mvp" );
+    ufm_bitmapTexture = m_bitmapShader->AddParameter( "u_texture" );
+    ufm_bitmapAlpha = m_bitmapShader->AddParameter( "u_alpha" );
+    ufm_bitmapAaOffset = m_bitmapShader->AddParameter( "u_aaOffset" );
+
+    glGenVertexArrays( 1, &m_bitmapVao );
+    glGenBuffers( 1, &m_bitmapVbo );
+    glBindVertexArray( m_bitmapVao );
+    glBindBuffer( GL_ARRAY_BUFFER, m_bitmapVbo );
+    glBufferData( GL_ARRAY_BUFFER, 20 * sizeof( GLfloat ), nullptr, GL_DYNAMIC_DRAW );
+    glVertexAttribPointer( 0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof( GLfloat ), (void*) 0 );
+    glEnableVertexAttribArray( 0 );
+    glVertexAttribPointer( 1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof( GLfloat ),
+                           (void*) ( 3 * sizeof( GLfloat ) ) );
+    glEnableVertexAttribArray( 1 );
+    glBindVertexArray( 0 );
+    glBindBuffer( GL_ARRAY_BUFFER, 0 );
+
+    m_bitmapContext = ctx;
+    return true;
+}
+
+
+// KICLOUD: GUESTFIX: draw one image quad now (see DrawBitmap for why it is not queued).
+// The quad goes to the buffer of the current target: the main buffer for the cached and
+// non-cached targets (images are non-cached), the overlay buffer for a moving image's preview,
+// the temporary buffer in diff mode. Depth follows upstream's OpenGL GAL: the image is always
+// drawn (GL_ALWAYS) at its layer depth and, when opaque, writes that depth, so items of upper
+// layers queued in this frame still cover it and items of lower layers do not.
+// State: the compositor buffer, program, vertex array, texture unit 0 binding and depth state
+// are restored to what the queued vertex managers expect (texture unit 0 active, GL_LESS,
+// depth writes on, no program, no vertex array).
+void WEBGL_GAL::drawBitmapQuad( GLuint aTexture, const GLfloat aVerts[20], GLfloat aAlpha )
+{
+    if( !m_isInitialized || !m_isFramebufferInitialized || !ensureBitmapProgram() )
+        return;
+
+    unsigned int target = m_mainBuffer;
+
+    if( m_currentTarget == TARGET_OVERLAY && m_overlayBuffer )
+        target = m_overlayBuffer;
+    else if( m_currentTarget == TARGET_TEMP && m_tempBuffer )
+        target = m_tempBuffer;
+
+    const unsigned int previous = m_compositor->GetBuffer();
+
+    if( previous != target )
+        m_compositor->SetBuffer( target );
+
+    VECTOR2D aaOffset = m_compositor->GetAntialiasRenderingOffset();
+    const VECTOR2D screenPixelSize = getScreenPixelSize();
+    aaOffset.x *= screenPixelSize.x;
+    aaOffset.y *= screenPixelSize.y;
+
+    m_bitmapShader->Use();
+    m_bitmapShader->SetParameter( ufm_bitmapMvp, m_mvpMatrix );
+    m_bitmapShader->SetParameter( ufm_bitmapTexture, 0 );
+    m_bitmapShader->SetParameter( ufm_bitmapAlpha, (float) aAlpha );
+    m_bitmapShader->SetParameter( ufm_bitmapAaOffset, aaOffset );
+
+    glActiveTexture( GL_TEXTURE0 );
+    glBindTexture( GL_TEXTURE_2D, aTexture );
+
+    glEnable( GL_DEPTH_TEST );
+    glDepthFunc( GL_ALWAYS );
+
+    if( aAlpha < 1.0f )
+        glDepthMask( GL_FALSE );
+
+    glEnable( GL_BLEND );
+    glBlendFuncSeparate( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
+
+    glBindVertexArray( m_bitmapVao );
+    glBindBuffer( GL_ARRAY_BUFFER, m_bitmapVbo );
+    glBufferSubData( GL_ARRAY_BUFFER, 0, 20 * sizeof( GLfloat ), aVerts );
+    glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
+    glBindBuffer( GL_ARRAY_BUFFER, 0 );
+    glBindVertexArray( 0 );
+
+    glDepthMask( GL_TRUE );
+    glDepthFunc( GL_LESS );
+    glBindTexture( GL_TEXTURE_2D, 0 );
+    m_bitmapShader->Deactivate();
+
+    if( previous != target )
+        m_compositor->SetBuffer( previous );
 }
 
 

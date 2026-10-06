@@ -41,6 +41,7 @@
 #include <gal/webgl/webgl_compositor.h>
 #include <gal/hidpi_gl_canvas.h>
 
+#include <cstdint>
 #include <unordered_map>
 #include <memory>
 #include <wx/event.h>
@@ -408,6 +409,39 @@ private:
     WX_CURSOR_TYPE          m_currentwxCursor;
 
     std::unique_ptr<GL_BITMAP_CACHE>            m_bitmapCache;
+
+    /// KICLOUD: GUESTFIX: images (schematic images, PCB reference images, drawing-sheet logos)
+    /// are drawn by their own small shader program, not by the main GAL shader: the main
+    /// shader's texture mode is the font mode, which samples the font atlas, so an image used to
+    /// come out as a block of font glyphs. The program, its vertex array and buffer belong to
+    /// one WebGL context (recorded in m_bitmapContext) and are rebuilt when the context changes.
+    std::unique_ptr<SHADER> m_bitmapShader;
+    GLuint                  m_bitmapVao = 0;          ///< vertex array of the image quad
+    GLuint                  m_bitmapVbo = 0;          ///< 4 vertices: x, y, z, u, v
+    uintptr_t               m_bitmapContext = 0;      ///< context the three objects belong to
+    int                     ufm_bitmapMvp = -1;       ///< uniform: model-view-projection matrix
+    int                     ufm_bitmapTexture = -1;   ///< uniform: image texture unit
+    int                     ufm_bitmapAlpha = -1;     ///< uniform: image opacity
+    int                     ufm_bitmapAaOffset = -1;  ///< uniform: antialiasing sample offset
+    bool                    m_bitmapGroupWarned = false;  ///< logged a cached image once
+
+    /**
+     * KICLOUD: GUESTFIX: create (once per WebGL context) the image program and its buffers.
+     *
+     * @return true when the program is linked and ready; false when the browser refused to
+     *         compile it (the image is then skipped, never drawn with the font atlas).
+     */
+    bool ensureBitmapProgram();
+
+    /**
+     * KICLOUD: GUESTFIX: draw one textured quad now, into the render target the caller is
+     * drawing to (main or overlay buffer), with the depth rules of upstream's OpenGL GAL.
+     *
+     * @param aTexture  the image texture (from m_bitmapCache)
+     * @param aVerts    4 vertices in strip order (x, y, z in world units, u, v)
+     * @param aAlpha    opacity 0..1 (below 1 the depth buffer is left unchanged)
+     */
+    void drawBitmapQuad( GLuint aTexture, const GLfloat aVerts[20], GLfloat aAlpha );
 
     // Polygon tesselation
     GLUtesselator*                        m_tesselator;
