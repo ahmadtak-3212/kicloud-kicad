@@ -77,6 +77,27 @@ bool IsActionAllowed( const std::string& aActionName )
         "common.Control.highContrastMode",
         "common.Control.highContrastModeCycle",
 
+        // KICLOUD: VIEWBAR (approved by Ahmad 2026-10-06): the left toolbar's display buttons, so a
+        // viewer can change how the board/schematic is SHOWN. Each one only flips a display setting
+        // or opens a panel; none edits the design. The Properties panel, line modes and
+        // auto-annotate stay blocked (the first edits values directly, the others only matter
+        // when editing).
+        "common.Control.toggleGridOverrides",
+        "common.Control.toggleBoundingBoxes",
+        "pcbnew.Control.showRatsnest",
+        "pcbnew.Control.ratsnestLineMode",
+        "pcbnew.EditorControl.toggleNetHighlight",
+        "pcbnew.Control.zoneDisplayEnable",
+        "pcbnew.Control.zoneDisplayDisable",
+        "pcbnew.Control.zoneDisplayOutlines",
+        "pcbnew.Control.zoneDisplayTesselation",
+        "pcbnew.Control.padDisplayMode",
+        "pcbnew.Control.viaDisplayMode",
+        "pcbnew.Control.trackDisplayMode",
+        "pcbnew.Control.showLayersManager",
+        "eeschema.EditorControl.showHiddenPins",
+        "eeschema.EditorTool.showHierarchy",
+
         // Tool-system plumbing: Esc, menu state refresh, and the selection
         // tool's activation/idle loop. Selection itself is ALLOWED for
         // viewers (viewer-panels — the inspector panel reads it); the tool's
