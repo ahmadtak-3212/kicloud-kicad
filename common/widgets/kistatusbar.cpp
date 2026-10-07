@@ -669,7 +669,9 @@ std::optional<int> KISTATUSBAR::fieldIndex( FIELD aField ) const
 // what the bar shows. The bar is painted on the canvas by this class (the wx port has no DOM status
 // bar), with colours from the port's system colour table (the editor's theme tokens):
 //   surface  wxSYS_COLOUR_BTNFACE          the bar
-//   panel    wxSYS_COLOUR_MENUBAR          the units switch's track, the attention chip
+//   panel    wxSYS_COLOUR_MENUBAR          the units switch's track (wxSYS_COLOUR_INACTIVECAPTION
+//                                          when MENUBAR equals the bar's colour, A21), the
+//                                          attention chip
 //   line     wxSYS_COLOUR_INACTIVECAPTION  the hairline on top
 //   strong   wxSYS_COLOUR_BTNSHADOW        the dots between counts, the attention chip's edge
 //   text     wxSYS_COLOUR_WINDOWTEXT, muted wxSYS_COLOUR_GRAYTEXT
@@ -974,8 +976,16 @@ void KISTATUSBAR::onLabelsPaint( wxPaintEvent& aEvent )
 
         if( track.x >= LABELS_PAD )
         {
+            // KICLOUD: A21 (docs/patches.md): the track must differ from the bar, or the raised
+            // segment (surface colour) cannot be seen. Since A19 the light theme's panel colour
+            // (MENUBAR) is the bar's own white (BTNFACE); then the track takes the strong panel
+            // colour (INACTIVECAPTION, --panel-strong #e5e1d9) instead. In dark the panel colour
+            // (#221f1c) already differs from the bar (#2a2723) and is kept.
+            const wxColour trackColour =
+                    panel == surface ? wxSystemSettings::GetColour( wxSYS_COLOUR_INACTIVECAPTION )
+                                     : panel;
             dc.SetPen( *wxTRANSPARENT_PEN );
-            dc.SetBrush( wxBrush( panel ) );
+            dc.SetBrush( wxBrush( trackColour ) );
             dc.DrawRoundedRectangle( track, CHIP_HEIGHT / 2.0 );
 
             int x = track.x + TRACK_PAD;

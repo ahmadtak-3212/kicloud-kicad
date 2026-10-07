@@ -80,7 +80,8 @@ constexpr int PANE_BORDER = 8;
 constexpr int PANEL_PADDING = 4;
 constexpr int PANEL_RADIUS = 12;
 
-// The rounded top corners of a borderless panel's caption (DrawCaption). Small, so the rounding
+// The rounded top corners of a borderless captioned panel's caption (DrawCaption; since A17 the PCB
+// editor's panels all have borders, so this serves any other captioned panel without one). Small, so the rounding
 // stays clear of the caption's text, which starts 3 DIP from the left edge.
 constexpr int CAPTION_RADIUS = 8;
 
@@ -102,10 +103,21 @@ wxColour cardColour()
 
 // A card's 1 px outline: halfway between the strong line colour and the card face, which is about
 // the theme's quiet line colour (--line) without adding a colour of our own.
+// KICLOUD: A21 (docs/patches.md, FEATURE_LOOKS.md section 11): when the gutter has the card's own
+// colour (the light theme since A19, where both are white), only the outline tells a card from the
+// space round it, so it is the strong line colour itself (BTNSHADOW, --line-strong #d6d0c5, the
+// colour of the page's field borders) instead of the paler halfway colour (#eae7e2). In dark the
+// gutter (#221f1c) differs from the card (#2a2723), so the outline stays the halfway colour.
+// Result: the colour; reads the system colour table at every call (a theme switch takes effect at
+// the next paint). No state changes.
 wxColour cardLineColour()
 {
     const wxColour strong = wxSystemSettings::GetColour( wxSYS_COLOUR_BTNSHADOW );
     const wxColour face = cardColour();
+
+    if( gutterColour() == face )
+        return strong;
+
     return wxColour( ( strong.Red() + face.Red() ) / 2, ( strong.Green() + face.Green() ) / 2,
                      ( strong.Blue() + face.Blue() ) / 2 );
 }
@@ -635,7 +647,8 @@ WX_AUI_DOCK_ART::WX_AUI_DOCK_ART() :
     // every pane that has a border (KiCad's drawing area and most side panels), and DrawBorder
     // paints it as the gutter round the drawing area or as a side panel's card. It is read at every
     // layout, so it takes effect at the frame's first layout. Panes without a border (toolbars, the
-    // message panel, the PCB editor's Appearance panel) are not affected.
+    // message panel) are not affected. (KICLOUD: A21, comment refreshed: the PCB editor's
+    // Appearance and Selection Filter panels have a border since A17, so they are affected.)
     //
     // The 3D viewer keeps wx's 1 px border for now (its chrome is a later step, LOOK.9): its frame
     // opens at a fixed size, so a wider border would make its 3D picture smaller, and resizing the
@@ -740,9 +753,10 @@ void WX_AUI_DOCK_ART::DrawBorder( wxDC& aDc, wxWindow* aWindow, const wxRect& aR
 
 // KICLOUD: LOOK.4 a pane caption (the title row of a side panel: "Properties", "Appearance", ...).
 // wx paints it first (card colour, see UpdateColoursFromSystem). A panel with a border sits inside
-// its card (DrawBorder), so nothing more is needed. A panel without a border (the PCB editor's
-// Appearance and Selection Filter panels: pcb_edit_frame.cpp gives them none) has no room for a
-// card, so its caption gets rounded top corners instead: the small "ear" between each square
+// its card (DrawBorder), so nothing more is needed. A captioned panel without a border has no room
+// for a card, so its caption gets rounded top corners instead (KICLOUD: A21, comment refreshed: the
+// PCB editor's Appearance and Selection Filter panels, the first users of this, have a border
+// since A17, pcb_edit_frame.cpp, so they are cards and no longer come here): the small "ear" between each square
 // corner and a quarter circle is repainted in the gutter colour. Only the ears are painted, so the
 // caption's text is never covered (CAPTION_RADIUS is small enough to stay clear of it).
 void WX_AUI_DOCK_ART::DrawCaption( wxDC& aDc, wxWindow* aWindow, const wxString& aText,
