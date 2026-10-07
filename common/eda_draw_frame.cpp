@@ -240,6 +240,34 @@ EDA_DRAW_FRAME::~EDA_DRAW_FRAME()
     delete m_actions;
     delete m_toolManager;
     delete m_toolDispatcher;
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: LOOK.2 fix (docs/patches.md), a closing browser editor must not crash the page.
+    //
+    // When the shell closes an editor tab it ends KiCad's main loop from outside (the page's
+    // jspi.shutdown in web/editor/shell/native-startup.js), while this frame is still open. KiCad
+    // then exits in this order: APP_SINGLE_TOP::OnExit() runs OnPgmExit(), which deletes the
+    // program's GL context manager (KICAD_SINGLETON::Shutdown), and only after that does wx's
+    // cleanup (wxAppBase::CleanUp) delete the frames that were never closed, this one included.
+    // Deleting the drawing canvas here would run ~WEBGL_GAL, whose first line locks its GL context
+    // through Pgm().GetGLContextManager(), which is now a null pointer. WebAssembly does not trap
+    // on a null read: the context manager's std::map was read from address 0, where the runtime's
+    // stack cookies are, and walking that "tree" jumped to a garbage address. Whether that address
+    // landed inside the heap or crashed the whole browser tab ("Target crashed") depended only on
+    // the heap layout, so it came and went with unrelated changes (the icon pack, LOOK.2).
+    //
+    // So when the program has already ended (no GL context manager), the canvas is detached from
+    // this frame and not deleted: wx would otherwise delete it with the frame's children. Nothing
+    // can draw anymore at this point (the event loop is gone), and this whole KiCad instance, its
+    // memory included, is thrown away with the editor's iframe right after, so nothing leaks.
+    // A frame closed the normal way (the program still running) deletes its canvas as before.
+    if( m_canvas && !Pgm().GetGLContextManager() )
+    {
+        RemoveChild( m_canvas );
+        m_canvas = nullptr;
+    }
+#endif
+
     delete m_canvas;
 
     delete m_currentScreen;

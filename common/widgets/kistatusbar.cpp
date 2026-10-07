@@ -703,12 +703,19 @@ std::vector<KISTATUSBAR::HEALTH_SOURCE>& healthSources()
 }
 
 
+// The middle dot "·" that separates the message panel's items in the bar ("Pads 120 · Vias 30").
+// A function, not a string literal, because the source file is plain ASCII: the character is built
+// from its UTF-8 bytes, so it shows the same whatever encoding the compiler assumes.
+// Result: a one-character wxString. No state changes.
 wxString dotText()
 {
     return wxString::FromUTF8( "\xC2\xB7" );    // "·"
 }
 
 
+// The ellipsis "…" put at the end of a text that was shortened to fit its piece of the bar (the full
+// text stays in the tooltip). Built from UTF-8 bytes for the same reason as dotText().
+// Result: a one-character wxString. No state changes.
 wxString ellipsisText()
 {
     return wxString::FromUTF8( "\xE2\x80\xA6" );    // "…"
@@ -727,6 +734,12 @@ bool sameHealth( const std::optional<KISTATUSBAR::HEALTH>& a,
 } // namespace
 
 
+// Register one way to compute the health chip (the board's or the schematic's). This common class
+// does not know boards or schematics, so the code that does (wasm/bindings/pcbnew_embind.cpp,
+// eeschema_embind.cpp) hands a function in at start-up. Input: the source, which gets a frame and
+// returns its chip, or std::nullopt for a frame it does not know. State: appended to the list that
+// every labels-mode bar asks in refreshHealth(); sources are never removed. Call only from start-up
+// code on the UI thread: the list has no lock.
 void KISTATUSBAR::AddHealthSource( HEALTH_SOURCE aSource )
 {
     healthSources().push_back( std::move( aSource ) );
@@ -1258,6 +1271,9 @@ void KISTATUSBAR::onLabelsMotion( wxMouseEvent& aEvent )
 }
 
 
+// The mouse left the bar: onLabelsMotion may have set the hand cursor over the units switch, so the
+// normal cursor is restored here (otherwise the hand would stay until the mouse came back). The
+// event is skipped so wx's own leave handling (tooltips) still runs. State: the bar's cursor only.
 void KISTATUSBAR::onLabelsLeave( wxMouseEvent& aEvent )
 {
     SetCursor( wxNullCursor );
@@ -1296,6 +1312,15 @@ void KISTATUSBAR::onLabelsIdle( wxIdleEvent& aEvent )
 }
 
 
+// The one-shot health timer fired: SetMessageItems started it HEALTH_SOON_MS after the message panel
+// changed, so the chip follows an edit quickly without being recomputed for every single item of
+// a burst. It only calls refreshHealth(), which may repaint the bar.
+//
+// Lifetime: m_healthTimer is a member of this bar and the bar is a child window of its frame, so
+// when the frame closes the bar is deleted with it and ~wxTimer stops a timer still pending: this
+// handler never runs on a deleted bar. A timer that fires while the frame is being deleted does
+// nothing (refreshHealth checks IsBeingDeleted). When the browser editor's tab closes, the wx
+// scheduler is shut down before KiCad's stacks are ended, so no timer fires at all after that.
 void KISTATUSBAR::onHealthTimer( wxTimerEvent& aEvent )
 {
     refreshHealth();
