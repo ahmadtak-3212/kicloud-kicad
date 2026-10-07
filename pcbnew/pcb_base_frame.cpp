@@ -71,6 +71,10 @@
 #include <tool/grid_menu.h>
 #include <ratsnest/ratsnest_view_item.h>
 
+#ifdef __EMSCRIPTEN__
+#include <wx/wasm/pageframes.h>     // KICLOUD: A18
+#endif
+
 #if defined(__linux__) || defined(__FreeBSD__)
 #include <spacenav/spnav_2d_plugin.h>
 #else
@@ -684,7 +688,22 @@ EDA_3D_VIEWER_FRAME* PCB_BASE_FRAME::CreateAndShow3D_Frame()
     EDA_3D_VIEWER_FRAME* draw3DFrame = Get3DViewerFrame();
 
     if( !draw3DFrame )
+    {
+#ifdef __EMSCRIPTEN__
+        // KICLOUD: A18: in the browser the board's 3D viewer is a page frame (an editor tab of
+        // its own, page key "3d") instead of a floating window. Only the PCB editor's: the
+        // footprint editor's and the footprint chooser's 3D viewers stay floating windows.
+        // Ignored when the page did not turn page frames on.
+        if( IsType( FRAME_PCB_EDITOR ) )
+            wxWasmSetNextPageFrame( "3d" );
+#endif
+
         draw3DFrame = new EDA_3D_VIEWER_FRAME( &Kiway(), this, _( "3D Viewer" ) );
+
+#ifdef __EMSCRIPTEN__
+        wxWasmSetNextPageFrame( nullptr );      // KICLOUD: A18
+#endif
+    }
 
     // Raising the window does not show the window on Windows if iconized. This should work
     // on any platform.
