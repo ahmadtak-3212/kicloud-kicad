@@ -873,7 +873,7 @@ int KISTATUSBAR::labelsRightEdge() const
 // out first, from the right end: the units switch, zoom, grid, dx/dy and X/Y; each keeps the widest
 // width it had since the last resize or units change, so the bar does not jitter while the cursor
 // moves. The left-hand pieces share what is left; when it is not enough they are given room in the
-// order health chip, tool hint, constraint, message panel items, message, and what does not fit is
+// order health chip, message panel items, tool hint, constraint, message, and what does not fit is
 // shortened with "…" (its full text is in its tooltip) or left out (its text is in the tooltip of
 // the bar's empty space). Every piece drawn is recorded in m_pieces for tooltips and tests.
 void KISTATUSBAR::onLabelsPaint( wxPaintEvent& aEvent )
@@ -1070,7 +1070,8 @@ void KISTATUSBAR::onLabelsPaint( wxPaintEvent& aEvent )
     const int chipWidth = m_health ? ICON_SIZE + 6 + textWidth( m_health->text, bold ) + 2 * CHIP_PAD
                                    : 0;
 
-    // natural widths, then room given by priority (chip, tool, constraint, items, message)
+    // natural widths, then room given by priority: the health chip and the message panel items
+    // (the counts) first, then the hints (tool, constraint, message), which shrink first
     enum LEFT_PIECE { CHIP, ITEMS, MESSAGE, TOOL, CONSTRAINT, LEFT_COUNT };
     int natural[LEFT_COUNT] = { chipWidth, itemsWidth,
                                 std::min( TEXT_MAX, textWidth( field( FIELD_MESSAGE ), font ) ),
@@ -1078,7 +1079,7 @@ void KISTATUSBAR::onLabelsPaint( wxPaintEvent& aEvent )
                                 std::min( TEXT_MAX, textWidth( field( FIELD_CONSTRAINT ), font ) ) };
     int given[LEFT_COUNT] = { 0, 0, 0, 0, 0 };
 
-    for( LEFT_PIECE piece : { CHIP, TOOL, CONSTRAINT, ITEMS, MESSAGE } )
+    for( LEFT_PIECE piece : { CHIP, ITEMS, TOOL, CONSTRAINT, MESSAGE } )
     {
         if( natural[piece] == 0 )
             continue;
@@ -1127,9 +1128,13 @@ void KISTATUSBAR::onLabelsPaint( wxPaintEvent& aEvent )
             dc.DrawLine( iconX + 6, iconY + 5, iconX + 6, iconY + 7 );
         }
 
+        // KICLOUD: LOOK.2 fix: the room for the text ends CHIP_PAD before the chip's right edge,
+        // x + width (wxRect::GetRight() is the last pixel inside, one less): with GetRight() the
+        // room was one pixel short of the width measured above, and the chip read "Fully rout…"
+        // as soon as the font measured the text without slack (the system-ui font, LOOK.6).
         const int textX = iconX + ICON_SIZE + 6;
         const wxString shown = drawText( m_health->text, bold, ink, textX,
-                                         chip.GetRight() - CHIP_PAD - textX );
+                                         chip.x + chip.width - CHIP_PAD - textX );
         m_pieces.push_back( { wxS( "health" ), shown, m_health->tooltip, chip } );
         x = chip.GetRight() + 1 + GROUP_GAP;
     }
