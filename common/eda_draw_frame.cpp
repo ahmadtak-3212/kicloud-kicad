@@ -177,6 +177,37 @@ EDA_DRAW_FRAME::EDA_DRAW_FRAME( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrame
 
     m_messagePanel->SetSize( m_frameSize.x, m_msgFrameHeight );
 
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: LOOK.10, one status bar in every drawing frame of the browser editor
+    // (docs/patches.md). The PCB, schematic, footprint and symbol editors merge their message
+    // panel into the labels status bar where they add its pane (LOOK.2). The other drawing frames
+    // (Gerber viewer, drawing sheet editor, symbol and footprint library browsers, footprint
+    // wizard, CvPcb's footprint view) add the message panel as its own AUI pane, a second bar
+    // above the status bar. Their constructors run after this one, so the check waits until the
+    // frame is built (CallAfter, the next turn of the event loop): when the panel is still an AUI
+    // pane and the status bar can show its items, the pane is taken out of the layout and the
+    // items are drawn in the status bar from then on. A frame that already merged its panel, or
+    // never added it as a pane, is left as it is. Pending CallAfter calls are dropped when the
+    // frame is destroyed first, so the lambda never runs on a deleted frame.
+    CallAfter(
+            [this]()
+            {
+                if( m_isClosing || !m_messagePanel )
+                    return;
+
+                wxAuiPaneInfo& pane = m_auimgr.GetPane( m_messagePanel );
+
+                if( !pane.IsOk() )
+                    return;
+
+                if( m_messagePanel->MergeIntoStatusBar( GetStatusBar() ) )
+                {
+                    m_auimgr.DetachPane( m_messagePanel );
+                    m_auimgr.Update();
+                }
+            } );
+#endif
+
     Bind( wxEVT_DPI_CHANGED,
           [&]( wxDPIChangedEvent& aEvent )
           {
