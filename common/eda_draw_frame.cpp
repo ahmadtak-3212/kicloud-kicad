@@ -256,14 +256,25 @@ EDA_DRAW_FRAME::~EDA_DRAW_FRAME()
     // landed inside the heap or crashed the whole browser tab ("Target crashed") depended only on
     // the heap layout, so it came and went with unrelated changes (the icon pack, LOOK.2).
     //
-    // So when the program has already ended (no GL context manager), the canvas is detached from
-    // this frame and not deleted: wx would otherwise delete it with the frame's children. Nothing
-    // can draw anymore at this point (the event loop is gone), and this whole KiCad instance, its
-    // memory included, is thrown away with the editor's iframe right after, so nothing leaks.
-    // A frame closed the normal way (the program still running) deletes its canvas as before.
-    if( m_canvas && !Pgm().GetGLContextManager() )
+    // The main canvas is not the only one: a frame's panels can hold more drawing canvases (the
+    // PCB editor's design block chooser has a footprint preview, PCB_DESIGN_BLOCK_PREVIEW_WIDGET),
+    // and wx deletes those with the frame's child windows after this destructor.
+    //
+    // So when the program has already ended (no GL context manager), every child window is
+    // detached from this frame and none is deleted: not the canvas here, and not the children wx
+    // would delete next. Code below that deletes a child explicitly (a status bar, an info bar)
+    // still works, because a detached window is still a valid object. Nothing can draw anymore at
+    // this point (the event loop is gone), and this whole KiCad instance, its memory included, is
+    // thrown away with the editor's iframe right after, so nothing leaks. A frame closed the
+    // normal way (the program still running) deletes its canvas and children as before.
+    if( !Pgm().GetGLContextManager() )
     {
-        RemoveChild( m_canvas );
+        // a copy: RemoveChild changes the list
+        wxWindowList children = GetChildren();
+
+        for( wxWindow* child : children )
+            RemoveChild( child );
+
         m_canvas = nullptr;
     }
 #endif
