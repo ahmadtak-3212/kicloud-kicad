@@ -354,9 +354,21 @@ PCB_EDIT_FRAME::PCB_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_auimgr.AddPane( m_tbRight, EDA_PANE().VToolbar().Name( wxS( "RightToolbar" ) )
                       .Right().Layer( 3 ) );
 
+    // KICLOUD: A17 (docs/future-features/FEATURE_LOOKS.md 4.4) in the browser editor the
+    // Appearance and Selection Filter panels are full "cards" like the other side panels: a pane
+    // with a border gets an 8 px frame from wxAUI, and the browser's dock art
+    // (common/widgets/wx_aui_art_providers.cpp, DrawBorder) paints that frame as a rounded card
+    // with 4 px of padding round the panel. Desktop KiCad keeps these two panes borderless.
+    // The right column becomes 2 x 8 px wider (wxAUI adds the border on both sides of the panel),
+    // so the drawing area is 16 px narrower; the panels themselves keep their size. Only the look
+    // changes: the panels' contents, order and behaviour are the same.
     m_auimgr.AddPane( m_appearancePanel, EDA_PANE().Name( wxS( "LayersManager" ) )
                       .Right().Layer( 4 )
+#ifdef __EMSCRIPTEN__
+                      .Caption( _( "Appearance" ) ).PaneBorder( true )    // KICLOUD: A17 (above)
+#else
                       .Caption( _( "Appearance" ) ).PaneBorder( false )
+#endif
                       // Don't use -1 for don't-change-height on a growable panel; it has side-effects.
                       .MinSize( m_appearancePanel->GetMinSize().x, FromDIP( 60 ) )
 #ifdef __WXMAC__
@@ -370,7 +382,11 @@ PCB_EDIT_FRAME::PCB_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     m_auimgr.AddPane( m_selectionFilterPanel, EDA_PANE().Name( wxS( "SelectionFilter" ) )
                       .Right().Layer( 4 ).Position( 2 )
+#ifdef __EMSCRIPTEN__
+                      .Caption( _( "Selection Filter" ) ).PaneBorder( true )   // KICLOUD: A17
+#else
                       .Caption( _( "Selection Filter" ) ).PaneBorder( false )
+#endif
                       // Fixed-size pane; -1 for MinSize height is required
                       .MinSize( m_selectionFilterPanel->GetMinSize().x, -1 )
                       .BestSize( m_selectionFilterPanel->GetBestSize().x, -1 )

@@ -20,6 +20,8 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>   // KICLOUD: A16 std::max for the right column's width
+
 #include "tool/embed_tool.h"
 #include "tools/convert_tool.h"
 #include "tools/drawing_tool.h"
@@ -230,6 +232,24 @@ FOOTPRINT_EDIT_FRAME::FOOTPRINT_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_auimgr.AddPane( m_messagePanel, EDA_PANE().Messages().Name( "MsgPanel" )
                       .Bottom().Layer( 6 ) );
 
+    // The width of the right column (Appearance above the Selection Filter): KiCad's fixed 180 DIP.
+    int rightColumnWidth = FromDIP( 180 );
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: A16 (docs/future-features/FEATURE_LOOKS.md 4.10) in the browser editor the right
+    // column is at least as wide as the Selection Filter needs (its best size: the widest row of
+    // check boxes with their labels), as pcb_edit_frame.cpp sizes it. With the browser's 13 px
+    // system font the fixed 180 DIP cut "Locked items" and "Other items" off at the window edge.
+    // Wider only, never narrower than desktop KiCad's 180 DIP.
+    rightColumnWidth = std::max( rightColumnWidth, m_selectionFilterPanel->GetBestSize().x );
+
+    // A width saved by an earlier session (right_panel_width) may be the old, too narrow 180 DIP;
+    // it is restored below and when the panels are shown again (ToggleLayersManager), so it is
+    // raised to the same minimum here. A wider saved width is kept as the user left it.
+    if( aui_cfg.right_panel_width > 0 )
+        aui_cfg.right_panel_width = std::max( aui_cfg.right_panel_width, rightColumnWidth );
+#endif
+
     // Columns; layers 1 - 3
     m_auimgr.AddPane( m_treePane, EDA_PANE().Palette().Name( "Footprints" )
                       .Left().Layer( 4 )
@@ -239,7 +259,17 @@ FOOTPRINT_EDIT_FRAME::FOOTPRINT_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                       .BestSize( FromDIP( 250 ), -1 ) );
     m_auimgr.AddPane( m_propertiesPanel, EDA_PANE().Name( PropertiesPaneName() )
                       .Left().Layer( 3 )
+#ifdef __EMSCRIPTEN__
+                      // KICLOUD: A16 in the browser editor the Properties, Appearance and Selection
+                      // Filter panels are "cards" like the other side panels: a pane with a border
+                      // gets an 8 px frame from wxAUI, which the browser's dock art
+                      // (common/widgets/wx_aui_art_providers.cpp, DrawBorder) paints as a rounded
+                      // card round the panel. Each column is 2 x 8 px wider; the panels keep their
+                      // size. Desktop KiCad keeps these panes borderless.
+                      .Caption( _( "Properties" ) ).PaneBorder( true )
+#else
                       .Caption( _( "Properties" ) ).PaneBorder( false )
+#endif
                       .MinSize( FromDIP( wxSize( 240, 60 ) ) ).BestSize( FromDIP( wxSize( 300, 200 ) ) ) );
     m_auimgr.AddPane( m_tbLeft, EDA_PANE().VToolbar().Name( "LeftToolbar" )
                       .Left().Layer( 2 ) );
@@ -248,16 +278,24 @@ FOOTPRINT_EDIT_FRAME::FOOTPRINT_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                       .Right().Layer(2) );
     m_auimgr.AddPane( m_appearancePanel, EDA_PANE().Name( "LayersManager" )
                       .Right().Layer( 3 )
+#ifdef __EMSCRIPTEN__
+                      .Caption( _( "Appearance" ) ).PaneBorder( true )   // KICLOUD: A16 (above)
+#else
                       .Caption( _( "Appearance" ) ).PaneBorder( false )
+#endif
                       // Don't use -1 for don't-change-height on a growable panel; it has side-effects.
                       .MinSize( FromDIP( 180 ), FromDIP( 80 ) )
-                      .BestSize( FromDIP( 180 ), -1 ) );
+                      .BestSize( rightColumnWidth, -1 ) );    // KICLOUD: A16 (was 180 DIP)
     m_auimgr.AddPane( m_selectionFilterPanel, EDA_PANE().Palette().Name( "SelectionFilter" )
                       .Right().Layer( 3 ).Position( 2 )
+#ifdef __EMSCRIPTEN__
+                      .Caption( _( "Selection Filter" ) ).PaneBorder( true )   // KICLOUD: A16
+#else
                       .Caption( _( "Selection Filter" ) ).PaneBorder( false )
+#endif
                       // Fixed-size pane; -1 for MinSize height is required
-                      .MinSize( FromDIP( 180 ), -1 )
-                      .BestSize( FromDIP( 180 ), -1 ) );
+                      .MinSize( rightColumnWidth, -1 )     // KICLOUD: A16 (was 180 DIP)
+                      .BestSize( rightColumnWidth, -1 ) );   // KICLOUD: A16 (was 180 DIP)
 
     // Center
     m_auimgr.AddPane( GetCanvas(), EDA_PANE().Canvas().Name( "DrawFrame" )
@@ -442,6 +480,13 @@ void FOOTPRINT_EDIT_FRAME::ToggleLayersManager()
 
     if( m_show_layer_manager_tools )
     {
+#ifdef __EMSCRIPTEN__
+        // KICLOUD: A16 the column shown again is never narrower than the Selection Filter needs
+        // (see the constructor); a wider remembered width is kept.
+        if( settings->m_AuiPanels.right_panel_width > 0 )
+            settings->m_AuiPanels.right_panel_width = std::max( settings->m_AuiPanels.right_panel_width,
+                                                                m_selectionFilterPanel->GetBestSize().x );
+#endif
         SetAuiPaneSize( m_auimgr, layersManager, settings->m_AuiPanels.right_panel_width, -1 );
     }
     else

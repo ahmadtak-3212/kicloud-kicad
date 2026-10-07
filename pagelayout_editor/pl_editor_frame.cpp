@@ -23,6 +23,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <algorithm>   // KICLOUD: A16 std::max for the Properties panel's width
+
 #include <kiface_base.h>
 #include <pgm_base.h>
 #include <bitmaps.h>
@@ -197,11 +199,24 @@ PL_EDITOR_FRAME::PL_EDITOR_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_auimgr.AddPane( m_tbRight, EDA_PANE().VToolbar().Name( "RightToolbar" )
                       .Right().Layer( 2 ) );
 
+    int propertiesWidth = m_propertiesFrameWidth;
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: A16 (docs/future-features/FEATURE_LOOKS.md 4.10) in the browser editor the
+    // Properties panel opens at least 240 DIP wide, so both of its tabs, "Item Properties" and
+    // "General Options", show their whole names with the browser's 13 px system font. KiCad's
+    // default (properties_frame_width in pl_editor_settings.cpp) is 150, where the tabs were cut
+    // to "Item P…" and "Genera…". A wider width the user left last time (saved in the same
+    // setting) is kept; a saved narrower one (for example the old 150 default) is raised. The user
+    // can still drag the panel narrower during a session, down to its minimum size.
+    propertiesWidth = std::max( propertiesWidth, FromDIP( 240 ) );
+#endif
+
     m_auimgr.AddPane( m_propertiesPagelayout, EDA_PANE().Palette().Name( "Props" )
                       .Right().Layer( 3 )
                       .Caption( _( "Properties" ) )
                       .MinSize( m_propertiesPagelayout->GetMinSize() )
-                      .BestSize( m_propertiesFrameWidth, -1 ) );
+                      .BestSize( propertiesWidth, -1 ) );   // KICLOUD: A16 (see above)
 
     // Center
     m_auimgr.AddPane( GetCanvas(), EDA_PANE().Canvas().Name( "DrawFrame" )

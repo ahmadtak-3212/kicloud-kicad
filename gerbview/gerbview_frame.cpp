@@ -165,9 +165,18 @@ GERBVIEW_FRAME::GERBVIEW_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_auimgr.AddPane( m_tbTopAux, EDA_PANE().HToolbar().Name( "TopAuxToolbar" ).Top().Layer(4) );
     m_auimgr.AddPane( m_messagePanel, EDA_PANE().Messages().Name( "MsgPanel" ).Bottom().Layer( 6 ) );
     m_auimgr.AddPane( m_tbLeft, EDA_PANE().VToolbar().Name( "LeftToolbar" ).Left().Layer( 3 ) );
+    // KICLOUD: A16 (docs/future-features/FEATURE_LOOKS.md 4.10) in the browser editor the Layers
+    // Manager is a "card" like the other tools' side panels: Palette() gives the pane a border,
+    // and the browser's dock art (common/widgets/wx_aui_art_providers.cpp, DrawBorder) paints that
+    // border as a rounded card round the panel. Desktop KiCad removes the border here, so this
+    // build simply does not. The column is 2 x 8 px wider; the panel keeps its size.
     m_auimgr.AddPane( m_LayersManager,
                       EDA_PANE().Palette().Name( "LayersManager" ).Right().Layer( 3 )
+#ifdef __EMSCRIPTEN__
+                                .Caption( _( "Layers Manager" ) )    // KICLOUD: A16 (above)
+#else
                                 .Caption( _( "Layers Manager" ) ).PaneBorder( false )
+#endif
                                 .MinSize( FromDIP( 80 ), FromDIP( 80 ) )
                                 .BestSize( m_LayersManager->GetBestSize() ) );
 

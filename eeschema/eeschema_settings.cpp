@@ -115,7 +115,18 @@ const wxAuiPaneInfo& defaultSchSelectionFilterPaneInfo( wxWindow* aWindow )
     paneInfo.Name( wxS( "SelectionFilter" ) )
             .Caption( _( "Selection Filter" ) )
             .CaptionVisible( true )
+#ifdef __EMSCRIPTEN__
+            // KICLOUD: A16 (docs/future-features/FEATURE_LOOKS.md 4.10) in the browser editor the
+            // Selection Filter of the schematic and symbol editors (both use these defaults) is a
+            // "card" like the Properties panel above it: a pane with a border gets an 8 px frame
+            // from wxAUI, which the browser's dock art (common/widgets/wx_aui_art_providers.cpp,
+            // DrawBorder) paints as a rounded card round the panel. The panel keeps its size; its
+            // column is as wide as before, because the Properties panel's card already sets it.
+            // Desktop KiCad keeps this pane borderless.
+            .PaneBorder( true )
+#else
             .PaneBorder( false )
+#endif
             .Left().Layer( 3 ).Position( 4 )
             .TopDockable( false )
             .BottomDockable( false )
