@@ -34,6 +34,17 @@
 #include <wx/statusbr.h>
 #include <wx/settings.h> // KICLOUD: B1.20, GetDefaultAttributes below
 
+#ifdef __EMSCRIPTEN__
+#include <functional>   // KICLOUD: LOOK.2, the merged status bar's callbacks
+#include <utility>
+#include <wx/timer.h>
+
+// KICLOUD: LOOK.2. Code outside the fork (the kicloud test hook in wasm/editor/kicloud_tools.cpp)
+// compiles its merged-status-bar part only when this is defined, so the same hook also builds
+// against a KiCad without this change.
+#define KISTATUSBAR_HAS_LABELS 1
+#endif
+
 class wxGauge;
 class wxButton;
 class wxStaticText;
@@ -88,6 +99,93 @@ public:
         attrs.colFg = wxSystemSettings::GetColour( wxSYS_COLOUR_GRAYTEXT );
         return attrs;
     }
+
+    // KICLOUD: LOOK.2, the browser editor's status bar as labels (docs/future-features/
+    // FEATURE_LOOKS.md section 4.2). A drawing frame (EDA_DRAW_FRAME) turns this "labels" mode on.
+    // The bar is then one 34 px row that KISTATUSBAR paints itself:
+    //
+    //   [health chip] [message panel items: Pads 120 · Vias 30 · ...] [hint texts]   ...   [X/Y]
+    //   [dx/dy] [grid] [zoom] [mm | in | mil]  [background job, load warnings: unchanged]
+    //
+    // The texts are the ones KiCad already writes: the eight fields EDA_DRAW_FRAME fills with
+    // SetStatusText (FIELD_* below) and the items of the message panel (EDA_MSG_PANEL), which the
+    // drawing frames used to show as a second bar above this one and now hand to SetMessageItems.
+    // Anything that does not fit is in a tooltip, so no text KiCad showed is lost. Colours come
+    // from the wx port's system colour table, so a theme switch repaints the bar in the new theme.
+    // Without labels mode (KiCad's project manager, dialogs) the bar draws as before.
+
+    /// The fields EDA_DRAW_FRAME writes (CreateStatusBar( 8 ), eda_draw_frame.cpp).
+    enum DRAW_FRAME_FIELD : int
+    {
+        FIELD_MESSAGE = 0,      ///< general messages (file loading, ...)
+        FIELD_ZOOM = 1,         ///< "Z 1.23"
+        FIELD_CURSOR = 2,       ///< "X 12.3400  Y 5.6700"
+        FIELD_DELTA = 3,        ///< "dx 1.0000  dy 2.0000  dist 2.2361"
+        FIELD_GRID = 4,         ///< "grid 0.1000"
+        FIELD_UNITS = 5,        ///< "mm", "inches", "mils"
+        FIELD_TOOL = 6,         ///< the current tool's name, e.g. "Select item(s)"
+        FIELD_CONSTRAINT = 7,   ///< e.g. "Constrain to H, V, 45"
+        DRAW_FRAME_FIELDS = 8
+    };
+
+    /// What the health chip at the left end shows, e.g. "Fully routed" or "2 DRC errors".
+    struct HEALTH
+    {
+        wxString text;          ///< the chip's text; empty = no chip
+        wxString tooltip;       ///< the numbers behind it, shown on hover
+        bool     ok = true;     ///< true: the calm (accent) chip; false: the attention chip
+        wxString replacesItem;  ///< a message panel item the chip already shows (its upper text,
+                                ///< e.g. "Unrouted"): left out of the counts, kept in tooltips
+    };
+
+    /// Computes the health chip for a frame, or std::nullopt for a frame it does not know. Health
+    /// sources are registered once at start-up by code that knows the board or the schematic
+    /// (wasm/bindings/pcbnew_embind.cpp, eeschema_embind.cpp), because this common class cannot.
+    using HEALTH_SOURCE = std::function<std::optional<HEALTH>( wxWindow* aFrame )>;
+
+    /// Register a health source for every labels-mode status bar. Call from start-up code only
+    /// (the list is not locked; everything here runs on the UI thread).
+    static void AddHealthSource( HEALTH_SOURCE aSource );
+
+    /// One piece the bar drew, for tooltips and for the test hook (kicloud_test_status_texts).
+    struct LABEL_PIECE
+    {
+        wxString kind;          ///< "health", "items", "message", "tool", "constraint", "zoom",
+                                ///< "cursor", "delta", "grid", "unit" (one segment of the
+                                ///< switch), "units" (the whole switch), "rest" (the empty space)
+        wxString text;          ///< the text drawn (shortened with "…" when it did not fit)
+        wxString tooltip;       ///< the full text(s), shown on hover
+        wxRect   rect;          ///< where it is in the bar
+    };
+
+    /**
+     * Turn labels mode on (once, right after the frame created this bar).
+     *
+     * @param aOnUnits called with 0 (mm), 1 (inches) or 2 (mils) when the user clicks the units
+     *                 switch; the frame runs KiCad's own units action for it.
+     */
+    void EnableLabels( std::function<void( int )> aOnUnits );
+
+    bool LabelsEnabled() const { return m_labels; }
+
+    /// The message panel's items as (upper text, lower text) pairs, e.g. ("Pads", "120").
+    void SetMessageItems( const std::vector<std::pair<wxString, wxString>>& aItems );
+
+    /// Which units segment is selected: 0 mm, 1 inches, 2 mils, -1 none (other units).
+    void SetUnitsChoice( int aChoice );
+
+    /// The pieces drawn by the last paint (empty before the first paint).
+    const std::vector<LABEL_PIECE>& GetLabelPieces() const { return m_pieces; }
+
+    /// In labels mode, field 0 spans the painted area and the other drawing-frame fields get no
+    /// column of their own (see kistatusbar.cpp); otherwise wxStatusBar's own behaviour.
+    void SetStatusWidths( int aCount, const int aWidths[] ) override;
+
+protected:
+    wxSize DoGetBestSize() const override;
+    void   DoUpdateStatusText( int aField ) override;
+
+public:
 #endif
 
     /**
@@ -173,6 +271,18 @@ private:
 
     std::optional<int> fieldIndex( FIELD aField ) const;
 
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: LOOK.2, labels mode (see EnableLabels)
+    void onLabelsPaint( wxPaintEvent& aEvent );
+    void onLabelsMotion( wxMouseEvent& aEvent );
+    void onLabelsLeave( wxMouseEvent& aEvent );
+    void onLabelsLeftDown( wxMouseEvent& aEvent );
+    void onLabelsIdle( wxIdleEvent& aEvent );
+    void onHealthTimer( wxTimerEvent& aEvent );
+    void refreshHealth();
+    int  labelsRightEdge() const;
+#endif
+
 private:
     wxGauge*       m_backgroundProgressBar;
     wxButton*      m_backgroundStopButton;
@@ -186,6 +296,21 @@ private:
     wxString       m_savedStatusText;       ///< Saved text from adjacent field during background jobs
     wxString       m_backgroundRawText;     ///< Unellipsized background status text
     std::vector<int> m_fieldWidths;
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: LOOK.2, labels mode state (see EnableLabels)
+    bool                                       m_labels = false;
+    std::function<void( int )>                 m_onUnits;
+    std::vector<std::pair<wxString, wxString>> m_messageItems;
+    std::optional<HEALTH>                      m_health;
+    int                                        m_unitsChoice = -1;
+    std::vector<LABEL_PIECE>                   m_pieces;        ///< from the last paint
+    std::vector<wxRect>                        m_unitsRects;    ///< mm, in, mil segments
+    std::unordered_map<int, int>               m_stickyWidths;  ///< per right-hand field: widest yet
+    int                                        m_stickyForWidth = -1;
+    wxTimer                                    m_healthTimer;   ///< soon after the items change
+    wxLongLong                                 m_lastHealth = 0;
+#endif
 };
 
 #endif

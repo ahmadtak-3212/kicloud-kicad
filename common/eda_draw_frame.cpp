@@ -136,6 +136,32 @@ EDA_DRAW_FRAME::EDA_DRAW_FRAME( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrame
 
         GetStatusBar()->SetFont( KIUI::GetStatusFont( this ) );
 
+#ifdef __EMSCRIPTEN__
+        // KICLOUD: LOOK.2, the browser editor's status bar as labels (docs/patches.md): one 34 px
+        // bar that draws the fields below as chips and labels, with a mm | in | mil switch. A click
+        // on the switch runs KiCad's own units actions (the ones of the left toolbar's Units group),
+        // so the units change exactly as from the toolbar. The tool manager does not exist yet
+        // here, so it is looked up at click time. The frames that also merge their message panel
+        // into this bar do it where they used to add its pane (EDA_MSG_PANEL::MergeIntoStatusBar).
+        if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
+        {
+            statusBar->EnableLabels(
+                    [this]( int aUnits )
+                    {
+                        if( !m_toolManager )
+                            return;
+
+                        switch( aUnits )
+                        {
+                        case 0: m_toolManager->RunAction( ACTIONS::millimetersUnits ); break;
+                        case 1: m_toolManager->RunAction( ACTIONS::inchesUnits ); break;
+                        case 2: m_toolManager->RunAction( ACTIONS::milsUnits ); break;
+                        default: break;
+                        }
+                    } );
+        }
+#endif
+
         // set the size of the status bar subwindows:
         updateStatusBarWidths();
     }
@@ -738,6 +764,21 @@ void EDA_DRAW_FRAME::DisplayUnitsMsg()
     }
 
     SetStatusText( msg, 5 );
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: LOOK.2, the labels status bar's mm | in | mil switch shows the current units (no
+    // segment for other units). Called on every status update; the bar repaints only on a change.
+    if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
+    {
+        switch( GetUserUnits() )
+        {
+        case EDA_UNITS::MM:   statusBar->SetUnitsChoice( 0 );  break;
+        case EDA_UNITS::INCH: statusBar->SetUnitsChoice( 1 );  break;
+        case EDA_UNITS::MILS: statusBar->SetUnitsChoice( 2 );  break;
+        default:              statusBar->SetUnitsChoice( -1 ); break;
+        }
+    }
+#endif
 }
 
 

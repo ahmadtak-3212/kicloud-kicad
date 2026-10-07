@@ -35,6 +35,10 @@
 
 #include <widgets/ui_common.h>
 
+#ifdef __EMSCRIPTEN__
+#include <widgets/kistatusbar.h>   // KICLOUD: LOOK.2, MergeIntoStatusBar
+#endif
+
 
 BEGIN_EVENT_TABLE( EDA_MSG_PANEL, wxPanel )
     EVT_DPI_CHANGED( EDA_MSG_PANEL::OnDPIChanged )
@@ -164,6 +168,10 @@ void EDA_MSG_PANEL::AppendMessage( const wxString& aUpperText, const wxString& a
     updateItemPos( item );
     m_Items.push_back( item );
 
+#ifdef __EMSCRIPTEN__
+    mirrorItems();   // KICLOUD: LOOK.2, the status bar shows the items (MergeIntoStatusBar)
+#endif
+
     Refresh();
 }
 
@@ -194,8 +202,52 @@ void EDA_MSG_PANEL::EraseMsgBox()
 {
    m_Items.clear();
    m_last_x = 0;
+
+#ifdef __EMSCRIPTEN__
+   mirrorItems();   // KICLOUD: LOOK.2, the status bar shows the items (MergeIntoStatusBar)
+#endif
+
    Refresh();
 }
+
+
+#ifdef __EMSCRIPTEN__
+// KICLOUD: LOOK.2, one status bar in the browser editor (see msgpanel.h). Only a KISTATUSBAR in
+// labels mode (EDA_DRAW_FRAME turns it on in the browser build) can draw the items; for any other
+// bar nothing changes and the caller keeps the separate pane.
+bool EDA_MSG_PANEL::MergeIntoStatusBar( wxStatusBar* aStatusBar )
+{
+    KISTATUSBAR* bar = dynamic_cast<KISTATUSBAR*>( aStatusBar );
+
+    if( !bar || !bar->LabelsEnabled() )
+        return false;
+
+    m_mergedInto = bar;
+    Hide();
+    mirrorItems();
+    return true;
+}
+
+
+// Hand the current items to the status bar as (upper, lower) text pairs. Called after every change
+// of m_Items; does nothing when the panel is not merged or the bar is already gone. The bar repaints
+// only when the items differ, so the many calls of one SetMsgPanel (one per item) cost little.
+void EDA_MSG_PANEL::mirrorItems()
+{
+    KISTATUSBAR* bar = dynamic_cast<KISTATUSBAR*>( m_mergedInto.get() );
+
+    if( !bar )
+        return;
+
+    std::vector<std::pair<wxString, wxString>> pairs;
+    pairs.reserve( m_Items.size() );
+
+    for( const MSG_PANEL_ITEM& item : m_Items )
+        pairs.emplace_back( item.GetUpperText(), item.GetLowerText() );
+
+    bar->SetMessageItems( pairs );
+}
+#endif
 
 
 void EDA_MSG_PANEL::erase( wxDC* aDC )

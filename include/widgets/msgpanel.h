@@ -38,6 +38,11 @@
 #include <wx/window.h>
 #include <wx/panel.h>
 
+#ifdef __EMSCRIPTEN__
+#include <wx/weakref.h>   // KICLOUD: LOOK.2, the status bar this panel's items are shown in
+class wxStatusBar;
+#endif
+
 using KIGFX::COLOR4D;
 
 #define MSG_PANEL_DEFAULT_PAD      6  ///< The default number of spaces between each text string.
@@ -139,6 +144,23 @@ public:
                        aMessageItem.GetPadding() );
     }
 
+#ifdef __EMSCRIPTEN__
+    /**
+     * KICLOUD: LOOK.2, one status bar in the browser editor (docs/future-features/FEATURE_LOOKS.md
+     * section 4.2). Show this panel's items inside the frame's status bar instead of as a second
+     * bar above it: the panel hides itself and, from now on, hands every change of its items to
+     * the status bar (KISTATUSBAR::SetMessageItems), which draws them as labels. The panel keeps
+     * its items, so everything that reads or writes them is unchanged.
+     *
+     * The frames that do this call it instead of adding the panel as an AUI pane.
+     *
+     * @param aStatusBar the frame's status bar.
+     * @return false (and nothing changes) when it is not a KISTATUSBAR in labels mode; the frame
+     *         then adds the panel as its own pane, as before.
+     */
+    bool MergeIntoStatusBar( wxStatusBar* aStatusBar );
+#endif
+
     DECLARE_EVENT_TABLE()
 
 protected:
@@ -156,6 +178,15 @@ protected:
     std::vector<MSG_PANEL_ITEM> m_Items;
     int                         m_last_x;      ///< the last used x coordinate
     wxSize                      m_fontSize;
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: LOOK.2, see MergeIntoStatusBar. mirrorItems() hands m_Items to the status bar;
+    // m_mergedInto is that status bar (null until merged). It is a weak reference, so a bar
+    // destroyed first (both are children of the frame) is never touched again.
+    void mirrorItems();
+
+    wxWeakRef<wxWindow>         m_mergedInto;
+#endif
 };
 
 

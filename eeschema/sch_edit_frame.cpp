@@ -256,6 +256,12 @@ SCH_EDIT_FRAME::SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_auimgr.AddPane( m_tbTopMain, EDA_PANE().HToolbar().Name( wxS( "TopMainToolbar" ) )
                       .Top().Layer( 6 ) );
 
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: LOOK.2, one status bar in the browser editor (docs/patches.md): the message panel's
+    // items are drawn inside the status bar instead of in a second bar above it. Without a labels
+    // status bar the panel keeps its own pane, as before.
+    if( !m_messagePanel->MergeIntoStatusBar( GetStatusBar() ) )
+#endif
     m_auimgr.AddPane( m_messagePanel, EDA_PANE().Messages().Name( wxS( "MsgPanel" ) )
                       .Bottom().Layer( 6 ) );
 
