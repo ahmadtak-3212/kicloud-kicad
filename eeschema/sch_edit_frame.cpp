@@ -266,7 +266,15 @@ SCH_EDIT_FRAME::SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                       .Bottom().Layer( 6 ) );
 
     // Columns; layers 1 - 3
-    m_auimgr.AddPane( m_hierarchy, EDA_PANE().Palette().Name( SchematicHierarchyPaneName() )
+    // KICLOUD: LOOK.4 (FEATURE_LOOKS.md D4) in the browser editor the schematic's side panels
+    // (Hierarchy, Properties and the Selection Filter under them) dock on the RIGHT by default, as
+    // the PCB editor's panels do, beside the tools column. Desktop KiCad docks them on the left.
+    // Only the default changes: RestoreAuiLayout() below applies the user's saved layout over
+    // these defaults, so a user who moved the panels keeps their own choice. The Properties and
+    // Selection Filter defaults come from eeschema_settings.cpp, which the symbol editor shares,
+    // so they are copied and changed here rather than there (the symbol editor keeps its layout).
+    EDA_PANE hierarchyPaneInfo;
+    hierarchyPaneInfo.Palette().Name( SchematicHierarchyPaneName() )
                       .Caption( _( "Schematic Hierarchy" ) )
                       .Left().Layer( 3 ).Position( 1 )
                       .TopDockable( false )
@@ -276,10 +284,20 @@ SCH_EDIT_FRAME::SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
                       .BestSize( FromDIP( wxSize( 200, 200 ) ) )
                       .FloatingSize( FromDIP( wxSize( 200, 200 ) ) )
                       .FloatingPosition( FromDIP( wxPoint( 50, 50 ) ) )
-                      .Show( false ) );
+                      .Show( false );
 
-    m_auimgr.AddPane( m_propertiesPanel, defaultPropertiesPaneInfo( this ) );
-    m_auimgr.AddPane( m_selectionFilterPanel, defaultSchSelectionFilterPaneInfo( this ) );
+    wxAuiPaneInfo propertiesPaneInfo = defaultPropertiesPaneInfo( this );
+    wxAuiPaneInfo selectionFilterPaneInfo = defaultSchSelectionFilterPaneInfo( this );
+
+#ifdef __EMSCRIPTEN__
+    hierarchyPaneInfo.Right();          // KICLOUD: LOOK.4 (see above)
+    propertiesPaneInfo.Right();         // KICLOUD: LOOK.4
+    selectionFilterPaneInfo.Right();    // KICLOUD: LOOK.4
+#endif
+
+    m_auimgr.AddPane( m_hierarchy, hierarchyPaneInfo );
+    m_auimgr.AddPane( m_propertiesPanel, propertiesPaneInfo );
+    m_auimgr.AddPane( m_selectionFilterPanel, selectionFilterPaneInfo );
 
     m_auimgr.AddPane( m_designBlocksPane, defaultDesignBlocksPaneInfo( this ) );
     m_auimgr.AddPane( m_remoteSymbolPane, defaultRemoteSymbolPaneInfo( this ) );

@@ -32,6 +32,148 @@
 #include <widgets/wx_aui_art_providers.h>
 #include <gal/color4d.h>
 
+#ifdef __EMSCRIPTEN__
+#include <cmath>            // KICLOUD: LOOK.4 std::sin/std::cos for the caption corners
+#include <eda_base_frame.h> // KICLOUD: LOOK.4 VIEWER3D_FRAMENAME
+#include <math/util.h>      // KICLOUD: LOOK.4 KiROUND
+#endif
+
+#ifdef __EMSCRIPTEN__
+// KICLOUD: LOOK.4 (side columns and panels as cards) and LOOK.3 (pill groups on the top toolbars).
+//
+// The browser editor draws KiCad's toolbars and side panels like the kicloud dashboard: white
+// rounded "cards" on the darker panel colour, with a small gap (a "gutter") between them. Every
+// size below is in device-independent pixels (DIP: FromDIP() turns it into real pixels).
+//
+// Only the drawing changes, with one exception: a side toolbar is a little wider (RAIL_EXTRA), so
+// its card has room round the buttons. The buttons keep their order, and a top toolbar's buttons
+// keep their exact positions, so clicking (hit-testing) is unchanged. The drawing area (the board
+// or schematic picture) is never painted over or clipped; only the space round it is painted.
+//
+// The colours come from the wx port's system colour table (tools/deps/wxWidgets/src/wasm/
+// settings.cpp, set to the editor's light or dark theme tokens by B1.20), read at every paint, so a
+// theme switch repaints everything in the new theme. No new colour value is written here.
+namespace
+{
+// How much wider each button cell of a side toolbar is, on each side. The cell's height is
+// unchanged, so a side toolbar shows exactly as many buttons as before.
+constexpr int RAIL_EXTRA = 5;
+
+// The gap between a side toolbar's window edge and its card. It must stay at most the toolbar's
+// own outer padding (2 DIP, wxAuiToolBar's default margin): KiCad draws the small "more tools"
+// triangle of a button group at the button cell's bottom-right corner (ACTION_TOOLBAR::
+// OnCustomRender), and the triangle has to land inside the card.
+constexpr int RAIL_INSET = 2;
+
+constexpr int RAIL_RADIUS = 14;        // corner radius of a side toolbar's card
+constexpr int RAIL_HOVER_RADIUS = 10;  // corner radius of a side toolbar button's hover/on fill
+constexpr int SEPARATOR_INSET = 6;     // a side toolbar's separator line stops this far from the card edge
+
+// The pane border of every bordered pane (the drawing area and the side panels such as the
+// schematic's Properties): wxAUI reserves this much space round the pane, and DrawBorder paints it.
+constexpr int PANE_BORDER = 8;
+
+// Inside a side panel's border: the card starts PANE_BORDER - PANEL_PADDING from the outside, so
+// PANEL_PADDING pixels of card colour show round the panel. A rounded corner of radius r covers a
+// square corner only when the padding is at least r * (1 - 1/sqrt(2)), about 0.3 * r, so the
+// radius below must stay at most PANEL_PADDING / 0.3.
+constexpr int PANEL_PADDING = 4;
+constexpr int PANEL_RADIUS = 12;
+
+// The rounded top corners of a borderless panel's caption (DrawCaption). Small, so the rounding
+// stays clear of the caption's text, which starts 3 DIP from the left edge.
+constexpr int CAPTION_RADIUS = 8;
+
+// The name every KiCad frame gives the pane that holds its drawing area (pcb_edit_frame.cpp,
+// sch_edit_frame.cpp, the 3D viewer, ...).
+const wxString DRAWING_AREA_PANE = wxS( "DrawFrame" );
+
+// The space between cards (the dock and toolbar background): the editor's panel colour.
+wxColour gutterColour()
+{
+    return wxSystemSettings::GetColour( wxSYS_COLOUR_MENUBAR );
+}
+
+// A card's face: the editor's surface colour (white in light, the warm dark surface in dark).
+wxColour cardColour()
+{
+    return wxSystemSettings::GetColour( wxSYS_COLOUR_WINDOW );
+}
+
+// A card's 1 px outline: halfway between the strong line colour and the card face, which is about
+// the theme's quiet line colour (--line) without adding a colour of our own.
+wxColour cardLineColour()
+{
+    const wxColour strong = wxSystemSettings::GetColour( wxSYS_COLOUR_BTNSHADOW );
+    const wxColour face = cardColour();
+    return wxColour( ( strong.Red() + face.Red() ) / 2, ( strong.Green() + face.Green() ) / 2,
+                     ( strong.Blue() + face.Blue() ) / 2 );
+}
+
+// wxAuiManager::Repaint() moves the DC's origin to the frame's client-area origin (the menu bar's
+// height) before it asks the dock art to paint, because on desktop ports a frame's client DC starts
+// at the window's corner. The wx port's client DC already starts at the client area
+// (src/wasm/dcclient.cpp), so the offset counted twice: every dock part (pane borders, captions,
+// sashes) was painted one menu-bar height (18 px) too low, mostly hidden under the panes. While it
+// exists, this object puts the origin back where the port's DC already is, and restores it when it
+// goes out of scope. It changes nothing when the origin is not the client-area origin (for example
+// a frame without a menu bar, or a port that no longer adds the offset).
+class CLIENT_ORIGIN_FIX
+{
+public:
+    CLIENT_ORIGIN_FIX( wxDC& aDc, wxWindow* aFrame ) :
+            m_dc( aDc ),
+            m_saved( aDc.GetDeviceOrigin() ),
+            m_restore( false )
+    {
+        if( !aFrame || !aFrame->IsTopLevel() )
+            return;
+
+        // Not in the 3D viewer yet (its chrome is LOOK.9): the 3D picture is very slightly see-through
+        // in the page, and its approved parity pictures include a faint line of the misplaced dock
+        // drawing under it, which the fix would remove (FEATURE_LOOKS.md §5).
+        if( aFrame->GetName().StartsWith( VIEWER3D_FRAMENAME ) )
+            return;
+
+        const wxPoint origin = aFrame->GetClientAreaOrigin();
+
+        if( origin != wxPoint( 0, 0 ) && m_saved == origin )
+        {
+            m_dc.SetDeviceOrigin( 0, 0 );
+            m_restore = true;
+        }
+    }
+
+    ~CLIENT_ORIGIN_FIX()
+    {
+        if( m_restore )
+            m_dc.SetDeviceOrigin( m_saved.x, m_saved.y );
+    }
+
+private:
+    wxDC&   m_dc;
+    wxPoint m_saved;
+    bool    m_restore;
+};
+
+// Paints a filled rectangle in one colour (no outline).
+void fillRect( wxDC& aDc, const wxRect& aRect, const wxColour& aColour )
+{
+    aDc.SetPen( *wxTRANSPARENT_PEN );
+    aDc.SetBrush( wxBrush( aColour ) );
+    aDc.DrawRectangle( aRect );
+}
+
+// Paints a card: a rounded rectangle on the card colour with a 1 px outline.
+void drawCard( wxDC& aDc, const wxRect& aRect, double aRadius )
+{
+    aDc.SetPen( wxPen( cardLineColour() ) );
+    aDc.SetBrush( wxBrush( cardColour() ) );
+    aDc.DrawRoundedRectangle( aRect, aRadius );
+}
+} // namespace
+#endif
+
 #if wxCHECK_VERSION( 3, 3, 0 )
 wxSize WX_AUI_TOOLBAR_ART::GetToolSize( wxReadOnlyDC& aDc, wxWindow* aWindow,
                                         const wxAuiToolBarItem& aItem )
@@ -81,6 +223,14 @@ wxSize WX_AUI_TOOLBAR_ART::GetToolSize( wxDC& aDc, wxWindow* aWindow,
         int dropdownWidth = GetElementSize( wxAUI_TBART_DROPDOWN_SIZE );
         width += dropdownWidth + aWindow->FromDIP( 4 );
     }
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: LOOK.4 a side (vertical) toolbar's cells are wider so its card has room round the
+    // buttons; the height, and so the number of buttons that fit, is unchanged. wxAuiToolBar
+    // centres each cell, so the icons stay centred in the column.
+    if( m_flags & wxAUI_TB_VERTICAL )
+        width += 2 * aWindow->FromDIP( RAIL_EXTRA );
+#endif
 
     return wxSize( width, height );
 }
@@ -138,6 +288,11 @@ void WX_AUI_TOOLBAR_ART::DrawButton( wxDC& aDc, wxWindow* aWindow, const wxAuiTo
     // panel's stronger tone, and the soft accent fill with an accent edge for an active or
     // pressed tool. The colours are the wx port's system table (src/wasm/settings.cpp, the
     // editor's theme tokens). Icon positions are unchanged.
+    //
+    // KICLOUD: LOOK.4 / LOOK.3 the shapes: on a side toolbar the fill is a rounded square (radius
+    // 10) the height of the cell and 2 DIP in from each side of the (wider, see GetToolSize) cell;
+    // on a top toolbar it is a circle 2 DIP inside the cell, so it sits inside the button group's
+    // pill (DrawBackground) with a little of the pill showing round it.
     if( !( aItem.GetState() & wxAUI_BUTTON_STATE_DISABLED ) )
     {
         const int     state = aItem.GetState();
@@ -145,9 +300,20 @@ void WX_AUI_TOOLBAR_ART::DrawButton( wxDC& aDc, wxWindow* aWindow, const wxAuiTo
         const bool    hover = ( state & wxAUI_BUTTON_STATE_HOVER ) || aItem.IsSticky();
         const wxColour soft = wxSystemSettings::GetColour( wxSYS_COLOUR_MENUHILIGHT );
         const wxColour accent = wxSystemSettings::GetColour( wxSYS_COLOUR_HIGHLIGHT );
+        const bool    vertical = ( m_flags & wxAUI_TB_VERTICAL ) != 0;
         wxRect        r = aRect;
-        r.Deflate( 1 );
-        const double  radius = std::min( r.width, r.height ) / 2.0;
+        double        radius;
+
+        if( vertical )
+        {
+            r.Deflate( aWindow->FromDIP( 2 ), 0 );
+            radius = std::min( aWindow->FromDIP( RAIL_HOVER_RADIUS ), std::min( r.width, r.height ) / 2 );
+        }
+        else
+        {
+            r.Deflate( aWindow->FromDIP( 2 ) );
+            radius = std::min( r.width, r.height ) / 2.0;
+        }
 
         if( active || hover )
         {
@@ -246,43 +412,92 @@ void WX_AUI_TOOLBAR_ART::DrawBackground( wxDC& aDc, wxWindow* aWindow, const wxR
 }
 
 
+// KICLOUD: LOOK.4 / LOOK.3 the toolbar's background, painted before its buttons (wxAuiToolBar::
+// OnPaint calls this, then DrawButton/DrawSeparator for each item).
+//  - Everything is first painted in the gutter (panel) colour, as B1.20 did.
+//  - A side (vertical) toolbar then gets one card: a rounded rectangle RAIL_INSET in from the
+//    window's left and right edges, covering the whole column from just below the top toolbars to
+//    just above the message panel.
+//  - A top (horizontal) toolbar gets one pill per run of buttons: consecutive normal, check or
+//    radio buttons that are on screen. A separator, a spacer, an embedded control (the Track/Via/
+//    Grid/Zoom choices) or the end of the visible part ends a run; a lone button gets its own pill.
+//    The pill covers exactly the buttons' cells, which wxAuiToolBar placed, so no button moves.
 void WX_AUI_TOOLBAR_ART::DrawPlainBackground( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect )
 {
-    const wxColour panel = wxSystemSettings::GetColour( wxSYS_COLOUR_MENUBAR );
-    aDc.SetBrush( wxBrush( panel ) );
-    aDc.SetPen( wxPen( panel ) );
     wxRect r = aRect;
     r.height++;
-    aDc.DrawRectangle( r );
+    fillRect( aDc, r, gutterColour() );
+
+    if( m_flags & wxAUI_TB_VERTICAL )
+    {
+        wxRect card = aRect;
+        card.Deflate( aWindow->FromDIP( RAIL_INSET ) );
+
+        if( card.width > 0 && card.height > 0 )
+            drawCard( aDc, card, aWindow->FromDIP( RAIL_RADIUS ) );
+
+        return;
+    }
+
+    wxAuiToolBar* toolbar = wxDynamicCast( aWindow, wxAuiToolBar );
+
+    if( !toolbar )
+        return;
+
+    wxRect run;           // the cells of the current run of buttons (empty: no run open)
+
+    auto closeRun =
+            [&]()
+            {
+                if( !run.IsEmpty() )
+                    drawCard( aDc, run, run.height / 2.0 );
+
+                run = wxRect();
+            };
+
+    for( size_t i = 0; i < toolbar->GetToolCount(); ++i )
+    {
+        wxAuiToolBarItem* item = toolbar->FindToolByIndex( (int) i );
+        wxSizerItem*      sizerItem = item ? item->GetSizerItem() : nullptr;
+        const int         kind = item ? item->GetKind() : wxITEM_SEPARATOR;
+        const bool        isButton = kind == wxITEM_NORMAL || kind == wxITEM_CHECK
+                                     || kind == wxITEM_RADIO;
+
+        if( !isButton || !sizerItem || !sizerItem->IsShown()
+                || !toolbar->GetToolFitsByIndex( (int) i ) )
+        {
+            closeRun();
+            continue;
+        }
+
+        const wxRect cell = sizerItem->GetRect();
+
+        if( run.IsEmpty() )
+            run = cell;
+        else
+            run.Union( cell );
+    }
+
+    closeRun();
 }
 
 
+// KICLOUD: LOOK.4 / LOOK.3 a separator. On a side toolbar: a 1 px line across the card, stopping
+// SEPARATOR_INSET short of each card edge. On a top toolbar: nothing, so the separator's space is
+// the gap between two pills (DrawPlainBackground).
 void WX_AUI_TOOLBAR_ART::DrawSeparator( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect )
 {
-    const bool horizontal = !( m_flags & wxAUI_TB_VERTICAL );
-    wxRect     r = aRect;
+    if( !( m_flags & wxAUI_TB_VERTICAL ) )
+        return;
 
-    if( horizontal )
-    {
-        int h = std::min( r.height, aWindow->FromDIP( 18 ) );
-        r.x += r.width / 2;
-        r.width = aWindow->FromDIP( 1 );
-        r.y += ( r.height - h ) / 2;
-        r.height = h;
-    }
-    else
-    {
-        int w = std::min( r.width, aWindow->FromDIP( 18 ) );
-        r.y += r.height / 2;
-        r.height = aWindow->FromDIP( 1 );
-        r.x += ( r.width - w ) / 2;
-        r.width = w;
-    }
+    const int left = aWindow->FromDIP( RAIL_INSET ) + aWindow->FromDIP( SEPARATOR_INSET );
+    const int right = aWindow->GetClientSize().x - left;
 
-    const wxColour line = wxSystemSettings::GetColour( wxSYS_COLOUR_BTNSHADOW );
-    aDc.SetBrush( wxBrush( line ) );
-    aDc.SetPen( *wxTRANSPARENT_PEN );
-    aDc.DrawRectangle( r );
+    if( right <= left )
+        return;
+
+    wxRect r( left, aRect.y + aRect.height / 2, right - left, aWindow->FromDIP( 1 ) );
+    fillRect( aDc, r, cardLineColour() );
 }
 #endif
 
@@ -415,6 +630,24 @@ WX_AUI_DOCK_ART::WX_AUI_DOCK_ART() :
 #ifdef __EMSCRIPTEN__
     // KICLOUD: the base class constructor ran its own version (B1.20)
     UpdateColoursFromSystem();
+
+    // KICLOUD: LOOK.4 a wider pane border (the default is 1 pixel): wxAUI keeps this much space round
+    // every pane that has a border (KiCad's drawing area and most side panels), and DrawBorder
+    // paints it as the gutter round the drawing area or as a side panel's card. It is read at every
+    // layout, so it takes effect at the frame's first layout. Panes without a border (toolbars, the
+    // message panel, the PCB editor's Appearance panel) are not affected.
+    //
+    // The 3D viewer keeps wx's 1 px border for now (its chrome is a later step, LOOK.9): its frame
+    // opens at a fixed size, so a wider border would make its 3D picture smaller, and resizing the
+    // window back moves the camera by a hair. This art is created inside the frame's constructor
+    // (EDA_BASE_FRAME::commonInit), after wx listed the frame as the newest top-level window, so
+    // that window's name tells which frame this art belongs to.
+    const wxWindowList::compatibility_iterator newest = wxTopLevelWindows.GetLast();
+    const bool viewer3D = newest && newest->GetData()
+                          && newest->GetData()->GetName().StartsWith( VIEWER3D_FRAMENAME );
+
+    if( !viewer3D )
+        SetMetric( wxAUI_DOCKART_PANE_BORDER_SIZE, wxWindow::FromDIP( PANE_BORDER, nullptr ) );
 #endif
 }
 
@@ -436,12 +669,148 @@ void WX_AUI_DOCK_ART::UpdateColoursFromSystem()
     m_sashBrush = wxBrush( panel );
     m_gripperBrush = wxBrush( panel );
     m_borderPen = wxPen( line );
-    m_activeCaptionColour = panel;
-    m_activeCaptionGradientColour = panel;
     m_activeCaptionTextColour = text;
-    m_inactiveCaptionColour = panel;
-    m_inactiveCaptionGradientColour = panel;
     m_inactiveCaptionTextColour = text;
+
+    // KICLOUD: LOOK.4 a caption is the top row of its panel's card, so it takes the card colour
+    // (B1.20 used the panel colour, when the panels were flat).
+    const wxColour card = cardColour();
+    m_activeCaptionColour = card;
+    m_activeCaptionGradientColour = card;
+    m_inactiveCaptionColour = card;
+    m_inactiveCaptionGradientColour = card;
+}
+
+
+// KICLOUD: LOOK.4 the space wxAUI keeps round a bordered pane (PANE_BORDER wide, see the
+// constructor). aRect is the pane's whole rectangle including that border; the pane's own window
+// covers aRect minus the border, and wxAUI has already painted the pane's caption inside it, so
+// this paints only the border strips and never the inside.
+//  - The drawing area's pane (named DRAWING_AREA_PANE): the strips are gutter, with a 1 px line
+//    just outside the canvas. The canvas itself (a WebGL surface) is never painted over, clipped or
+//    rounded: the picture inside it stays exactly as before (FEATURE_LOOKS.md §5).
+//  - Any other bordered pane (Properties, Hierarchy, library trees, ...): a rounded card whose
+//    edge is PANE_BORDER - PANEL_PADDING in from the outside, so PANEL_PADDING pixels of card
+//    colour show round the panel. The card is painted once per strip with the strip as the clip
+//    region, so its fill cannot cover the caption or the panel.
+// Toolbars never have a border in KiCad; they keep wx's own drawing.
+void WX_AUI_DOCK_ART::DrawBorder( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect,
+                                  wxAuiPaneInfo& aPane )
+{
+    CLIENT_ORIGIN_FIX originFix( aDc, aWindow );
+    const int border = GetMetric( wxAUI_DOCKART_PANE_BORDER_SIZE );
+
+    if( aPane.IsToolbar() || border <= 1 || aRect.width <= 2 * border || aRect.height <= 2 * border )
+    {
+        wxAuiDefaultDockArt::DrawBorder( aDc, aWindow, aRect, aPane );
+        return;
+    }
+
+    const wxRect inner = wxRect( aRect ).Deflate( border );
+    const wxRect strips[4] = {
+        wxRect( aRect.x, aRect.y, aRect.width, border ),                          // top
+        wxRect( aRect.x, inner.GetBottom() + 1, aRect.width, border ),            // bottom
+        wxRect( aRect.x, inner.y, border, inner.height ),                         // left
+        wxRect( inner.GetRight() + 1, inner.y, border, inner.height )             // right
+    };
+
+    for( const wxRect& strip : strips )
+        fillRect( aDc, strip, gutterColour() );
+
+    if( aPane.name == DRAWING_AREA_PANE )
+    {
+        aDc.SetPen( wxPen( cardLineColour() ) );
+        aDc.SetBrush( *wxTRANSPARENT_BRUSH );
+        aDc.DrawRectangle( wxRect( inner ).Inflate( 1 ) );
+        return;
+    }
+
+    const int    padding = std::min( aWindow->FromDIP( PANEL_PADDING ), border - 1 );
+    const wxRect card = wxRect( aRect ).Deflate( border - padding );
+    const double radius = std::min( aWindow->FromDIP( PANEL_RADIUS ), ( 10 * padding ) / 3 );
+
+    for( const wxRect& strip : strips )
+    {
+        aDc.SetClippingRegion( strip );
+        drawCard( aDc, card, radius );
+        aDc.DestroyClippingRegion();
+    }
+}
+
+
+// KICLOUD: LOOK.4 a pane caption (the title row of a side panel: "Properties", "Appearance", ...).
+// wx paints it first (card colour, see UpdateColoursFromSystem). A panel with a border sits inside
+// its card (DrawBorder), so nothing more is needed. A panel without a border (the PCB editor's
+// Appearance and Selection Filter panels: pcb_edit_frame.cpp gives them none) has no room for a
+// card, so its caption gets rounded top corners instead: the small "ear" between each square
+// corner and a quarter circle is repainted in the gutter colour. Only the ears are painted, so the
+// caption's text is never covered (CAPTION_RADIUS is small enough to stay clear of it).
+void WX_AUI_DOCK_ART::DrawCaption( wxDC& aDc, wxWindow* aWindow, const wxString& aText,
+                                   const wxRect& aRect, wxAuiPaneInfo& aPane )
+{
+    CLIENT_ORIGIN_FIX originFix( aDc, aWindow );
+    wxAuiDefaultDockArt::DrawCaption( aDc, aWindow, aText, aRect, aPane );
+
+    if( aPane.HasBorder() || aPane.IsToolbar() || aPane.IsFloating() )
+        return;
+
+    const int radius = std::min( aWindow->FromDIP( CAPTION_RADIUS ),
+                                 std::min( aRect.width, aRect.height ) / 2 );
+
+    if( radius < 2 )
+        return;
+
+    // One ear: the corner point, then the quarter circle from one edge to the other.
+    // aSide is -1 for the left corner (the circle's centre is right of the corner), +1 for the right.
+    auto drawEar =
+            [&]( const wxPoint& aCorner, int aSide )
+            {
+                const wxPoint centre( aCorner.x - aSide * radius, aCorner.y + radius );
+                const int     steps = 8;
+                wxPoint       points[steps + 2];
+
+                points[0] = aCorner;
+
+                for( int i = 0; i <= steps; ++i )
+                {
+                    const double angle = ( M_PI / 2.0 ) * i / steps;   // 0 = on the top edge
+                    points[i + 1] = wxPoint( centre.x + aSide * KiROUND( radius * std::sin( angle ) ),
+                                             centre.y - KiROUND( radius * std::cos( angle ) ) );
+                }
+
+                aDc.DrawPolygon( steps + 2, points );
+            };
+
+    aDc.SetPen( *wxTRANSPARENT_PEN );
+    aDc.SetBrush( wxBrush( gutterColour() ) );
+    drawEar( wxPoint( aRect.x, aRect.y ), -1 );
+    drawEar( wxPoint( aRect.GetRight() + 1, aRect.y ), +1 );
+}
+
+
+// KICLOUD: LOOK.4 the sashes (the gaps between panes that can be dragged to resize them), the dock
+// background and a caption's close button: wx's own drawing, with the DC origin fixed (see
+// CLIENT_ORIGIN_FIX) so they are painted where wxAUI laid them out.
+void WX_AUI_DOCK_ART::DrawSash( wxDC& aDc, wxWindow* aWindow, int aOrientation, const wxRect& aRect )
+{
+    CLIENT_ORIGIN_FIX originFix( aDc, aWindow );
+    wxAuiDefaultDockArt::DrawSash( aDc, aWindow, aOrientation, aRect );
+}
+
+
+void WX_AUI_DOCK_ART::DrawBackground( wxDC& aDc, wxWindow* aWindow, int aOrientation,
+                                      const wxRect& aRect )
+{
+    CLIENT_ORIGIN_FIX originFix( aDc, aWindow );
+    wxAuiDefaultDockArt::DrawBackground( aDc, aWindow, aOrientation, aRect );
+}
+
+
+void WX_AUI_DOCK_ART::DrawPaneButton( wxDC& aDc, wxWindow* aWindow, int aButton, int aButtonState,
+                                      const wxRect& aRect, wxAuiPaneInfo& aPane )
+{
+    CLIENT_ORIGIN_FIX originFix( aDc, aWindow );
+    wxAuiDefaultDockArt::DrawPaneButton( aDc, aWindow, aButton, aButtonState, aRect, aPane );
 }
 #endif
 

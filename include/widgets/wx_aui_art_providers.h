@@ -53,6 +53,9 @@ public:
 #ifdef __EMSCRIPTEN__
     // KICLOUD: the browser editor's flat toolbars (B1.20): a plain panel background and thin
     // separators instead of wx's gradients.
+    // KICLOUD: LOOK.4 a side toolbar (vertical) is drawn as a rounded card; LOOK.3 a top toolbar
+    // (horizontal) draws each run of buttons between two separators as one rounded pill, and a
+    // separator becomes a gap. See the .cpp for the sizes and the colours.
     void DrawBackground( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect ) override;
     void DrawPlainBackground( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect ) override;
     void DrawSeparator( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect ) override;
@@ -71,6 +74,24 @@ public:
 #ifdef __EMSCRIPTEN__
     // KICLOUD: quiet pane captions and a panel-coloured dock in the browser editor (B1.20)
     void UpdateColoursFromSystem() override;
+
+    // KICLOUD: LOOK.4 side panels as rounded cards and a gutter round the drawing area, drawn in
+    // the pane border space (the border is wider in the browser editor, see the constructor).
+    void DrawBorder( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect,
+                     wxAuiPaneInfo& aPane ) override;
+
+    // KICLOUD: LOOK.4 a captioned side panel without a border (the PCB editor's Appearance and
+    // Selection Filter panels) gets rounded top corners on its caption.
+    void DrawCaption( wxDC& aDc, wxWindow* aWindow, const wxString& aText, const wxRect& aRect,
+                      wxAuiPaneInfo& aPane ) override;
+
+    // KICLOUD: LOOK.4 wx's own sash, background and pane-button drawing, painted at the place
+    // wxAUI laid them out (the .cpp's CLIENT_ORIGIN_FIX explains the wx port's offset).
+    void DrawSash( wxDC& aDc, wxWindow* aWindow, int aOrientation, const wxRect& aRect ) override;
+    void DrawBackground( wxDC& aDc, wxWindow* aWindow, int aOrientation,
+                         const wxRect& aRect ) override;
+    void DrawPaneButton( wxDC& aDc, wxWindow* aWindow, int aButton, int aButtonState,
+                         const wxRect& aRect, wxAuiPaneInfo& aPane ) override;
 #endif
 };
 
