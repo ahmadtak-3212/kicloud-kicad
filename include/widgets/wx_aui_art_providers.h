@@ -80,8 +80,9 @@ public:
     void DrawBorder( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect,
                      wxAuiPaneInfo& aPane ) override;
 
-    // KICLOUD: LOOK.4 a captioned side panel without a border (the PCB editor's Appearance and
-    // Selection Filter panels) gets rounded top corners on its caption.
+    // KICLOUD: LOOK.4 a captioned side panel without a border gets rounded top corners on its
+    // caption. (A21, comment refreshed: the PCB editor's Appearance and Selection Filter panels,
+    // once the example here, have a border since A17 and are cards.)
     void DrawCaption( wxDC& aDc, wxWindow* aWindow, const wxString& aText, const wxRect& aRect,
                       wxAuiPaneInfo& aPane ) override;
 
