@@ -39,14 +39,16 @@
 #endif
 
 #ifdef __EMSCRIPTEN__
-// KICLOUD: LOOK.4 (side columns and panels as cards) and LOOK.3 (pill groups on the top toolbars).
+// KICLOUD: LOOK.4 (side panels as cards) and A23 (flat toolbars; A23 removed LOOK.4's card behind
+// the side toolbar and LOOK.3's pill groups on the top toolbars).
 //
-// The browser editor draws KiCad's toolbars and side panels like the kicloud dashboard: white
-// rounded "cards" on the darker panel colour, with a small gap (a "gutter") between them. Every
+// The browser editor draws KiCad's side panels like the kicloud dashboard: white rounded "cards" on
+// the panel colour, with a small gap (a "gutter") between them. The toolbars are flat: buttons sit
+// straight on the panel colour, each with its own hover/pressed fill, and thin separator lines. Every
 // size below is in device-independent pixels (DIP: FromDIP() turns it into real pixels).
 //
-// Only the drawing changes, with one exception: a side toolbar is a little wider (RAIL_EXTRA), so
-// its card has room round the buttons. The buttons keep their order, and a top toolbar's buttons
+// Only the drawing changes, with one exception: a side toolbar is a little wider (RAIL_EXTRA, kept
+// from LOOK.4 so buttons do not move). The buttons keep their order, and a top toolbar's buttons
 // keep their exact positions, so clicking (hit-testing) is unchanged. The drawing area (the board
 // or schematic picture) is never painted over or clipped; only the space round it is painted.
 //
@@ -56,18 +58,13 @@
 namespace
 {
 // How much wider each button cell of a side toolbar is, on each side. The cell's height is
-// unchanged, so a side toolbar shows exactly as many buttons as before.
+// unchanged, so a side toolbar shows exactly as many buttons as before. (KICLOUD: A23: the side
+// toolbar no longer draws a card behind its buttons, but the cells keep this width so no button
+// moves from where LOOK.4 put it and saved click positions stay valid.)
 constexpr int RAIL_EXTRA = 5;
 
-// The gap between a side toolbar's window edge and its card. It must stay at most the toolbar's
-// own outer padding (2 DIP, wxAuiToolBar's default margin): KiCad draws the small "more tools"
-// triangle of a button group at the button cell's bottom-right corner (ACTION_TOOLBAR::
-// OnCustomRender), and the triangle has to land inside the card.
-constexpr int RAIL_INSET = 2;
-
-constexpr int RAIL_RADIUS = 14;        // corner radius of a side toolbar's card
 constexpr int RAIL_HOVER_RADIUS = 10;  // corner radius of a side toolbar button's hover/on fill
-constexpr int SEPARATOR_INSET = 6;     // a side toolbar's separator line stops this far from the card edge
+constexpr int SEPARATOR_INSET = 6;     // a separator line stops this far from the toolbar's edges (A23)
 
 // The pane border of every bordered pane (the drawing area and the side panels such as the
 // schematic's Properties): wxAUI reserves this much space round the pane, and DrawBorder paints it.
@@ -237,8 +234,8 @@ wxSize WX_AUI_TOOLBAR_ART::GetToolSize( wxDC& aDc, wxWindow* aWindow,
     }
 
 #ifdef __EMSCRIPTEN__
-    // KICLOUD: LOOK.4 a side (vertical) toolbar's cells are wider so its card has room round the
-    // buttons; the height, and so the number of buttons that fit, is unchanged. wxAuiToolBar
+    // KICLOUD: LOOK.4 a side (vertical) toolbar's cells are wider (A23: kept after the card behind
+    // them was removed, so no button moves); the height, and so the number of buttons that fit, is unchanged. wxAuiToolBar
     // centres each cell, so the icons stay centred in the column.
     if( m_flags & wxAUI_TB_VERTICAL )
         width += 2 * aWindow->FromDIP( RAIL_EXTRA );
@@ -303,8 +300,8 @@ void WX_AUI_TOOLBAR_ART::DrawButton( wxDC& aDc, wxWindow* aWindow, const wxAuiTo
     //
     // KICLOUD: LOOK.4 / LOOK.3 the shapes: on a side toolbar the fill is a rounded square (radius
     // 10) the height of the cell and 2 DIP in from each side of the (wider, see GetToolSize) cell;
-    // on a top toolbar it is a circle 2 DIP inside the cell, so it sits inside the button group's
-    // pill (DrawBackground) with a little of the pill showing round it.
+    // on a top toolbar it is a circle 2 DIP inside the cell. (KICLOUD: A23: there is no pill or
+    // card behind the buttons any more, so this fill is the only shape behind a button.)
     if( !( aItem.GetState() & wxAUI_BUTTON_STATE_DISABLED ) )
     {
         const int     state = aItem.GetState();
@@ -424,91 +421,59 @@ void WX_AUI_TOOLBAR_ART::DrawBackground( wxDC& aDc, wxWindow* aWindow, const wxR
 }
 
 
-// KICLOUD: LOOK.4 / LOOK.3 the toolbar's background, painted before its buttons (wxAuiToolBar::
+// KICLOUD: A23 (docs/patches.md, FEATURE_LOOKS.md section 11; replaces the LOOK.4 rail card and
+// the LOOK.3 pill groups) the toolbar's background, painted before its buttons (wxAuiToolBar::
 // OnPaint calls this, then DrawButton/DrawSeparator for each item).
-//  - Everything is first painted in the gutter (panel) colour, as B1.20 did.
-//  - A side (vertical) toolbar then gets one card: a rounded rectangle RAIL_INSET in from the
-//    window's left and right edges, covering the whole column from just below the top toolbars to
-//    just above the message panel.
-//  - A top (horizontal) toolbar gets one pill per run of buttons: consecutive normal, check or
-//    radio buttons that are on screen. A separator, a spacer, an embedded control (the Track/Via/
-//    Grid/Zoom choices) or the end of the visible part ends a run; a lone button gets its own pill.
-//    The pill covers exactly the buttons' cells, which wxAuiToolBar placed, so no button moves.
+// Why: the buttons now show KiCad's icons on their own coloured tiles (LOOK.13), so a card or pill
+// behind them read as a container inside a container. The background is now one flat fill in the
+// gutter (panel) colour, as B1.20 did, for both side and top toolbars; each button keeps its own
+// hover and pressed fill (DrawButton), and the separators show where groups end (DrawSeparator).
+// Input: the DC to paint on, the toolbar window and the rectangle to fill. No state changes; the
+// colour is read from the wx port's system colour table at every paint, so a theme switch takes
+// effect at the next repaint. Button positions do not depend on this function (wxAuiToolBar places
+// them; GetToolSize keeps the side cells RAIL_EXTRA wider), so nothing moves and clicks still land.
 void WX_AUI_TOOLBAR_ART::DrawPlainBackground( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect )
 {
     wxRect r = aRect;
     r.height++;
     fillRect( aDc, r, gutterColour() );
-
-    if( m_flags & wxAUI_TB_VERTICAL )
-    {
-        wxRect card = aRect;
-        card.Deflate( aWindow->FromDIP( RAIL_INSET ) );
-
-        if( card.width > 0 && card.height > 0 )
-            drawCard( aDc, card, aWindow->FromDIP( RAIL_RADIUS ) );
-
-        return;
-    }
-
-    wxAuiToolBar* toolbar = wxDynamicCast( aWindow, wxAuiToolBar );
-
-    if( !toolbar )
-        return;
-
-    wxRect run;           // the cells of the current run of buttons (empty: no run open)
-
-    auto closeRun =
-            [&]()
-            {
-                if( !run.IsEmpty() )
-                    drawCard( aDc, run, run.height / 2.0 );
-
-                run = wxRect();
-            };
-
-    for( size_t i = 0; i < toolbar->GetToolCount(); ++i )
-    {
-        wxAuiToolBarItem* item = toolbar->FindToolByIndex( (int) i );
-        wxSizerItem*      sizerItem = item ? item->GetSizerItem() : nullptr;
-        const int         kind = item ? item->GetKind() : wxITEM_SEPARATOR;
-        const bool        isButton = kind == wxITEM_NORMAL || kind == wxITEM_CHECK
-                                     || kind == wxITEM_RADIO;
-
-        if( !isButton || !sizerItem || !sizerItem->IsShown()
-                || !toolbar->GetToolFitsByIndex( (int) i ) )
-        {
-            closeRun();
-            continue;
-        }
-
-        const wxRect cell = sizerItem->GetRect();
-
-        if( run.IsEmpty() )
-            run = cell;
-        else
-            run.Union( cell );
-    }
-
-    closeRun();
 }
 
 
-// KICLOUD: LOOK.4 / LOOK.3 a separator. On a side toolbar: a 1 px line across the card, stopping
-// SEPARATOR_INSET short of each card edge. On a top toolbar: nothing, so the separator's space is
-// the gap between two pills (DrawPlainBackground).
+// KICLOUD: A23 (replaces LOOK.4 / LOOK.3) a separator: a thin 1 px line in the card outline colour
+// (the strong line colour BTNSHADOW in light, a slightly quieter mix of it in dark, see
+// cardLineColour), drawn across the middle of the separator's space.
+//  - Side toolbar: a horizontal line, SEPARATOR_INSET in from each side of the column.
+//  - Top toolbar: a vertical line, SEPARATOR_INSET short of the top and bottom of the toolbar.
+// Why: without the pills (DrawPlainBackground), a short line is what tells one group of buttons
+// from the next, like desktop KiCad's separators. Input: the DC, the toolbar window and the
+// separator's own rectangle (placed by wxAuiToolBar). No state changes; a separator too small to
+// hold the line draws nothing.
 void WX_AUI_TOOLBAR_ART::DrawSeparator( wxDC& aDc, wxWindow* aWindow, const wxRect& aRect )
 {
-    if( !( m_flags & wxAUI_TB_VERTICAL ) )
+    const int inset = aWindow->FromDIP( SEPARATOR_INSET );
+    const int thickness = aWindow->FromDIP( 1 );
+
+    if( m_flags & wxAUI_TB_VERTICAL )
+    {
+        const int left = inset;
+        const int right = aWindow->GetClientSize().x - inset;
+
+        if( right <= left )
+            return;
+
+        wxRect r( left, aRect.y + aRect.height / 2, right - left, thickness );
+        fillRect( aDc, r, cardLineColour() );
+        return;
+    }
+
+    const int top = aRect.y + inset;
+    const int bottom = aRect.y + aRect.height - inset;
+
+    if( bottom <= top )
         return;
 
-    const int left = aWindow->FromDIP( RAIL_INSET ) + aWindow->FromDIP( SEPARATOR_INSET );
-    const int right = aWindow->GetClientSize().x - left;
-
-    if( right <= left )
-        return;
-
-    wxRect r( left, aRect.y + aRect.height / 2, right - left, aWindow->FromDIP( 1 ) );
+    wxRect r( aRect.x + aRect.width / 2, top, thickness, bottom - top );
     fillRect( aDc, r, cardLineColour() );
 }
 #endif
