@@ -232,6 +232,28 @@ EDA_DRAW_FRAME::EDA_DRAW_FRAME( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrame
 }
 
 
+#ifdef __EMSCRIPTEN__
+// KICLOUD: LOOK.2 fix (docs/patches.md), see ~EDA_DRAW_FRAME. Walks the window tree under aWindow
+// and takes every drawing canvas (EDA_DRAW_PANEL_GAL) out of its parent's child list, so wx never
+// deletes it. Input: the window whose descendants are searched (the frame). State: the canvases
+// found are no longer children of anything; nothing is deleted. Use it only once the program has
+// ended (no GL context manager), when deleting a canvas would read through a null pointer.
+static void detachEndedProgramCanvases( wxWindow* aWindow )
+{
+    // a copy: RemoveChild changes the list
+    wxWindowList children = aWindow->GetChildren();
+
+    for( wxWindow* child : children )
+    {
+        if( dynamic_cast<EDA_DRAW_PANEL_GAL*>( child ) )
+            aWindow->RemoveChild( child );    // a canvas has no canvases inside it
+        else
+            detachEndedProgramCanvases( child );
+    }
+}
+#endif
+
+
 EDA_DRAW_FRAME::~EDA_DRAW_FRAME()
 {
     if( !m_openGLFailureOccured )
@@ -260,21 +282,18 @@ EDA_DRAW_FRAME::~EDA_DRAW_FRAME()
     // PCB editor's design block chooser has a footprint preview, PCB_DESIGN_BLOCK_PREVIEW_WIDGET),
     // and wx deletes those with the frame's child windows after this destructor.
     //
-    // So when the program has already ended (no GL context manager), every child window is
-    // detached from this frame and none is deleted: not the canvas here, and not the children wx
-    // would delete next. Code below that deletes a child explicitly (a status bar, an info bar)
-    // still works, because a detached window is still a valid object. Nothing can draw anymore at
-    // this point (the event loop is gone), and this whole KiCad instance, its memory included, is
-    // thrown away with the editor's iframe right after, so nothing leaks. A frame closed the
-    // normal way (the program still running) deletes its canvas and children as before.
+    // So when the program has already ended (no GL context manager), every drawing canvas in
+    // this frame's window tree (the main canvas included) is detached from its parent window and
+    // never deleted (detachEndedProgramCanvases). Only the canvases: every other child window is
+    // still deleted as usual, because some of them must run their destructors (the properties
+    // panel, for example, hands its frame pointer back to the property grid's shared editors,
+    // which wx deletes later; skipping that left them pointing at this deleted frame). Nothing can
+    // draw anymore at this point (the event loop is gone), and this whole KiCad instance, its
+    // memory included, is thrown away with the editor's iframe right after, so nothing leaks. A
+    // frame closed the normal way (the program still running) deletes its canvases as before.
     if( !Pgm().GetGLContextManager() )
     {
-        // a copy: RemoveChild changes the list
-        wxWindowList children = GetChildren();
-
-        for( wxWindow* child : children )
-            RemoveChild( child );
-
+        detachEndedProgramCanvases( this );
         m_canvas = nullptr;
     }
 #endif
