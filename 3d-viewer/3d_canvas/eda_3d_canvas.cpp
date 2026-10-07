@@ -419,7 +419,17 @@ void EDA_3D_CANVAS::DoRePaint()
     // therefore with invalid board.
     // This is dependent of the platform.
     // Especially on OSX, but also on Windows, it frequently happens
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: A18: in the browser the board's 3D viewer is a tab of its own (a page frame), and
+    // while it is the tab on screen its parent, the PCB editor, is hidden, not closed. "Shown on
+    // screen" would then stop every paint, so the browser build asks only whether the parent is
+    // still alive: it exists and is not being deleted (closing the PCB editor deletes it).
+    wxWindow* boardFrame = GetParent() ? GetParent()->GetParent() : nullptr;
+
+    if( !boardFrame || boardFrame->IsBeingDeleted() )
+#else
     if( !GetParent()->GetParent()->IsShownOnScreen() )
+#endif
     {
         // Clear the latch like every other early return does — leaving it set
         // blocks all future repaints of this canvas permanently.
@@ -684,7 +694,13 @@ void EDA_3D_CANVAS::RenderToFrameBuffer( unsigned char* buffer, int width, int h
 
     // Because the board to draw is handled by the parent viewer frame,
     // ensure this parent is still alive
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: A18: as in DoRePaint(): the parent PCB editor is hidden (not closed) while the 3D
+    // viewer's tab is on screen, so only "exists and is not being deleted" is checked.
+    if( !GetParent() || !GetParent()->GetParent() || GetParent()->GetParent()->IsBeingDeleted() )
+#else
     if( !GetParent() || !GetParent()->GetParent() || !GetParent()->GetParent()->IsShownOnScreen() )
+#endif
     {
         m_is_currently_painting.clear();
         return;
