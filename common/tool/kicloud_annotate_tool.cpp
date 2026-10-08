@@ -49,6 +49,10 @@
 #undef _
 #define _(s) s
 
+// KICLOUD: COMMENTICON - both comment actions use their own icon (add_comment_box: a speech box with a plus) instead of
+// add_textbox, which Draw Text Boxes already uses, so the two tools look different in the toolbar group and in the
+// tool cursor badge. The PNGs are not in KiCad's stock images.tar.gz; the page's icon pack adds them (a missing PNG
+// only shows KiCad's "image not found" placeholder, it never fails).
 // Shift+C (P3.md §6.10) is the PCB editor's Add a Zone Cutout; Shift+D is free in both editors.
 TOOL_ACTION KICLOUD_ACTIONS::commentBox( TOOL_ACTION_ARGS()
         .Name( "common.Kicloud.commentBox" )
@@ -57,7 +61,7 @@ TOOL_ACTION KICLOUD_ACTIONS::commentBox( TOOL_ACTION_ARGS()
         .FriendlyName( _( "Add Comment Box" ) )
         .Tooltip( _( "Draw a box to comment on (nothing is added to the design)" ) )
         .ToolbarState( TOOLBAR_STATE::TOGGLE )
-        .Icon( BITMAPS::add_textbox )
+        .Icon( BITMAPS::add_comment_box )
         .Flags( AF_ACTIVATE ) );
 
 TOOL_ACTION KICLOUD_ACTIONS::commentPin( TOOL_ACTION_ARGS()
@@ -66,7 +70,7 @@ TOOL_ACTION KICLOUD_ACTIONS::commentPin( TOOL_ACTION_ARGS()
         .FriendlyName( _( "Add Comment Pin" ) )
         .Tooltip( _( "Pin a comment to a point (nothing is added to the design)" ) )
         .ToolbarState( TOOLBAR_STATE::TOGGLE )
-        .Icon( BITMAPS::add_textbox )
+        .Icon( BITMAPS::add_comment_box )
         .Flags( AF_ACTIVATE ) );
 
 

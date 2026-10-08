@@ -197,6 +197,7 @@ set( BMAPS_MID
     add_rectangle
     add_symbol_to_schematic
     add_textbox
+    add_comment_box
     add_tracks
     add_via
     add_zone_cutout

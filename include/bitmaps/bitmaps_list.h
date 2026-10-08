@@ -76,6 +76,7 @@ enum class BITMAPS : unsigned int
     add_rectangle,
     add_symbol_to_schematic,
     add_textbox,
+    add_comment_box,   // KICLOUD: COMMENTICON
     add_tracks,
     add_via,
     add_zone,

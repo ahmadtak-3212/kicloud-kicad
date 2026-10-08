@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- KICLOUD: COMMENTICON - Add Comment Box icon (kicloud's own drawing, KiCad's classic style: 24 px grid, 2 px outline, blue plus). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" version="1.1">
+  <title>add_comment_box</title>
+  <path d="M 3,4 H 21 V 16 H 11.5 L 6.5,21 V 16 H 3 Z" style="fill:#8f8f8f;fill-opacity:1;stroke:#ded3dd;stroke-width:2;stroke-linecap:round;stroke-linejoin:round" />
+  <path d="M 8.5,10 H 15.5 M 12,6.5 V 13.5" style="fill:none;stroke:#1a81c4;stroke-width:1.6;stroke-linecap:butt" />
+</svg>
