@@ -168,6 +168,10 @@ bool IsActionAllowed( const std::string& aActionName )
         // KICLOUD: JLC.4 (J9, Ahmad 2026-10-09): the JLCPCB Tools button only tells the page to open its tab
         // (it changes nothing in KiCad); the tab itself is view-only on a read-only link.
         "pcbnew.Kicloud.jlcpcbTools",
+        // KICLOUD: A24 F1 (Ahmad 2026-10-09): the PCB toolbar's "Switch to Schematic Editor" and the schematic's
+        // "Switch to PCB Editor" only choose which editor tab shows; they change nothing in the design.
+        "pcbnew.EditorControl.showEeschema",
+        "eeschema.EditorControl.showPcbNew",
         "pcbnew.Control.flipBoard",
         // and looks things up (search, find, select all, measure): view only
         "common.Interactive.search",
