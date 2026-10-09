@@ -623,6 +623,16 @@ public:
 
     bool IsClosing() const { return m_isClosing; }
 
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: SET.1 - the browser build saves a frame's settings while the frame stays open (a tab never closes a
+    // frame the desktop way). SaveSettings() adds the open file to the recent-files list and rebuilds the whole menu
+    // bar unless m_isClosing is set (UpdateFileHistory), so the caller (kicloudSaveViewSettings in
+    // wasm/bindings/kicad_editor_embind.cpp) sets the flag true around SaveSettings and puts the old value back.
+    // Input: the new flag value. Result: none. State: only m_isClosing; it does not close anything. Leaving it true
+    // would make the frame skip its recent-files and menu updates, so always restore it.
+    void KicloudSetClosing( bool aClosing ) { m_isClosing = aClosing; }
+#endif
+
     bool NonUserClose( bool aForce )
     {
         m_isNonUserClose = true;
