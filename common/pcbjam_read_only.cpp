@@ -165,6 +165,9 @@ bool IsActionAllowed( const std::string& aActionName )
         "common.Kicloud",
         "common.Kicloud.commentBox",
         "common.Kicloud.commentPin",
+        // KICLOUD: JLC.4 (J9, Ahmad 2026-10-09): the JLCPCB Tools button only tells the page to open its tab
+        // (it changes nothing in KiCad); the tab itself is view-only on a read-only link.
+        "pcbnew.Kicloud.jlcpcbTools",
         "pcbnew.Control.flipBoard",
         // and looks things up (search, find, select all, measure): view only
         "common.Interactive.search",
