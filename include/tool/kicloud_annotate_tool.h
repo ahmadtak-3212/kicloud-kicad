@@ -46,6 +46,10 @@ extern TOOL_ACTION commentBox;
 
 /// Pin a comment to one point
 extern TOOL_ACTION commentPin;
+
+/// KICLOUD: JLC.0.2 (docs/patches.md) Open kicloud's JLCPCB tab (PCB editor only: the plugin slot at the right end of the
+/// top toolbar, and Tools > External Plugins). It changes nothing in KiCad: it only tells the page, which opens the tab.
+extern TOOL_ACTION jlcpcbTools;
 } // namespace KICLOUD_ACTIONS
 
 
@@ -68,6 +72,9 @@ public:
 
     /// The interactive loop of both actions; reports the box (or point), or a cancel
     int Annotate( const TOOL_EVENT& aEvent );
+
+    /// KICLOUD: JLC.0.2 Tell the page to open its JLCPCB tab (page event "jlcpcb.open"); no design change
+    int OpenJlcpcb( const TOOL_EVENT& aEvent );
 
     void setTransitions() override;
 

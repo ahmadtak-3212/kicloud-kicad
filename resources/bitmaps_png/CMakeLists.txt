@@ -198,6 +198,7 @@ set( BMAPS_MID
     add_symbol_to_schematic
     add_textbox
     add_comment_box
+    jlcpcb_tools
     add_tracks
     add_via
     add_zone_cutout

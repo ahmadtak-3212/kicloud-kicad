@@ -73,6 +73,19 @@ TOOL_ACTION KICLOUD_ACTIONS::commentPin( TOOL_ACTION_ARGS()
         .Icon( BITMAPS::add_comment_box )
         .Flags( AF_ACTIVATE ) );
 
+// KICLOUD: JLC.0.2 (docs/patches.md) The JLCPCB Tools button of the PCB editor, where KiCad draws plugin buttons (the
+// ipcScripting control at the right end of the top toolbar, pcbnew/toolbars_pcb_editor.cpp) and in Tools > External
+// Plugins (pcbnew/menubar_pcb_editor.cpp). The desktop plugin (kicad-jlcpcb-tools, Python) cannot run in the browser
+// build, so kicloud draws its window as a page tab instead; this action only asks the page to open that tab. The name,
+// tooltip and icon are the plugin's, so plugin users find it where they expect it. Not AF_ACTIVATE: it is not an
+// interactive tool and never interrupts the tool the user is in.
+TOOL_ACTION KICLOUD_ACTIONS::jlcpcbTools( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.Kicloud.jlcpcbTools" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "JLCPCB Tools" ) )
+        .Tooltip( _( "Generate JLCPCB-compatible Gerber, Excellon, BOM and CPL files" ) )
+        .Icon( BITMAPS::jlcpcb_tools ) );
+
 
 namespace
 {
@@ -143,6 +156,41 @@ void KICLOUD_ANNOTATE_TOOL::setTransitions()
 {
     Go( &KICLOUD_ANNOTATE_TOOL::Annotate, KICLOUD_ACTIONS::commentBox.MakeEvent() );
     Go( &KICLOUD_ANNOTATE_TOOL::Annotate, KICLOUD_ACTIONS::commentPin.MakeEvent() );
+    Go( &KICLOUD_ANNOTATE_TOOL::OpenJlcpcb, KICLOUD_ACTIONS::jlcpcbTools.MakeEvent() );   // KICLOUD: JLC.0.2
+}
+
+
+// KICLOUD: JLC.0.2 (docs/patches.md) The JLCPCB Tools button or menu item was used. Tell the page (the shell around this
+// KiCad instance) through its editor API, which opens the JLCPCB tab: KiCloudEditorApi.emit('jlcpcb.open', {doc}) on
+// the parent window (web/editor/host-bridge/editor-api.js; it also calls the shell's own listeners). The call is
+// deferred with setTimeout, so a listener that calls back into KiCad (opening the tab) never runs inside this wasm call,
+// and a throwing listener never unwinds it. Changes nothing in the design; in other builds it does nothing.
+int KICLOUD_ANNOTATE_TOOL::OpenJlcpcb( const TOOL_EVENT& aEvent )
+{
+#ifdef __EMSCRIPTEN__
+    EM_ASM( {
+        var doc = UTF8ToString( $0 );
+        setTimeout( function()
+        {
+            try
+            {
+                var api = null;
+                try { api = window.parent && window.parent.KiCloudEditorApi; } catch( e ) { api = null; }
+                api = api || window.KiCloudEditorApi;
+                if( api && api.emit )
+                    api.emit( 'jlcpcb.open', { doc: doc } );
+                else
+                    console.warn( '[kicloud jlcpcb] no editor API page to open the JLCPCB tab' );
+            }
+            catch( e )
+            {
+                console.error( '[kicloud jlcpcb] jlcpcb.open listener threw', e );
+            }
+        }, 0 );
+    }, m_doc.c_str() );
+#endif
+
+    return 0;
 }
 
 

@@ -492,6 +492,17 @@ void PCB_EDIT_FRAME::configureToolbars()
                     if( haveApiPlugins )
                         AddApiPluginTools( aToolbar );
                 }
+
+#ifdef __EMSCRIPTEN__
+                // KICLOUD: JLC.0.2 (docs/patches.md) the browser build has no Python or IPC plugins, so this slot drew
+                // nothing. kicloud's JLCPCB Tools button goes here, where the desktop plugin's button is: after a
+                // separator, at the right end of the top toolbar. Being part of this control, it stays wherever the
+                // control is in a customized toolbar (and is gone only if the user removed the control).
+                if( !scriptingAvailable && !haveApiPlugins )
+                    aToolbar->AddScaledSeparator( aToolbar->GetParent() );
+
+                aToolbar->Add( KICLOUD_ACTIONS::jlcpcbTools );
+#endif
             };
 
     RegisterCustomToolbarControlFactory( ACTION_TOOLBAR_CONTROLS::ipcScripting, pluginControlFactory );

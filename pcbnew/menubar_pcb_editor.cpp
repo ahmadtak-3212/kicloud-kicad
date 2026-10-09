@@ -35,6 +35,7 @@
 #include <python_scripting.h>
 #endif
 #include <tool/action_manager.h>
+#include <tool/kicloud_annotate_tool.h>   // KICLOUD: JLC.0.2
 #include <tool/actions.h>
 #include <tool/tool_manager.h>
 #include <tools/pcb_actions.h>
@@ -460,6 +461,12 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
     // Since the object is cloned by Add
     submenuActionPlugins->AppendSeparator();
     buildActionPluginMenus( submenuActionPlugins );
+
+#ifdef __EMSCRIPTEN__
+    // KICLOUD: JLC.0.2 (docs/patches.md) kicloud's JLCPCB Tools (opens the page's JLCPCB tab), where the desktop plugin's
+    // entry is: Tools > External Plugins > JLCPCB Tools.
+    submenuActionPlugins->Add( KICLOUD_ACTIONS::jlcpcbTools );
+#endif
 
     toolsMenu->AppendSeparator();
     toolsMenu->Add( submenuActionPlugins );

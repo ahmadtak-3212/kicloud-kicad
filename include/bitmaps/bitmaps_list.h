@@ -77,6 +77,7 @@ enum class BITMAPS : unsigned int
     add_symbol_to_schematic,
     add_textbox,
     add_comment_box,   // KICLOUD: COMMENTICON
+    jlcpcb_tools,      // KICLOUD: JLC.0.2 (the JLCPCB Tools button; upstream kicad-jlcpcb-tools' icon, MIT)
     add_tracks,
     add_via,
     add_zone,
