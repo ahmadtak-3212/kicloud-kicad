@@ -19,6 +19,179 @@
 
 syntax = "proto3";
 
-package kiapi.schematic.types;
+// KICLOUD: S4.6 the schematic commands an AI seat needs: list the sheets, read one sheet back,
+// place a library symbol, draw wires, add net labels and set symbol fields. Upstream KiCad 10
+// left this file empty (package kiapi.schematic.types, no messages). Upstream master (KiCad 11)
+// has a larger schematic API with its own item types; the command names below follow it where
+// one exists (GetSchematicHierarchy, PlaceSymbolFromLibrary) so a later rebase can swap these
+// messages for upstream's. Every command is handled in eeschema/api/api_handler_sch.cpp.
+//
+// Units: every position is in nanometres (kiapi.common.types.Vector2 x_nm / y_nm), as on a
+// board. The handler converts them to schematic units (1 unit = 100 nm), rounding to whole units.
+//
+// Sheets: a request names its sheet in document.sheet_path (header.document.sheet_path for the
+// commands with an ItemHeader): the sheet's KIID path, or only path_human_readable ("/",
+// "/Power/", or just a sheet name such as "Power"). No sheet_path means the sheet the editor
+// shows now.
+package kiapi.schematic.commands;
 
+import "common/types/base_types.proto";
 
+// KICLOUD: S4.6 one sheet instance of the hierarchy.
+message SchematicSheetInfo
+{
+  kiapi.common.types.SheetPath sheet_path = 1;   // KIID path plus the readable "/Power/" form
+  string                       name       = 2;   // the sheet's name (empty for the root sheet)
+  string                       file       = 3;   // the .kicad_sch file name of its screen
+  string                       page       = 4;   // the page number of the title block
+  bool                         current    = 5;   // true for the sheet the editor shows now
+  string                       kicad_path = 6;   // SCH_SHEET_PATH::PathAsString(), the form the
+                                                 // editor's sheet navigation takes ("/" or "/<uuid>/")
+}
+
+// KICLOUD: S4.6 lists every sheet instance of the open schematic (a sheet used twice appears
+// twice). Returns SchematicHierarchyResponse.
+message GetSchematicHierarchy
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message SchematicHierarchyResponse
+{
+  repeated SchematicSheetInfo sheets = 1;
+}
+
+// KICLOUD: S4.6 one field of a symbol (Reference, Value, Footprint, Datasheet or a custom one).
+message SchematicFieldValue
+{
+  string name  = 1;
+  string value = 2;
+}
+
+// KICLOUD: S4.6 one pin of a placed symbol, at its position on the sheet (rotation and mirror
+// applied): the point a wire must end on to connect to it.
+message SchematicPinInfo
+{
+  string                     number          = 1;
+  string                     name            = 2;
+  kiapi.common.types.Vector2 position        = 3;
+  string                     electrical_type = 4;   // KiCad's pin type name, e.g. "Power input"
+  string                     net             = 5;   // the net KiCad's connectivity gives it
+}
+
+// KICLOUD: S4.6 a placed symbol as a client reads it.
+message SchematicSymbolInfo
+{
+  kiapi.common.types.KIID      id                 = 1;
+  string                       reference          = 2;   // on the sheet instance asked about
+  string                       value              = 3;
+  string                       footprint          = 4;
+  string                       lib_id             = 5;   // "Library:Name"
+  kiapi.common.types.Vector2   position           = 6;
+  double                       rotation           = 7;   // degrees counter-clockwise: 0/90/180/270
+  bool                         mirror_x           = 8;   // mirrored about the X axis (upside down)
+  bool                         mirror_y           = 9;   // mirrored about the Y axis (left-right)
+  int32                        unit               = 10;
+  bool                         power              = 11;  // a power symbol (GND, +3V3, ...)
+  bool                         dnp                = 12;
+  bool                         exclude_from_bom   = 13;
+  bool                         exclude_from_board = 14;
+  repeated SchematicFieldValue fields             = 15;
+  repeated SchematicPinInfo    pins               = 16;
+}
+
+// KICLOUD: S4.6 a wire, bus or graphic line segment.
+message SchematicWireInfo
+{
+  kiapi.common.types.KIID    id    = 1;
+  kiapi.common.types.Vector2 start = 2;
+  kiapi.common.types.Vector2 end   = 3;
+  string                     kind  = 4;   // "wire", "bus" or "line" (graphic, connects nothing)
+  string                     net   = 5;   // wires and buses only
+}
+
+// KICLOUD: S4.6 a net label (local, global or hierarchical).
+message SchematicLabelInfo
+{
+  kiapi.common.types.KIID    id       = 1;
+  string                     text     = 2;
+  kiapi.common.types.Vector2 position = 3;
+  string                     kind     = 4;   // "local", "global" or "hierarchical"
+  double                     rotation = 5;   // degrees: 0 (text to the right), 90, 180, 270
+  string                     net      = 6;
+}
+
+// KICLOUD: S4.6 reads one sheet: its symbols with pins and nets, wires, labels, junctions and
+// no-connect flags. Connectivity is brought up to date first. Returns GetSchematicItemsResponse.
+message GetSchematicItems
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetSchematicItemsResponse
+{
+  SchematicSheetInfo                  sheet       = 1;
+  repeated SchematicSymbolInfo        symbols     = 2;
+  repeated SchematicWireInfo          wires       = 3;
+  repeated SchematicLabelInfo         labels      = 4;
+  repeated kiapi.common.types.Vector2 junctions   = 5;
+  repeated kiapi.common.types.Vector2 no_connects = 6;
+}
+
+// KICLOUD: S4.6 places one symbol from the project's symbol libraries on a sheet, annotates it
+// (unless reference is given) and sets the given fields. Joins the client's open commit if it has
+// one (BeginCommit), else is its own undo step. Returns PlaceSymbolResponse.
+message PlaceSymbolFromLibrary
+{
+  kiapi.common.types.ItemHeader        header    = 1;   // header.document names the sheet
+  kiapi.common.types.LibraryIdentifier lib_id    = 2;
+  kiapi.common.types.Vector2           position  = 3;
+  double                               rotation  = 4;   // degrees, a multiple of 90
+  bool                                 mirror_x  = 5;
+  bool                                 mirror_y  = 6;
+  int32                                unit      = 7;   // 0 or 1 = the first unit
+  string                               reference = 8;   // empty = annotate automatically
+  repeated SchematicFieldValue         fields    = 9;   // e.g. Value, Footprint
+}
+
+message PlaceSymbolResponse
+{
+  SchematicSymbolInfo symbol = 1;
+}
+
+// KICLOUD: S4.6 draws wire (or bus) segments through the points (n points give n-1 segments) and
+// adds a junction where a new end lands on the middle of another wire, as KiCad's wire tool does.
+// Returns AddSchematicItemsResponse with the new items' ids.
+message AddSchematicWires
+{
+  kiapi.common.types.ItemHeader       header = 1;
+  repeated kiapi.common.types.Vector2 points = 2;
+  bool                                bus    = 3;
+}
+
+// KICLOUD: S4.6 adds one net label. kind: "local" (the default), "global" or "hierarchical".
+// Returns AddSchematicItemsResponse with the label's id.
+message AddSchematicLabel
+{
+  kiapi.common.types.ItemHeader header   = 1;
+  string                        text     = 2;
+  kiapi.common.types.Vector2    position = 3;
+  string                        kind     = 4;
+  double                        rotation = 5;   // degrees: 0, 90, 180, 270
+}
+
+message AddSchematicItemsResponse
+{
+  repeated kiapi.common.types.KIID ids = 1;
+}
+
+// KICLOUD: S4.6 sets fields of one placed symbol, found by id or by reference (on the sheet the
+// header names, or on any sheet when it names none). A missing field is added. Setting
+// "Reference" renames the symbol on that sheet instance. Returns PlaceSymbolResponse.
+message SetSymbolFields
+{
+  kiapi.common.types.ItemHeader header    = 1;
+  kiapi.common.types.KIID       id        = 2;
+  string                        reference = 3;
+  repeated SchematicFieldValue  fields    = 4;
+}

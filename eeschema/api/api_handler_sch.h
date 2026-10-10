@@ -23,13 +23,16 @@
 
 #include <api/api_handler_editor.h>
 #include <api/common/commands/editor_commands.pb.h>
+#include <api/schematic/schematic_commands.pb.h>   // KICLOUD: S4.6 the schematic commands
 #include <kiid.h>
+#include <sch_sheet_path.h>                         // KICLOUD: S4.6 kicloudSheetFor's result
 
 using namespace kiapi;
 using namespace kiapi::common;
 
 class SCH_EDIT_FRAME;
 class SCH_ITEM;
+class SCH_SCREEN;
 
 
 class API_HANDLER_SCH : public API_HANDLER_EDITOR
@@ -66,6 +69,34 @@ protected:
 private:
     HANDLER_RESULT<commands::GetOpenDocumentsResponse> handleGetOpenDocuments(
             const HANDLER_CONTEXT<commands::GetOpenDocuments>& aCtx );
+
+    // KICLOUD: S4.6 the schematic commands of api/proto/schematic/schematic_commands.proto
+    // (list sheets, read a sheet, place a library symbol, draw wires, add a label, set fields).
+    HANDLER_RESULT<kiapi::schematic::commands::SchematicHierarchyResponse>
+    handleGetSchematicHierarchy(
+            const HANDLER_CONTEXT<kiapi::schematic::commands::GetSchematicHierarchy>& aCtx );
+
+    HANDLER_RESULT<kiapi::schematic::commands::GetSchematicItemsResponse> handleGetSchematicItems(
+            const HANDLER_CONTEXT<kiapi::schematic::commands::GetSchematicItems>& aCtx );
+
+    HANDLER_RESULT<kiapi::schematic::commands::PlaceSymbolResponse> handlePlaceSymbolFromLibrary(
+            const HANDLER_CONTEXT<kiapi::schematic::commands::PlaceSymbolFromLibrary>& aCtx );
+
+    HANDLER_RESULT<kiapi::schematic::commands::AddSchematicItemsResponse> handleAddSchematicWires(
+            const HANDLER_CONTEXT<kiapi::schematic::commands::AddSchematicWires>& aCtx );
+
+    HANDLER_RESULT<kiapi::schematic::commands::AddSchematicItemsResponse> handleAddSchematicLabel(
+            const HANDLER_CONTEXT<kiapi::schematic::commands::AddSchematicLabel>& aCtx );
+
+    HANDLER_RESULT<kiapi::schematic::commands::PlaceSymbolResponse> handleSetSymbolFields(
+            const HANDLER_CONTEXT<kiapi::schematic::commands::SetSymbolFields>& aCtx );
+
+    // KICLOUD: S4.6 the sheet a request names (document.sheet_path: KIID path, readable path or
+    // sheet name; none = the sheet shown now), or a bad-request error naming the problem.
+    HANDLER_RESULT<SCH_SHEET_PATH> kicloudSheetFor( const DocumentSpecifier& aDocument );
+
+    // KICLOUD: S4.6 the screen that holds a top-level item with this id (any sheet), or nullptr.
+    SCH_ITEM* kicloudFindItem( const KIID& aId, SCH_SCREEN** aScreen );
 
     SCH_EDIT_FRAME* m_frame;
 };
