@@ -35,7 +35,10 @@ using kiapi::common::types::ItemRequestStatus;
 
 
 API_HANDLER_SCH::API_HANDLER_SCH( SCH_EDIT_FRAME* aFrame ) :
-        API_HANDLER_EDITOR(),
+        // KICLOUD: S4.1 pass the frame to the shared editor handler. Upstream passed none, so
+        // API_HANDLER_EDITOR::checkForBusy() dereferenced a null frame and every shared command on
+        // the schematic (begin/end commit, create/update/delete items, hit test) crashed.
+        API_HANDLER_EDITOR( aFrame ),
         m_frame( aFrame )
 {
     registerHandler<GetOpenDocuments, GetOpenDocumentsResponse>(
