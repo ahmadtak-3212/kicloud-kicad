@@ -557,8 +557,18 @@ FOOTPRINT* PCB_IO_PCBJAM_FP::FootprintLoad( const wxString& aLibraryPath,
                                             const wxString& aFootprintName, bool aKeepUUID,
                                             const std::map<std::string, UTF8>* aProperties )
 {
+    // KICLOUD: S4.6 (approved by Ahmad 2026-10-11): the footprint comes back as a copy of the cached
+    // library footprint. Like upstream's own plugin, keep the library's ids only when the caller
+    // asks (aKeepUUID); otherwise Duplicate() gives the copy fresh ids, so two footprints placed
+    // from the same library footprint do not share an id.
     if( FOOTPRINT* master = loadOne( aLibraryPath, aFootprintName ) )
-        return static_cast<FOOTPRINT*>( master->Clone() );
+    {
+        FOOTPRINT* copy = aKeepUUID ? static_cast<FOOTPRINT*>( master->Clone() )
+                                    : static_cast<FOOTPRINT*>( master->Duplicate( IGNORE_PARENT_GROUP ) );
+
+        copy->SetParent( nullptr );
+        return copy;
+    }
 
     return nullptr;
 }
