@@ -27,6 +27,7 @@
 #include <wx/debug.h>
 #include <wx/hyperlink.h>
 #include <wx/infobar.h>
+#include <wx/renderer.h>   // KICLOUD: FF.A, defines wxHAS_DRAW_TITLE_BAR_BITMAP for onThemeChange
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/timer.h>
@@ -213,6 +214,23 @@ void WX_INFOBAR::Dismiss()
 }
 
 
+// KICLOUD: FF.A (docs/patches.md): a theme switch keeps every button of the notice.
+//
+// What it does: repaints the info bar (the notice strip above the drawing area) in the colours
+// of the new light or dark theme.
+// Who calls it: wxWidgets, through the EVT_SYS_COLOUR_CHANGED entry in the event table above,
+// whenever the system (in kicloud: the page's light/dark switch) changes its colours.
+// Input: the colour-change event (only used to know that the colours changed).
+// Result / state changes: the bar's background and text colour are the new theme's; the close
+// button (if any) gets the new background; every other button stays where it is.
+// What it calls next: KIPLATFORM::UI::GetInfoBarColours for the colours, then Refresh() (only
+// while the bar is on screen) so the bar is painted again; a hidden bar paints when shown.
+//
+// Upstream removed every button and added back only a close button. That lost the other
+// buttons (for example the "Show options" link of the "19 WRL 3D models..." notice), and adding
+// a button runs Layout() and Fit(), which could change the bar's height; a height change
+// resizes the drawing area under it and costs a second canvas redraw per theme switch.
+// Recolouring in place changes no size, so the bar keeps its height and its buttons.
 void WX_INFOBAR::onThemeChange( wxSysColourChangedEvent& aEvent )
 {
     wxColour fg, bg;
@@ -222,10 +240,27 @@ void WX_INFOBAR::onThemeChange( wxSysColourChangedEvent& aEvent )
 
     if( wxBitmapButton* btn = GetCloseButton() )
     {
-        wxString tooltip = btn->GetToolTipText();
-        RemoveAllButtons();
-        AddCloseButton( tooltip );
+        // wxBitmapButton::CreateCloseButton gave the button the bar's old background colour
+        // explicitly, so it does not follow the bar by itself.
+        btn->SetBackgroundColour( bg );
+
+#ifdef wxHAS_DRAW_TITLE_BAR_BITMAP
+        // On Windows and macOS the close bitmap itself is painted on the old background, so
+        // swap in a fresh close button of the same size at the same place (the other buttons
+        // stay). The browser build (wasm) uses the theme-independent art-provider bitmap and
+        // never takes this branch.
+        wxString        tooltip = btn->GetToolTipText();
+        wxBitmapButton* fresh = wxBitmapButton::NewCloseButton( this, ID_CLOSE_INFOBAR );
+
+        fresh->SetToolTip( tooltip );
+        GetSizer()->Replace( btn, fresh );
+        btn->Destroy();
+        Layout();
+#endif
     }
+
+    if( IsShownOnScreen() )
+        Refresh();
 }
 
 

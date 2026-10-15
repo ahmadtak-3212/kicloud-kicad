@@ -94,6 +94,16 @@ BEGIN_EVENT_TABLE( EDA_3D_VIEWER_FRAME, KIWAY_PLAYER )
 END_EVENT_TABLE()
 
 
+// KICLOUD: FF.B (docs/patches.md), comment only: what this constructor does.
+// Builds the 3D viewer window: its 3D canvas, toolbars, info bar, status bar and the Appearance
+// pane on the right, laid out by the AUI manager (m_auimgr).
+// Who calls it: PCB_BASE_FRAME::CreateAndShow3D_Frame (pcbnew/pcb_base_frame.cpp) the first time
+// the user opens View > 3D Viewer; there is one viewer per board editor.
+// Inputs: the KIWAY (KiCad's link between editors), the board editor that owns the viewer, the
+// window title and the wx window style.
+// Result / state changes: a ready but not yet shown frame; it loads its settings and the
+// project's saved 3D viewports. The only kicloud change is the Appearance pane width (see the
+// FF.B note at AddPane below).
 EDA_3D_VIEWER_FRAME::EDA_3D_VIEWER_FRAME( KIWAY* aKiway, PCB_BASE_FRAME* aParent,
                                           const wxString& aTitle, long style ) :
         KIWAY_PLAYER( aKiway, aParent, FRAME_PCB_DISPLAY3D, aTitle, wxDefaultPosition,
@@ -170,10 +180,19 @@ EDA_3D_VIEWER_FRAME::EDA_3D_VIEWER_FRAME( KIWAY* aKiway, PCB_BASE_FRAME* aParent
                       .Top().Layer( 6 ) );
     m_auimgr.AddPane( m_infoBar, EDA_PANE().InfoBar().Name( wxS( "InfoBar" ) )
                       .Top().Layer( 1 ) );
+    // KICLOUD: FF.B (docs/patches.md): the Appearance pane is wide enough for its labels.
+    // Upstream gave the pane a 180 px minimum and 190 px preferred width (in DIPs). At kicloud's
+    // larger interface font that cut off "Through-hole Models", "Models marked DNP" and "Model
+    // Bounding Boxes". The width below is the larger of 230 DIPs (measured to fit those labels at
+    // kicloud's font size) and the panel's own GetBestSize() (220 DIPs upstream), used as both the
+    // minimum and the preferred width. It only sets the pane's starting size; a width the user
+    // saved earlier (right_panel_width, applied just below) still wins, down to that minimum.
+    const int appearanceWidth = std::max( FromDIP( 230 ), m_appearancePanel->GetBestSize().x );
+
     m_auimgr.AddPane( m_appearancePanel, EDA_PANE().Name( "LayersManager" )
                       .Right().Layer( 3 )
                       .Caption( _( "Appearance" ) ).PaneBorder( false )
-                      .MinSize( FromDIP( 180 ), -1 ).BestSize( FromDIP( 190 ), -1 ) );
+                      .MinSize( appearanceWidth, -1 ).BestSize( appearanceWidth, -1 ) );
     m_auimgr.AddPane( m_canvas, EDA_PANE().Canvas().Name( wxS( "DrawFrame" ) )
                       .Center() );
 
