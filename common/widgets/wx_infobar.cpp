@@ -264,18 +264,20 @@ void WX_INFOBAR::onThemeChange( wxSysColourChangedEvent& aEvent )
 }
 
 
-void WX_INFOBAR::onSize( wxSizeEvent& aEvent )
+// KICLOUD: FF.A (docs/patches.md): helper shared by onSize() and updateAuiLayout().
+// What it does: finds the sizer item that holds the bar's message text (a wxStaticText).
+// Input: the bar's top-level sizer. Result: that sizer item, or nullptr if the layout is not the
+// one wxInfoBarGeneric builds. No state changes. This is upstream's lookup from onSize(), moved
+// here unchanged so that updateAuiLayout() can find the same text control.
+static wxSizerItem* kicloudInfoBarTextItem( wxSizer* aSizer )
 {
-    int barWidth = GetSize().GetWidth();
-    wxSizer* sizer = GetSizer();
-
-    if( !sizer )
-        return;
+    if( !aSizer )
+        return nullptr;
 
     // wx3.3 moved the sizer we previously wanted deeper into sizers...
     // do we actually still need this for wx3.3?
     #if wxCHECK_VERSION( 3, 3, 0 )
-    wxSizerItem* outerSizer = sizer->GetItem( (size_t) 0 );
+    wxSizerItem* outerSizer = aSizer->GetItem( (size_t) 0 );
     wxSizerItem* textSizer = nullptr;
 
     if (outerSizer->IsSizer())
@@ -288,8 +290,49 @@ void WX_INFOBAR::onSize( wxSizeEvent& aEvent )
             textSizer = innerSizer2->GetItem( 1 );
     }
     #else
-    wxSizerItem* textSizer = sizer->GetItem( 1 );
+    wxSizerItem* textSizer = aSizer->GetItem( 1 );
     #endif
+
+    return textSizer;
+}
+
+
+// KICLOUD: FF.A (docs/patches.md): helper shared by onSize() and updateAuiLayout().
+// What it does: the height the bar needs for its message: one text line per line of the message
+// (lines are split only at embedded newlines; the text is not wrapped), plus a margin of one line
+// height minus one pixel. Upstream computed this inline in onSize(); the formula is unchanged.
+// Inputs: the bar's text control (used to measure the font's line height) and the message.
+// Result: the height in pixels. No state changes.
+static int kicloudInfoBarHeight( wxStaticText* aText, const wxString& aMessage )
+{
+    int        line_count = aMessage.Freq( '\n' ) + 1;
+    int        txt_h, txt_v;
+    wxWindowDC dc( aText );
+    dc.GetTextExtent( wxT( "Xp" ), &txt_h, &txt_v );
+
+    int height = txt_v * line_count;
+    int margins = txt_v - 1;
+    return height + margins;
+}
+
+
+// What it does: keeps the bar as wide as the drawing area and as tall as its message needs.
+// Who calls it: wxWidgets, on every size event of the bar's parent (bound in the constructor).
+// Input: the parent's size event (skipped on, so the parent handles it too).
+// Result / state changes: the message text is set again (unwrapped), the bar's width follows the
+// canvas, and its minimum height is set from kicloudInfoBarHeight().
+// KICLOUD: FF.A: that height is the same one updateAuiLayout() gives the bar's pane when the bar
+// is shown, so a later size event (a theme switch sends one) no longer makes the bar taller
+// than it was shown.
+void WX_INFOBAR::onSize( wxSizeEvent& aEvent )
+{
+    int barWidth = GetSize().GetWidth();
+    wxSizer* sizer = GetSizer();
+
+    if( !sizer )
+        return;
+
+    wxSizerItem* textSizer = kicloudInfoBarTextItem( sizer );
 
     if( textSizer )
     {
@@ -321,15 +364,8 @@ void WX_INFOBAR::onSize( wxSizeEvent& aEvent )
             // of a single line of text.  This assumes that two lines of text are larger
             // than the height of the icon for the bar.
             textCtrl->Wrap( -1 );
-            wxString wrapped_text = textCtrl->GetLabel();
-            int line_count = wrapped_text.Freq( '\n' ) + 1;
-            int txt_h, txt_v;
-            wxWindowDC dc( textCtrl );
-            dc.GetTextExtent( wxT( "Xp" ), &txt_h, &txt_v );
-
-            int      height = txt_v * line_count;
-            int      margins = txt_v - 1;
-            SetMinSize( wxSize( GetSize().GetWidth(), height + margins ) );
+            SetMinSize( wxSize( GetSize().GetWidth(),
+                                kicloudInfoBarHeight( textCtrl, textCtrl->GetLabel() ) ) );
 
             textCtrl->Wrap( -1 );
         }
@@ -339,6 +375,17 @@ void WX_INFOBAR::onSize( wxSizeEvent& aEvent )
 }
 
 
+// What it does: shows or hides the bar's pane in the frame's AUI layout and lays the frame out
+// again (the drawing area shrinks or grows by the bar's height).
+// Who calls it: ShowMessage() (aShow true) and Dismiss() (aShow false), only for a bar that has
+// an AUI manager. Input: whether to show the bar.
+// Result / state changes: the pane is shown or hidden and m_auiManager->Update() runs.
+// KICLOUD: FF.A (docs/patches.md): when showing, the pane's minimum and preferred height are set
+// to the height the message needs (kicloudInfoBarHeight, the same value onSize() uses). Before,
+// AUI showed the bar at the height it had when the pane was added (30 px here) and reset the
+// bar's own minimum size, while onSize() asked for 35 px; the next size event of the frame (a
+// light/dark switch sends one) grew each bar by 5 px, which resized the canvas and cost a second
+// full redraw of the board. A pane that has a minimum height also keeps the dock at that height.
 void WX_INFOBAR::updateAuiLayout( bool aShow )
 {
     wxASSERT( m_auiManager );
@@ -349,9 +396,22 @@ void WX_INFOBAR::updateAuiLayout( bool aShow )
     if( pane.IsOk() )
     {
         if( aShow )
+        {
+            wxSizerItem* textItem = kicloudInfoBarTextItem( GetSizer() );
+
+            if( wxStaticText* textCtrl = textItem ? dynamic_cast<wxStaticText*>( textItem->GetWindow() )
+                                                  : nullptr )
+            {
+                int height = kicloudInfoBarHeight( textCtrl, m_message );
+                pane.MinSize( pane.min_size.x, height ).BestSize( pane.best_size.x, height );
+            }
+
             pane.Show();
+        }
         else
+        {
             pane.Hide();
+        }
     }
 
     // Update the AUI manager regardless
