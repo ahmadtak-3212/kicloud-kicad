@@ -83,6 +83,9 @@
 #include <widgets/wx_html_report_box.h>
 #include <wx_filename.h>  // For ::ResolvePossibleSymlinks()
 #include <kiplatform/io.h>
+#include <io/kicad/kicad_io_utils.h>  // KICLOUD: F-P4
+#include <richio.h>                   // KICLOUD: F-P4
+#include <class_draw_panel_gal.h>     // KICLOUD: F-P4
 
 #include <wx/stdpaths.h>
 #include <wx/ffile.h>
@@ -1048,6 +1051,92 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
 // web app after a successful save so it can persist the MEMFS bytes. Same pattern
 // as the kicadCollabOnModify hook.
 extern "C" void kicadCollabOnSave( const char* aPath );
+
+
+// KICLOUD: F-P4 (LB4): write the board to aFileName like PCB_IO_KICAD_SEXPR::SaveBoard(), but build
+// the file's text on a KiCad thread-pool thread while the browser's main thread waits.
+// Why: on the largest demo board (85 MB file) the writer ran ~0.8 s on the main thread, so the page
+// froze for each save (a cloud checkpoint runs one every 1-2 minutes of editing). The main thread
+// now waits in std::future::get(): in the browser that wait suspends (wasm/shims/main_thread_wait.c)
+// and holds the wx dispatch interlock, so no input, timer or other handler runs over the board
+// meanwhile, while the page keeps painting.
+// Called by PCB_EDIT_FRAME::SavePcbFile() only. Inputs: the KiCad s-expression plugin, the target
+// path, the board and the editor canvas. Steps, each as SaveBoard() and
+// PRETTIFIED_FILE_OUTPUTFORMATTER do them, so the bytes written are the same:
+//  1. main thread: the group sanity check (SaveBoard runs it; its message needs a callback, which
+//     the save path does not set) and opening the file ("wt", the same error on failure);
+//  2. pool thread: FormatBoardToFormatter() into a string, then KICAD_FORMAT::Prettify() with the
+//     same mode (normal, or compact text properties when the advanced setting asks for it);
+//  3. main thread: one fwrite and fclose, as PRETTIFIED_FILE_OUTPUTFORMATTER::Finish().
+// While the pool thread formats, the canvas stops drawing (StopDrawing; it starts again after), so
+// the painter never reads items whose lazily computed caches the writer may be filling.
+// Failures: an IO_ERROR from the writer or the file is thrown to the caller (SavePcbFile shows it),
+// with the file closed and drawing restarted. Any other plugin than the s-expression one is saved
+// with SaveBoard() on the main thread, as before.
+static void kicloudSaveBoardOffMainThread( PCB_IO* aPlugin, const wxString& aFileName, BOARD* aBoard,
+                                           EDA_DRAW_PANEL_GAL* aCanvas )
+{
+    PCB_IO_KICAD_SEXPR* sexpr = dynamic_cast<PCB_IO_KICAD_SEXPR*>( aPlugin );
+
+    if( !sexpr )
+    {
+        aPlugin->SaveBoard( aFileName, aBoard, nullptr );
+        return;
+    }
+
+    aBoard->GroupsSanityCheck();
+
+    KICAD_FORMAT::FORMAT_MODE mode = KICAD_FORMAT::FORMAT_MODE::NORMAL;
+
+    if( ADVANCED_CFG::GetCfg().m_CompactSave )
+        mode = KICAD_FORMAT::FORMAT_MODE::COMPACT_TEXT_PROPERTIES;
+
+    FILE* fp = wxFopen( aFileName, wxT( "wt" ) );
+
+    if( !fp )
+        THROW_IO_ERROR( strerror( errno ) );
+
+    const bool pauseDrawing = aCanvas && aCanvas->IsShownOnScreen();
+
+    if( pauseDrawing )
+        aCanvas->StopDrawing();
+
+    std::string text;
+
+    try
+    {
+        auto formatted = GetKiCadThreadPool().submit_task(
+                [&]()
+                {
+                    STRING_FORMATTER formatter;
+                    sexpr->FormatBoardToFormatter( &formatter, aBoard, nullptr );
+                    text.swap( formatter.MutableString() );
+                    KICAD_FORMAT::Prettify( text, mode );
+                } );
+
+        formatted.get();   // rethrows the writer's IO_ERROR here
+    }
+    catch( ... )
+    {
+        fclose( fp );
+
+        if( pauseDrawing )
+            aCanvas->StartDrawing();
+
+        throw;
+    }
+
+    if( pauseDrawing )
+        aCanvas->StartDrawing();
+
+    if( fwrite( text.c_str(), text.length(), 1, fp ) != 1 )
+    {
+        fclose( fp );
+        THROW_IO_ERROR( strerror( errno ) );
+    }
+
+    fclose( fp );
+}
 #endif
 
 
@@ -1123,7 +1212,12 @@ bool PCB_EDIT_FRAME::SavePcbFile( const wxString& aFileName, bool addToHistory,
     {
         IO_RELEASER<PCB_IO> pi( PCB_IO_MGR::FindPlugin( PCB_IO_MGR::KICAD_SEXP ) );
 
+#ifdef __EMSCRIPTEN__
+        // KICLOUD: F-P4 (LB4): format on a pool thread while the page keeps painting
+        kicloudSaveBoardOffMainThread( pi.get(), pcbFileName.GetFullPath(), GetBoard(), GetCanvas() );
+#else
         pi->SaveBoard( pcbFileName.GetFullPath(), GetBoard(), nullptr );
+#endif
     }
     catch( const IO_ERROR& ioe )
     {
