@@ -310,6 +310,10 @@ void PCB_BASE_EDIT_FRAME::PutDataInPreviousState( PICKED_ITEMS_LIST* aList, bool
     bool not_found = false;
     bool reBuild_ratsnest = false;
     bool deep_reBuild_ratsnest = false;  // true later if pointers must be rebuilt
+    // KICLOUD: F-P3 (LB3): true when an item inside a footprint (a pad) was restored: FOOTPRINT's
+    // own Add/Remove (used for such items below) do not update the board's connectivity, so those
+    // undos keep the full rebuild.
+    bool footprint_child_changed = false;
     bool solder_mask_dirty = false;
     bool current_show_ratsnest = GetPcbNewSettings()->m_Display.m_ShowGlobalRatsnest;
     std::vector<BOX2I> dirty_rule_areas;
@@ -444,6 +448,10 @@ void PCB_BASE_EDIT_FRAME::PutDataInPreviousState( PICKED_ITEMS_LIST* aList, bool
                 continue;
             }
         }
+
+        // KICLOUD: F-P3: see the declaration of footprint_child_changed
+        if( eda_item->IsBOARD_ITEM() && static_cast<BOARD_ITEM*>( eda_item )->GetParentFootprint() )
+            footprint_child_changed = true;
 
         // see if we must rebuild ratsnets and pointers lists
         switch( eda_item->Type() )
@@ -674,10 +682,23 @@ void PCB_BASE_EDIT_FRAME::PutDataInPreviousState( PICKED_ITEMS_LIST* aList, bool
             view->UpdateCollidingItems( dirty_rule_areas, { PCB_TRACE_T, PCB_ARC_T, PCB_VIA_T, PCB_PAD_T } );
         }
 
-        if( reBuild_ratsnest || deep_reBuild_ratsnest )
+        if( deep_reBuild_ratsnest || ( reBuild_ratsnest && footprint_child_changed ) )
         {
             // Connectivity may have changed; rebuild internal caches to remove stale items
             GetBoard()->BuildConnectivity();
+            Compile_Ratsnest( false );
+        }
+        else if( reBuild_ratsnest )
+        {
+            // KICLOUD: F-P3 (LB3): tracks, arcs, vias, board-level pads and zones only. The loop above
+            // restored each of them through BOARD::Remove()/BOARD::Add(), which already took the
+            // old item out of the connectivity data and put the restored one in (marking the nets
+            // of both states dirty), exactly as BOARD_COMMIT::Push() does for an edit. Only the
+            // ratsnest of those dirty nets is left to compute; rebuilding the whole board's
+            // connectivity here (BuildConnectivity) cost ~400 ms of a ~600 ms undo on the largest
+            // demo board. Footprints, nets and pads inside footprints keep the full rebuild above.
+            // The gate (kicloudTestRatsnestCheck after undo/redo sequences) checks that the result
+            // equals a full rebuild.
             Compile_Ratsnest( false );
         }
 
@@ -721,6 +742,20 @@ void PCB_BASE_EDIT_FRAME::PutDataInPreviousState( PICKED_ITEMS_LIST* aList, bool
 }
 
 
+// Delete the oldest aItemCount commands of the undo or the redo list (aItemCount < 0: all of them),
+// together with the board item copies they own. Called after every new commit for the whole redo
+// list (saveCopyInUndoList), when a list grows over its limit (EDA_BASE_FRAME, the oldest commands),
+// and when a board is closed or replaced (ClearUndoRedoList, both lists).
+// KICLOUD: F-P6 (LB1): the whole-list case freed only the command objects
+// (UNDO_REDO_CONTAINER::ClearCommandList), not what they own: the copies of changed items
+// (ITEM_PICKER links) and the deleted or transient items. Upstream changed this in February 2024
+// ("Don't clear the undo/redo list when we're just trimming it"). As a redo list is cleared by every
+// commit made after an undo, each undo followed by an edit leaked the undone command's copies: the
+// 97 filled zones of a zone refill (~40 MB with their triangulated fills) on the largest demo board,
+// until the editor aborted at ~2.8 GB after ~45 minutes of routing (the routing soak). Every command
+// is now cleared through ClearListAndDeleteItems(), as the trimming branch below already did and
+// as this function did before that change.
+// State: the chosen list loses those commands; the items they owned are deleted.
 void PCB_BASE_EDIT_FRAME::ClearUndoORRedoList( UNDO_REDO_LIST whichList, int aItemCount )
 {
     if( aItemCount == 0 )
@@ -730,7 +765,13 @@ void PCB_BASE_EDIT_FRAME::ClearUndoORRedoList( UNDO_REDO_LIST whichList, int aIt
 
     if( aItemCount < 0 )
     {
-        list.ClearCommandList();
+        for( PICKED_ITEMS_LIST* curr_cmd : list.m_CommandsList )
+        {
+            ClearListAndDeleteItems( curr_cmd );
+            delete curr_cmd;    // Delete command
+        }
+
+        list.m_CommandsList.clear();
     }
     else
     {
