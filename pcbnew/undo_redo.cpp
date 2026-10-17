@@ -751,10 +751,11 @@ void PCB_BASE_EDIT_FRAME::PutDataInPreviousState( PICKED_ITEMS_LIST* aList, bool
 // (ITEM_PICKER links) and the deleted or transient items. Upstream changed this in February 2024
 // ("Don't clear the undo/redo list when we're just trimming it"). As a redo list is cleared by every
 // commit made after an undo, each undo followed by an edit leaked the undone command's copies: the
-// 97 filled zones of a zone refill (~40 MB with their triangulated fills) on the largest demo board,
-// until the editor aborted at ~2.8 GB after ~45 minutes of routing (the routing soak). Every command
-// is now cleared through ClearListAndDeleteItems(), as the trimming branch below already did and
-// as this function did before that change.
+// track copies of an undone route, or the 97 filled zones of an undone zone refill (~40 MB with
+// their triangulated fills) on the largest demo board. With the router's hole leak (pns_node.cpp)
+// this was the leaking part of the routing soak's memory growth (LB1). Every command is now cleared
+// through ClearListAndDeleteItems(), as the trimming branch below already did and as this function
+// did before that change.
 // State: the chosen list loses those commands; the items they owned are deleted.
 void PCB_BASE_EDIT_FRAME::ClearUndoORRedoList( UNDO_REDO_LIST whichList, int aItemCount )
 {
