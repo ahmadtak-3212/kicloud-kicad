@@ -111,12 +111,12 @@ void CACHED_CONTAINER_SPLIT::FinishItem()
         unsigned int gpuOffset = m_item->GetOffset() + m_itemBase;
         unsigned int count = itemSize - m_itemBase;
 
-        // New vertices replace any colour or depth waiting for the same place
-        if( overlaps( m_colorFill, gpuOffset, count ) )
-            flushFill( m_colorFill, COLOR );
+        // New vertices replace any colour or depth waiting for the same place: those land first
+        if( m_colorFills.mayOverlap( gpuOffset, count ) )
+            flushFills( m_colorFills, COLOR );
 
-        if( overlaps( m_depthFill, gpuOffset, count ) )
-            flushFill( m_depthFill, DEPTH );
+        if( m_depthFills.mayOverlap( gpuOffset, count ) )
+            flushFills( m_depthFills, DEPTH );
 
         PENDING* last = m_pending.empty() ? nullptr : &m_pending.back();
 
@@ -158,8 +158,8 @@ void CACHED_CONTAINER_SPLIT::Clear()
     m_pendingEnd = 0;
     m_itemStart = 0;
     m_itemBase = 0;
-    m_colorFill.count = 0;
-    m_depthFill.count = 0;
+    m_colorFills.clear();
+    m_depthFills.clear();
 }
 
 
@@ -190,7 +190,7 @@ void CACHED_CONTAINER_SPLIT::SetItemColor( unsigned int aOffset, unsigned int aS
 
     uint32_t value;
     memcpy( &value, aColor, sizeof( value ) );
-    queueFill( m_colorFill, COLOR, aOffset, gpuCount, value );
+    queueFill( m_colorFills, COLOR, aOffset, gpuCount, value );
 }
 
 
@@ -209,7 +209,7 @@ void CACHED_CONTAINER_SPLIT::SetItemDepth( unsigned int aOffset, unsigned int aS
 
     uint32_t value;
     memcpy( &value, &aDepth, sizeof( value ) );
-    queueFill( m_depthFill, DEPTH, aOffset, gpuCount, value );
+    queueFill( m_depthFills, DEPTH, aOffset, gpuCount, value );
 }
 
 
@@ -410,13 +410,12 @@ void CACHED_CONTAINER_SPLIT::flushVertices()
 }
 
 
-void CACHED_CONTAINER_SPLIT::flushFill( FILL& aFill, BUFFER aBuffer )
+// Upload one run of a constant value: aFill.count copies of aFill.value at vertex aFill.offset of
+// aBuffer, in UPLOAD_BLOCK pieces. Called by flushFills() only when queued runs overlap (rare: the
+// same item recoloured twice before an upload), where each run must land in queue order. Binds and
+// unbinds GL_ARRAY_BUFFER; uses m_scratch.
+void CACHED_CONTAINER_SPLIT::uploadFill( const FILL& aFill, BUFFER aBuffer )
 {
-    if( aFill.count == 0 )
-        return;
-
-    ensureGpuBuffers();
-
     unsigned int block = std::min( aFill.count, UPLOAD_BLOCK );
     m_scratch.resize( (size_t) block * sizeof( uint32_t ) );
     uint32_t* values = reinterpret_cast<uint32_t*>( m_scratch.data() );
@@ -432,19 +431,121 @@ void CACHED_CONTAINER_SPLIT::flushFill( FILL& aFill, BUFFER aBuffer )
     }
 
     glBindBuffer( GL_ARRAY_BUFFER, 0 );
-    aFill.count = 0;
+}
+
+
+// KICLOUD: F-P1 (LB2): upload every fill waiting in aQueue (the colour or the depth fills) with as
+// few bufferSubData calls as possible, then empty the queue.
+// Called by flushAll() (each frame's Unmap(), before a resize or a GPU copy), by FinishItem() when
+// new vertices may cover a waiting fill, and by queueFill() when the queue is full.
+// How: the runs are put in offset order (they usually are already: KiCad recolours the groups in
+// the order they were created). Runs that touch are written one after the other into m_scratch and
+// sent as one upload of up to UPLOAD_BLOCK vertices; a gap between runs starts a new upload. The
+// bytes on the GPU are the same as uploading each run at once. If two runs overlap (the same
+// vertices filled twice before an upload), the later one must win, so the runs are then uploaded
+// one by one in queue order, as before this change.
+// State: the GPU buffer aBuffer is written; the queue is empty afterwards; m_scratch is reused.
+void CACHED_CONTAINER_SPLIT::flushFills( FILL_QUEUE& aQueue, BUFFER aBuffer )
+{
+    if( aQueue.empty() )
+        return;
+
+    ensureGpuBuffers();
+
+    std::vector<FILL>& runs = aQueue.runs;
+
+    if( !aQueue.sorted )
+    {
+        // Stable: runs that start at the same offset keep their queue order
+        std::vector<FILL> ordered( runs );
+        std::stable_sort( ordered.begin(), ordered.end(),
+                          []( const FILL& a, const FILL& b )
+                          {
+                              return a.offset < b.offset;
+                          } );
+
+        bool overlap = false;
+
+        for( size_t i = 1; i < ordered.size() && !overlap; ++i )
+            overlap = ordered[i].offset < ordered[i - 1].offset + ordered[i - 1].count;
+
+        if( overlap )
+        {
+            for( const FILL& run : runs )
+                uploadFill( run, aBuffer );
+
+            aQueue.clear();
+            return;
+        }
+
+        runs.swap( ordered );
+    }
+
+    m_scratch.resize( (size_t) UPLOAD_BLOCK * sizeof( uint32_t ) );
+    uint32_t* values = reinterpret_cast<uint32_t*>( m_scratch.data() );
+    unsigned int segStart = runs.front().offset;   // vertex offset of values[0]
+    unsigned int segLen = 0;                        // values written into the scratch so far
+
+    glBindBuffer( GL_ARRAY_BUFFER, m_buffers[aBuffer] );
+
+    // Send values[0, segLen) to vertices [segStart, segStart + segLen) of the buffer
+    auto upload = [&]()
+    {
+        if( segLen > 0 )
+        {
+            glBufferSubData( GL_ARRAY_BUFFER, (GLintptr) segStart * STRIDES[aBuffer],
+                             (GLsizeiptr) segLen * STRIDES[aBuffer], values );
+        }
+
+        segStart += segLen;
+        segLen = 0;
+    };
+
+    for( const FILL& run : runs )
+    {
+        // A gap: what is collected goes up, the next upload starts at this run
+        if( run.offset != segStart + segLen )
+        {
+            upload();
+            segStart = run.offset;
+        }
+
+        unsigned int left = run.count;
+
+        while( left > 0 )
+        {
+            unsigned int n = std::min( left, UPLOAD_BLOCK - segLen );
+            std::fill( values + segLen, values + segLen + n, run.value );
+            segLen += n;
+            left -= n;
+
+            if( segLen == UPLOAD_BLOCK )
+                upload();
+        }
+    }
+
+    upload();
+    glBindBuffer( GL_ARRAY_BUFFER, 0 );
+    aQueue.clear();
 }
 
 
 void CACHED_CONTAINER_SPLIT::flushAll()
 {
     flushVertices();
-    flushFill( m_colorFill, COLOR );
-    flushFill( m_depthFill, DEPTH );
+    flushFills( m_colorFills, COLOR );
+    flushFills( m_depthFills, DEPTH );
 }
 
 
-void CACHED_CONTAINER_SPLIT::queueFill( FILL& aFill, BUFFER aBuffer, unsigned int aOffset,
+// Queue a constant fill of aCount vertices at aOffset of aBuffer's queue aQueue with aValue (an
+// RGBA colour or a float depth as raw bits). Called by SetItemColor() and SetItemDepth().
+// Waiting vertices of the same place are uploaded first (they were written earlier). A run that
+// continues the last queued one with the same value only extends it; otherwise a new run is added
+// (KICLOUD: F-P1: runs are no longer uploaded one at a time here; flushFills() merges them).
+// State: aQueue gains or extends a run and its bounds/sortedness are updated; a full queue is
+// uploaded at once.
+void CACHED_CONTAINER_SPLIT::queueFill( FILL_QUEUE& aQueue, BUFFER aBuffer, unsigned int aOffset,
                                         unsigned int aCount, uint32_t aValue )
 {
     if( aCount == 0 )
@@ -454,16 +555,29 @@ void CACHED_CONTAINER_SPLIT::queueFill( FILL& aFill, BUFFER aBuffer, unsigned in
     if( overlapsPending( aOffset, aCount ) )
         flushVertices();
 
-    if( aFill.count > 0 && aFill.value == aValue && aFill.offset + aFill.count == aOffset )
+    if( !aQueue.runs.empty() )
     {
-        aFill.count += aCount;
-        return;
+        FILL& last = aQueue.runs.back();
+
+        if( last.value == aValue && last.offset + last.count == aOffset )
+        {
+            last.count += aCount;
+            aQueue.end = std::max( aQueue.end, aOffset + aCount );
+            return;
+        }
     }
 
-    flushFill( aFill, aBuffer );
-    aFill.offset = aOffset;
-    aFill.count = aCount;
-    aFill.value = aValue;
+    // A full queue goes up first; it is empty (and in order) afterwards
+    if( aQueue.runs.size() >= MAX_FILL_RUNS )
+        flushFills( aQueue, aBuffer );
+
+    // A run that starts before the end of the last one breaks the ascending order
+    if( !aQueue.runs.empty() && aOffset < aQueue.runs.back().offset + aQueue.runs.back().count )
+        aQueue.sorted = false;
+
+    aQueue.runs.push_back( { aOffset, aCount, aValue } );
+    aQueue.begin = std::min( aQueue.begin, aOffset );
+    aQueue.end = std::max( aQueue.end, aOffset + aCount );
 }
 
 

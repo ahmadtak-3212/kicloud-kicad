@@ -24,6 +24,7 @@
 
 #include <gal/webgl/cached_container.h>
 
+#include <climits>
 #include <cstdint>
 #include <vector>
 
@@ -46,7 +47,9 @@ namespace KIGFX
  * memory. Items are moved and compacted on the GPU (glCopyBufferSubData).
  *
  * Ordering: waiting vertices and waiting colour/depth fills never cover the same vertices. Before
- * one is queued over the other, the other is uploaded first.
+ * one is queued over the other, the other is uploaded first. Waiting fills of one buffer are
+ * uploaded together, merged into contiguous ranges (KICLOUD: F-P1); where two of them overlap,
+ * the one queued later wins, as if each had been uploaded at once.
  */
 class CACHED_CONTAINER_SPLIT : public CACHED_CONTAINER
 {
@@ -132,20 +135,60 @@ private:
         uint32_t     value = 0;
     };
 
+    /**
+     * KICLOUD: F-P1 (LB2): the colour or depth fills of one buffer waiting for upload.
+     *
+     * A recolour of the whole board (a layer or highlight change) sets the colour of every item
+     * group, one SetItemColor() each. Uploading each one at once cost one bufferSubData call per
+     * group (about 260,000 per recolour on the largest demo board). The fills are now collected
+     * here and uploaded together by flushFills(): runs that touch become one upload, so a whole
+     * board recolour needs about one call per UPLOAD_BLOCK vertices plus one per real gap.
+     */
+    struct FILL_QUEUE
+    {
+        std::vector<FILL> runs;     ///< In the order they were queued (later runs win on overlap)
+        unsigned int begin = UINT_MAX;   ///< Lowest vertex offset covered by any run
+        unsigned int end = 0;            ///< One past the highest vertex offset covered
+        bool sorted = true;              ///< Runs are in ascending offset order without overlap
+
+        bool empty() const { return runs.empty(); }
+
+        ///< Whether a vertex range may touch a waiting run (bounds only: may answer true when no
+        ///< run actually covers it, which only costs an earlier upload).
+        bool mayOverlap( unsigned int aOffset, unsigned int aCount ) const
+        {
+            return !runs.empty() && aOffset < end && aOffset + aCount > begin;
+        }
+
+        void clear()
+        {
+            runs.clear();
+            begin = UINT_MAX;
+            end = 0;
+            sorted = true;
+        }
+    };
+
+    ///< Waiting runs above this count are uploaded at once (bounds the queue at ~12 MB)
+    static constexpr size_t MAX_FILL_RUNS = 1024 * 1024;
+
     ///< Allocate the GPU buffers at the container's size on first use.
     void ensureGpuBuffers();
 
     ///< Upload the waiting vertices; keep the vertices of the item being built.
     void flushVertices();
 
-    ///< Upload a waiting fill.
-    void flushFill( FILL& aFill, BUFFER aBuffer );
+    ///< Upload all waiting fills of one buffer (KICLOUD: F-P1: merged into contiguous uploads).
+    void flushFills( FILL_QUEUE& aQueue, BUFFER aBuffer );
+
+    ///< Upload one run of a constant value (no merging; used when queued runs overlap).
+    void uploadFill( const FILL& aFill, BUFFER aBuffer );
 
     ///< Upload everything that is waiting.
     void flushAll();
 
-    ///< Queue a fill, merging it with the waiting one when it continues it.
-    void queueFill( FILL& aFill, BUFFER aBuffer, unsigned int aOffset, unsigned int aCount,
+    ///< Queue a fill, merging it with the last queued one when it continues it.
+    void queueFill( FILL_QUEUE& aQueue, BUFFER aBuffer, unsigned int aOffset, unsigned int aCount,
                     uint32_t aValue );
 
     ///< Split vertices into the three buffers.
@@ -161,12 +204,6 @@ private:
         return !m_pending.empty() && aOffset < m_pendingEnd && aOffset + aCount > m_pendingBegin;
     }
 
-    static bool overlaps( const FILL& aFill, unsigned int aOffset, unsigned int aCount )
-    {
-        return aFill.count > 0 && aOffset < aFill.offset + aFill.count
-               && aOffset + aCount > aFill.offset;
-    }
-
     GLuint       m_buffers[BUFFER_COUNT];
     unsigned int m_gpuSize;     ///< Size of the GPU buffers in vertices (0: not allocated)
 
@@ -179,8 +216,8 @@ private:
     unsigned int m_itemStart;   ///< Index in m_stage of the built item's first staged vertex
     unsigned int m_itemBase;    ///< Vertices the built item already had on the GPU
 
-    FILL m_colorFill;
-    FILL m_depthFill;
+    FILL_QUEUE m_colorFills;
+    FILL_QUEUE m_depthFills;
 
     std::vector<unsigned char> m_scratch;
 };
