@@ -107,7 +107,14 @@ NODE::~NODE()
                     assert( hole->ParentPadVia()->BelongsTo( this ) );
 
                     // we will encounter its parent later, disguised as VIA or SOLID.
-                    // don't bother reparenting the hole now, it's deleted anyway.
+                    // KICLOUD: F-P6 (LB1): give the hole back to that parent, which deletes it.
+                    // addHole() made this node the hole's owner, and ~SOLID/~VIA delete only a
+                    // hole they own, so every hole of a destroyed node leaked: each router start
+                    // (SyncWorld) builds a world of all pads and vias, ~8,000 holes (+ their
+                    // SHAPE_CIRCLEs) per route on the largest demo board, ~0.7 MB per routing
+                    // cycle that was never freed (the routing soak's memory growth with LB1's).
+                    if( hole->ParentPadVia()->BelongsTo( this ) )
+                        hole->SetOwner( hole->ParentPadVia() );
                 }
                 else
                 {
