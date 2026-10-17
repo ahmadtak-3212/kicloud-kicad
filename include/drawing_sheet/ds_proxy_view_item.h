@@ -29,6 +29,9 @@
 #include <eda_item.h>
 #include <eda_units.h>
 
+#include <memory>   // KICLOUD: F-P5
+#include <mutex>    // KICLOUD: F-P5
+
 class BOARD;
 class PAGE_INFO;
 class PROJECT;
@@ -51,6 +54,9 @@ public:
     DS_PROXY_VIEW_ITEM( const EDA_IU_SCALE& aIuScale, const PAGE_INFO* aPageInfo,
                         const PROJECT* aProject, const TITLE_BLOCK* aTitleBlock,
                         const std::map<wxString, wxString>* aProperties );
+
+    // KICLOUD: F-P5: defined in the .cpp, where DS_DRAW_ITEM_LIST (the cached list) is complete.
+    ~DS_PROXY_VIEW_ITEM() override;
 
     /**
      * Set the file name displayed in the title block.
@@ -137,6 +143,16 @@ protected:
     void buildDrawList( KIGFX::VIEW* aView, const std::map<wxString, wxString>* aProperties,
                         DS_DRAW_ITEM_LIST* aDrawList ) const;
 
+    /// KICLOUD: F-P5 (LB7): everything the drawing sheet's draw list is built from, as one string
+    /// (see the .cpp). ViewDraw() rebuilds its cached list only when this changes.
+    std::string drawListKey( KIGFX::VIEW* aView ) const;
+
+    /// KICLOUD: F-P5: the cached draw list, rebuilt when needed (see the .cpp). m_drawListLock held.
+    DS_DRAW_ITEM_LIST& cachedDrawList( KIGFX::VIEW* aView ) const;
+
+    /// KICLOUD: F-P5: whether the cached list's items are still the data items' current ones.
+    bool cachedItemsAreCurrent() const;
+
 protected:
     const EDA_IU_SCALE& m_iuScale;
 
@@ -162,6 +178,14 @@ protected:
 
     /// Layer that is used for page border color
     int                 m_pageBorderColorLayer;
+
+    /// KICLOUD: F-P5 (LB7): the draw list ViewDraw() built last and the key it was built for. Every
+    /// redraw of the board rebuilt the whole drawing sheet before (~100 ms per routing cycle on the
+    /// largest demo board). Mutable: ViewDraw() is const (a VIEW_ITEM interface). Guarded by
+    /// m_drawListLock in case two threads paint this item at once.
+    mutable std::unique_ptr<DS_DRAW_ITEM_LIST> m_drawListCache;
+    mutable std::string                        m_drawListCacheKey;
+    mutable std::mutex                         m_drawListLock;
 };
 
 #endif /* DS_PROXY_VIEW_ITEM_H */
