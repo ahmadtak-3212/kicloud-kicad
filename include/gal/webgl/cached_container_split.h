@@ -119,6 +119,7 @@ private:
     ///< Vertices converted or filled per upload call (bounds the scratch memory)
     static constexpr unsigned int UPLOAD_BLOCK = 65536;
 
+
     ///< Vertices of finished items waiting for upload
     struct PENDING
     {
@@ -181,8 +182,8 @@ private:
     ///< Upload all waiting fills of one buffer (KICLOUD: F-P1: merged into contiguous uploads).
     void flushFills( FILL_QUEUE& aQueue, BUFFER aBuffer );
 
-    ///< Upload one run of a constant value (no merging; used when queued runs overlap).
-    void uploadFill( const FILL& aFill, BUFFER aBuffer );
+    ///< Cut overlapping queued runs into disjoint ones where the run queued last wins (KICLOUD: F-P1).
+    static void resolveOverlaps( std::vector<FILL>& aRuns );
 
     ///< Upload everything that is waiting.
     void flushAll();

@@ -28,6 +28,7 @@
 #include <climits>
 #include <cstddef>
 #include <cstring>
+#include <map>   // KICLOUD: F-P1 resolveOverlaps
 
 #include <wx/log.h>
 
@@ -410,27 +411,73 @@ void CACHED_CONTAINER_SPLIT::flushVertices()
 }
 
 
-// Upload one run of a constant value: aFill.count copies of aFill.value at vertex aFill.offset of
-// aBuffer, in UPLOAD_BLOCK pieces. Called by flushFills() only when queued runs overlap (rare: the
-// same item recoloured twice before an upload), where each run must land in queue order. Binds and
-// unbinds GL_ARRAY_BUFFER; uses m_scratch.
-void CACHED_CONTAINER_SPLIT::uploadFill( const FILL& aFill, BUFFER aBuffer )
+// KICLOUD: F-P1 (LB2): turn queued fill runs that overlap into disjoint runs, sorted by offset, where
+// every vertex keeps the value of the last run (in queue order) that covered it, which is what
+// uploading the runs one by one in queue order would leave on the GPU.
+// Called by flushFills() only when its sorted copy of the queue showed an overlap. Input: aRuns in
+// queue order. Result: aRuns replaced. How: the runs are visited from the last queued to the first;
+// the parts of each run not yet covered by a later run are kept, and the run is added to the covered
+// ranges (a map of disjoint ranges, merged when they touch, so whole-board passes keep it small).
+// O(n log n) for n runs.
+void CACHED_CONTAINER_SPLIT::resolveOverlaps( std::vector<FILL>& aRuns )
 {
-    unsigned int block = std::min( aFill.count, UPLOAD_BLOCK );
-    m_scratch.resize( (size_t) block * sizeof( uint32_t ) );
-    uint32_t* values = reinterpret_cast<uint32_t*>( m_scratch.data() );
-    std::fill( values, values + block, aFill.value );
+    std::vector<FILL>                    resolved;
+    std::map<unsigned int, unsigned int> covered;   // start -> end of the ranges later runs wrote
 
-    glBindBuffer( GL_ARRAY_BUFFER, m_buffers[aBuffer] );
+    resolved.reserve( aRuns.size() );
 
-    for( unsigned int done = 0; done < aFill.count; done += block )
+    for( auto run = aRuns.rbegin(); run != aRuns.rend(); ++run )
     {
-        unsigned int n = std::min( block, aFill.count - done );
-        glBufferSubData( GL_ARRAY_BUFFER, (GLintptr) ( aFill.offset + done ) * STRIDES[aBuffer],
-                         (GLsizeiptr) n * STRIDES[aBuffer], values );
+        const unsigned int start = run->offset;
+        const unsigned int end = run->offset + run->count;
+
+        // The first covered range that ends after `start`
+        auto c = covered.upper_bound( start );
+
+        if( c != covered.begin() && std::prev( c )->second > start )
+            --c;
+
+        // Keep the gaps between the covered ranges inside [start, end)
+        unsigned int pos = start;
+
+        for( ; c != covered.end() && c->first < end; ++c )
+        {
+            if( c->first > pos )
+                resolved.push_back( { pos, c->first - pos, run->value } );
+
+            pos = std::max( pos, c->second );
+        }
+
+        if( pos < end )
+            resolved.push_back( { pos, end - pos, run->value } );
+
+        // Add [start, end) to the covered ranges, merged with every range it overlaps or touches
+        unsigned int newStart = start;
+        unsigned int newEnd = end;
+        auto         lo = covered.lower_bound( start );
+
+        if( lo != covered.begin() && std::prev( lo )->second >= start )
+            --lo;
+
+        auto hi = lo;
+
+        for( ; hi != covered.end() && hi->first <= end; ++hi )
+        {
+            newStart = std::min( newStart, hi->first );
+            newEnd = std::max( newEnd, hi->second );
+        }
+
+        covered.erase( lo, hi );
+        covered[newStart] = newEnd;
     }
 
-    glBindBuffer( GL_ARRAY_BUFFER, 0 );
+    std::sort( resolved.begin(), resolved.end(),
+               []( const FILL& a, const FILL& b )
+               {
+                   return a.offset < b.offset;
+               } );
+
+    aRuns.swap( resolved );
 }
 
 
@@ -441,9 +488,9 @@ void CACHED_CONTAINER_SPLIT::uploadFill( const FILL& aFill, BUFFER aBuffer )
 // How: the runs are put in offset order (they usually are already: KiCad recolours the groups in
 // the order they were created). Runs that touch are written one after the other into m_scratch and
 // sent as one upload of up to UPLOAD_BLOCK vertices; a gap between runs starts a new upload. The
-// bytes on the GPU are the same as uploading each run at once. If two runs overlap (the same
-// vertices filled twice before an upload), the later one must win, so the runs are then uploaded
-// one by one in queue order, as before this change.
+// bytes on the GPU are the same as uploading each run at once. If runs overlap (the same vertices
+// filled again before an upload, e.g. two recolour passes in one frame), the later one must win:
+// resolveOverlaps() first cuts the runs into disjoint pieces that each keep the value queued last.
 // State: the GPU buffer aBuffer is written; the queue is empty afterwards; m_scratch is reused.
 void CACHED_CONTAINER_SPLIT::flushFills( FILL_QUEUE& aQueue, BUFFER aBuffer )
 {
@@ -470,15 +517,9 @@ void CACHED_CONTAINER_SPLIT::flushFills( FILL_QUEUE& aQueue, BUFFER aBuffer )
             overlap = ordered[i].offset < ordered[i - 1].offset + ordered[i - 1].count;
 
         if( overlap )
-        {
-            for( const FILL& run : runs )
-                uploadFill( run, aBuffer );
-
-            aQueue.clear();
-            return;
-        }
-
-        runs.swap( ordered );
+            resolveOverlaps( runs );   // queue order in, disjoint and sorted out
+        else
+            runs.swap( ordered );
     }
 
     m_scratch.resize( (size_t) UPLOAD_BLOCK * sizeof( uint32_t ) );
