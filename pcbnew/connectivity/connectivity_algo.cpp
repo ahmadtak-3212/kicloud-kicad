@@ -245,6 +245,13 @@ void CN_CONNECTIVITY_ALGO::RemoveInvalidRefs()
 }
 
 
+// Refresh the connections between connectivity items. Called by SearchClusters() when the item
+// list is dirty (after Add/Remove, i.e. every commit, undo/redo and full Build). Drops items marked
+// invalid (and references to them), then searches each dirty item against its neighbours in the
+// R-tree on the thread pool (CN_VISITOR connects overlapping items both ways), then gives a via
+// that touches only zones a zone net (see the KICLOUD note below for the rule). State: the item
+// list, the items' connection lists, and possibly a via's net code; clears the dirty flags.
+// Holds m_mutex for the whole call.
 void CN_CONNECTIVITY_ALGO::searchConnections()
 {
     std::lock_guard lock( m_mutex );
@@ -330,17 +337,26 @@ void CN_CONNECTIVITY_ALGO::searchConnections()
         // Apply deferred zone net changes, but only for vias that have no non-zone
         // connections.  Tracks and pads take priority over zones for net assignment;
         // cluster-based propagation will handle those vias.
-        std::sort( deferredNetCodes.begin(), deferredNetCodes.end(),
-                   []( const auto& a, const auto& b ) { return a.first < b.first; } );
+        // KICLOUD: F-P3 follow-up: a via touching zones of several nets (e.g. a dangling via left on
+        // fills made before it existed) used to take the net of whichever entry the parallel
+        // search pushed first (the sort was by item only, so ties kept thread order): a full
+        // rebuild could give it any of those nets, and an incremental update (undo/redo, commit)
+        // that did not search the via again kept its own. Now the choice is fixed: the via keeps
+        // its current net when one of the zones it touches has it, otherwise it takes the lowest
+        // zone net code. Same rule in a rebuild and in an incremental update, so both agree.
+        std::sort( deferredNetCodes.begin(), deferredNetCodes.end() );
 
-        CN_ITEM* lastItem = nullptr;
-
-        for( const auto& [cnItem, netCode] : deferredNetCodes )
+        for( size_t first = 0; first < deferredNetCodes.size(); )
         {
-            if( cnItem == lastItem )
-                continue;
+            CN_ITEM*  cnItem = deferredNetCodes[first].first;
+            const int currentNet = cnItem->Parent()->GetNetCode();
+            int       netCode = deferredNetCodes[first].second;   // the lowest (entries are sorted)
 
-            lastItem = cnItem;
+            for( ; first < deferredNetCodes.size() && deferredNetCodes[first].first == cnItem; ++first )
+            {
+                if( deferredNetCodes[first].second == currentNet )
+                    netCode = currentNet;
+            }
 
             if( std::ranges::none_of( cnItem->ConnectedItems(),
                     []( const CN_ITEM* c )
