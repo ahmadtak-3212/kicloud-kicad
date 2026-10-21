@@ -26,6 +26,7 @@
 
 
 #include <algorithm>
+#include <cstdint>     // KICLOUD: R2-C uintptr_t for CN_ITEM_PTR_SET
 #include <future>
 #include <mutex>
 #include <ranges>
@@ -379,23 +380,146 @@ const CN_CONNECTIVITY_ALGO::CLUSTERS CN_CONNECTIVITY_ALGO::SearchClusters( CLUST
 }
 
 
+namespace
+{
+
+// KICLOUD: R2-C: the "already in a cluster" set of SearchClusters().
+// A set of CN_ITEM pointers stored in one flat, open-addressed table (linear probing, power-of-two
+// capacity, never more than half full). Upstream used std::set<CN_ITEM*>, which allocates a tree
+// node per insert and chases pointers on every lookup: about 60 ms per call on the largest demo
+// board (~40,000 items), and SearchClusters runs on every route finish, undo and redo. This table
+// does one allocation up front and a multiply + mask per lookup.
+// Why not a "visited" flag or epoch on CN_ITEM itself: that needs connectivity_items.h, and
+// SearchClusters is also called through const CONNECTIVITY_DATA::GetConnectedItems(), possibly
+// from several threads at once on the same items; a table local to each call cannot race.
+// Lifetime: lives for one SearchClusters() call; stores the pointers only, never dereferences them.
+class CN_ITEM_PTR_SET
+{
+public:
+    // Make an empty set sized for about aExpected pointers (it grows if more are inserted).
+    explicit CN_ITEM_PTR_SET( size_t aExpected )
+    {
+        size_t capacity = 16;
+
+        while( capacity < aExpected * 2 )
+            capacity <<= 1;
+
+        m_slots.assign( capacity, nullptr );
+        m_mask = capacity - 1;
+    }
+
+    // Add aItem (not null). Returns true when it was not in the set yet, false when it already was
+    // (the set is unchanged then). State: may grow (rehash) the table.
+    bool Insert( CN_ITEM* aItem )
+    {
+        if( ( m_count + 1 ) * 2 > m_slots.size() )
+            grow();
+
+        size_t i = slot( aItem );
+
+        while( m_slots[i] )
+        {
+            if( m_slots[i] == aItem )
+                return false;
+
+            i = ( i + 1 ) & m_mask;
+        }
+
+        m_slots[i] = aItem;
+        m_count++;
+        return true;
+    }
+
+    // True when aItem was inserted before. No state change.
+    bool Contains( CN_ITEM* aItem ) const
+    {
+        size_t i = slot( aItem );
+
+        while( m_slots[i] )
+        {
+            if( m_slots[i] == aItem )
+                return true;
+
+            i = ( i + 1 ) & m_mask;
+        }
+
+        return false;
+    }
+
+private:
+    // First slot to probe for aItem: the pointer's bits mixed by a Fibonacci multiply so that
+    // neighbouring allocations do not fall into neighbouring slots.
+    size_t slot( CN_ITEM* aItem ) const
+    {
+        uint64_t h = static_cast<uint64_t>( reinterpret_cast<uintptr_t>( aItem ) );
+        h *= 0x9E3779B97F4A7C15ULL;
+        return static_cast<size_t>( h >> 32 ) & m_mask;
+    }
+
+    // Double the table and re-insert every pointer. Only reached when the caller's size estimate
+    // was low (a connected item that is not in the item list); kept for safety.
+    void grow()
+    {
+        std::vector<CN_ITEM*> old;
+        old.swap( m_slots );
+        m_slots.assign( old.size() * 2, nullptr );
+        m_mask = m_slots.size() - 1;
+        m_count = 0;
+
+        for( CN_ITEM* item : old )
+        {
+            if( item )
+                Insert( item );
+        }
+    }
+
+    std::vector<CN_ITEM*> m_slots;
+    size_t                m_mask = 0;
+    size_t                m_count = 0;
+};
+
+} // namespace
+
+
+// Split the connectivity graph into clusters: groups of items joined by connections (pads, tracks,
+// arcs, vias, zone islands, shapes). Callers: PropagateNets (aMode CSM_PROPAGATE: nets ignored,
+// zones excluded), the ratsnest (CSM_RATSNEST) and the connectivity check (CSM_CONNECTIVITY_CHECK),
+// both of which keep a cluster inside one net, and CONNECTIVITY_DATA::GetConnectedItems (any mode,
+// optionally one net only: aSingleNet >= 0; aExcludeZones leaves zone items out).
+// Result: the clusters, sorted by origin net. Returns no clusters when the progress reporter was
+// cancelled. State: refreshes the item connections first if the item list is dirty; otherwise
+// reads only.
+// KICLOUD: R2-C: same clusters as upstream with less overhead. Upstream kept the start candidates in
+// a std::set<CN_ITEM*> (ordered by memory address) and the visited items in a second one; now the
+// candidates are a vector in item-list order and the visited items a flat pointer table (see
+// CN_ITEM_PTR_SET). Each cluster is still the connected component of its first unvisited
+// candidate (connections are made in both directions, so any member reaches the same component),
+// built by the same breadth-first search with the same filters. Only the order changes: clusters
+// of one net now come in item-list order (the order items were added to the connectivity data),
+// where upstream used memory-address order; and the sort by net is stable so that order is kept.
+// Nothing reads a meaning into the order within a net (propagation treats every cluster on its own;
+// a cluster's origin net comes from its pads, or its lowest-uuid item since L8.6), and the new
+// order is the more reproducible one.
 const CN_CONNECTIVITY_ALGO::CLUSTERS
 CN_CONNECTIVITY_ALGO::SearchClusters( CLUSTER_SEARCH_MODE aMode, bool aExcludeZones, int aSingleNet )
 {
     bool withinAnyNet = ( aMode != CSM_PROPAGATE );
 
     std::deque<CN_ITEM*> Q;
-    std::set<CN_ITEM*> item_set;
 
     CLUSTERS clusters;
 
     if( m_itemList.IsDirty() )
         searchConnections();
 
-    std::set<CN_ITEM*> visited;
+    // The items a cluster may start from (upstream's item_set), in item-list order.
+    std::vector<CN_ITEM*> candidates;
+    candidates.reserve( m_itemList.Size() );
+
+    CN_ITEM_PTR_SET visited( m_itemList.Size() );
 
     auto addToSearchList =
-            [&item_set, withinAnyNet, aSingleNet, &aExcludeZones]( CN_ITEM *aItem )
+            [&candidates, withinAnyNet, aSingleNet, &aExcludeZones]( CN_ITEM *aItem )
             {
                 if( withinAnyNet && aItem->Net() <= 0 )
                     return;
@@ -409,7 +533,7 @@ CN_CONNECTIVITY_ALGO::SearchClusters( CLUSTER_SEARCH_MODE aMode, bool aExcludeZo
                 if( aExcludeZones && aItem->Parent()->Type() == PCB_ZONE_T )
                     return;
 
-                item_set.insert( aItem );
+                candidates.push_back( aItem );
             };
 
     std::for_each( m_itemList.begin(), m_itemList.end(), addToSearchList );
@@ -417,20 +541,13 @@ CN_CONNECTIVITY_ALGO::SearchClusters( CLUSTER_SEARCH_MODE aMode, bool aExcludeZo
     if( m_progressReporter && m_progressReporter->IsCancelled() )
         return CLUSTERS();
 
-    while( !item_set.empty() )
+    for( CN_ITEM* root : candidates )
     {
+        // Already reached from an earlier root: it belongs to that root's cluster.
+        if( !visited.Insert( root ) )
+            continue;
+
         std::shared_ptr<CN_CLUSTER> cluster = std::make_shared<CN_CLUSTER>();
-        CN_ITEM*                    root;
-        auto                        it = item_set.begin();
-
-        while( it != item_set.end() && visited.contains( *it ) )
-            it = item_set.erase( item_set.begin() );
-
-        if( it == item_set.end() )
-            break;
-
-        root = *it;
-        visited.insert( root );
 
         Q.clear();
         Q.push_back( root );
@@ -450,11 +567,8 @@ CN_CONNECTIVITY_ALGO::SearchClusters( CLUSTER_SEARCH_MODE aMode, bool aExcludeZo
                 if( aExcludeZones && n->Parent()->Type() == PCB_ZONE_T )
                     continue;
 
-                if( !visited.contains( n ) && n->Valid() )
-                {
-                    visited.insert( n );
+                if( n->Valid() && visited.Insert( n ) )
                     Q.push_back( n );
-                }
             }
         }
 
@@ -464,11 +578,11 @@ CN_CONNECTIVITY_ALGO::SearchClusters( CLUSTER_SEARCH_MODE aMode, bool aExcludeZo
     if( m_progressReporter && m_progressReporter->IsCancelled() )
         return CLUSTERS();
 
-    std::sort( clusters.begin(), clusters.end(),
-               []( const std::shared_ptr<CN_CLUSTER>& a, const std::shared_ptr<CN_CLUSTER>& b )
-               {
-                   return a->OriginNet() < b->OriginNet();
-               } );
+    std::stable_sort( clusters.begin(), clusters.end(),
+                      []( const std::shared_ptr<CN_CLUSTER>& a, const std::shared_ptr<CN_CLUSTER>& b )
+                      {
+                          return a->OriginNet() < b->OriginNet();
+                      } );
 
     return clusters;
 }
