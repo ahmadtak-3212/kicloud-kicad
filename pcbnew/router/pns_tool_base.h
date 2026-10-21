@@ -82,6 +82,13 @@ protected:
 
     bool             m_cancelled;
 
+    // KICLOUD: R2-A1: set by Reset() right after it rebuilt the router world from the board
+    // (ROUTER::SyncWorld). ROUTER_TOOL::InlineDrag clears it before Activate() and reads it after:
+    // when Activate() ran Reset(), the world was built a moment ago from the current board and the
+    // drag does not need to build it a second time (~80-290 ms on the largest demo board). Nothing
+    // else reads it; when in doubt (flag false) the caller syncs as upstream does.
+    bool             m_worldJustSynced = false;
+
     static const unsigned int COORDS_PADDING; // Padding from coordinates limits for this tool
 };
 

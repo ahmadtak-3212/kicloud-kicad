@@ -71,8 +71,18 @@ TOOL_BASE::~TOOL_BASE()
 }
 
 
+// Throw away the router, its world and the board interface and build new ones for the current board.
+// Called by the tool manager when the tool is activated (RUN; ROUTER_TOOL forwards only that reason),
+// and with SHUTDOWN when the editor closes (then only the old objects are deleted). Inputs: the reset
+// reason. State: new m_iface and m_router, a world synced from the board (ROUTER::SyncWorld, the full
+// cost of reading every pad, track and keepout), sizes and settings loaded, a new grid helper.
+// Lifetime: m_router is deleted before m_iface because the NODE destructor uses the iface's rule
+// resolver. Any PNS::ITEM pointer held from the old world is dangling after this.
+// KICLOUD: R2-A1: also sets m_worldJustSynced, so InlineDrag can skip its own second sync.
 void TOOL_BASE::Reset( RESET_REASON aReason )
 {
+    m_worldJustSynced = false;
+
     delete m_gridHelper;
     delete m_router;
     delete m_iface; // Delete after m_router because PNS::NODE dtor needs m_ruleResolver
@@ -94,6 +104,7 @@ void TOOL_BASE::Reset( RESET_REASON aReason )
     m_router->SetInterface( m_iface );
     m_router->ClearWorld();
     m_router->SyncWorld();
+    m_worldJustSynced = true;   // KICLOUD: R2-A1, see the member's comment
 
     m_router->UpdateSizes( m_savedSizes );
 

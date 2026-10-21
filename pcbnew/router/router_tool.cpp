@@ -2315,6 +2315,13 @@ void ROUTER_TOOL::restoreSelection( const PCB_SELECTION& aOriginalSelection )
 }
 
 
+// Drag the selected track, via, arc or footprint(s) with the router (push-and-shove), started from
+// the selection/edit tool (EDIT_TOOL::invokeInlineRouter, the D/G drag keys) while the router tool
+// is not active. Activates the router tool (TOOL_BASE::Reset rebuilds router and world), finds the
+// selected items in the world, runs the drag loop until a click places it or Escape cancels, then
+// restores the previous tool and the selection. aEvent's parameter is the drag mode. A locked item
+// is unlocked for the drag and stays unlocked. State: the board (one commit when placed).
+// KICLOUD: R2-A1: the world is synced once (in Reset), not twice.
 int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
 {
     const PCB_SELECTION selection = m_toolMgr->GetTool<PCB_SELECTION_TOOL>()->GetSelection();
@@ -2375,7 +2382,13 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
 
     TOOL_EVENT pushedEvent = aEvent;
     frame()->PushTool( aEvent );
+
+    // KICLOUD: R2-A1: cleared here so that only a Reset() run by this Activate() can set it (a flag
+    // left from an earlier activation would describe an older board).
+    m_worldJustSynced = false;
     Activate();
+    bool worldJustSynced = m_worldJustSynced;
+    m_worldJustSynced = false;
 
     m_startItem = nullptr;
 
@@ -2395,7 +2408,14 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
 
     // The PNS world may be stale if the board has been modified since the last sync (e.g. by
     // a Move operation). Sync it now so that FindItemByParent and joint lookups work correctly.
-    m_router->SyncWorld();
+    // KICLOUD: R2-A1: unless Activate() above just ran TOOL_BASE::Reset(), which built a new world
+    // from the board as it is now: the lock override (SetLocked(false)) and the selection clear
+    // happened before Activate(), and nothing between Activate() and here changes the board, so a
+    // second sync would build the same world again (~80-290 ms of the drag start on the largest
+    // demo board). When the tool was already active, Activate() does not reset it, the flag stays
+    // false and the sync runs as upstream.
+    if( !worldJustSynced )
+        m_router->SyncWorld();
 
     if( !footprints.empty() )
     {
