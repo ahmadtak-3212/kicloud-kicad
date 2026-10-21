@@ -1863,6 +1863,12 @@ std::unique_ptr<PNS::VIA> PNS_KICAD_IFACE_BASE::syncVia( PCB_VIA* aVia )
 }
 
 
+// Turn one rule-area zone with keepout settings into router obstacles: one non-routable, net-less
+// SOLID per triangle of the zone outline, on every copper layer the zone covers. Called by
+// SyncWorld() for board zones and footprint zones. Returns false (adds nothing) for ordinary copper
+// zones, which the router ignores, and for an outline that cannot be triangulated (after a warning
+// dialog). State: adds items to aWorld; caches the zone outline's triangulation.
+// KICLOUD: R2-A3: aBoardOutline is unused (it always was); SyncWorld passes nullptr.
 bool PNS_KICAD_IFACE_BASE::syncZone( PNS::NODE* aWorld, ZONE* aZone, SHAPE_POLY_SET* aBoardOutline )
 {
     static wxString msg;
@@ -2261,6 +2267,12 @@ bool PNS_KICAD_IFACE::IsItemVisible( const PNS::ITEM* aItem ) const
 }
 
 
+// Fill the router's world (aWorld, a fresh empty root NODE) with every board item the router must
+// see: graphic items and texts on copper as obstacles, keepout rule areas, pads, tracks, arcs and
+// vias; then build a new rule resolver for the board. Called by ROUTER::SyncWorld() (route start via
+// TOOL_BASE::Reset, drag start, after undo/redo and every board change the router tool hears of).
+// State: remembers aWorld in m_world, replaces m_ruleResolver. It reads the board only. Cost grows
+// with the board (~80-290 ms on the largest demo board), which is why kicloud avoids repeating it.
 void PNS_KICAD_IFACE_BASE::SyncWorld( PNS::NODE *aWorld )
 {
     if( !m_board )
@@ -2312,11 +2324,14 @@ void PNS_KICAD_IFACE_BASE::SyncWorld( PNS::NODE *aWorld )
         }
     }
 
-    SHAPE_POLY_SET  buffer;
+    // KICLOUD: R2-A3: upstream computed the board outline here (GetBoardPolygonOutlines, ~25 ms on
+    // the largest demo board, on every router sync: route start, drag start, after each commit)
+    // only to hand it to syncZone(), which never reads it (syncZone turns rule-area keepouts into
+    // router obstacles from the zone's own outline). The outline is no longer computed; syncZone
+    // keeps its parameter so the call sites match upstream and gets nullptr. GetBoardPolygonOutlines
+    // has no lasting side effect (it sets and clears SKIP_STRUCT on the outline shapes itself), so
+    // skipping it changes nothing else.
     SHAPE_POLY_SET* boardOutline = nullptr;
-
-    if( m_board->GetBoardPolygonOutlines( buffer, true ) )
-        boardOutline = &buffer;
 
     for( ZONE* zone : m_board->Zones() )
     {
