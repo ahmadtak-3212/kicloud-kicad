@@ -132,6 +132,14 @@ enum DRAG_MODE
                                                      const NETCLASS* aNetClass ) = 0;
     virtual PCB_LAYER_ID GetBoardLayerFromPNSLayer( int aLayer ) const = 0;
     virtual int GetPNSLayerFromBoardLayer( PCB_LAYER_ID aLayer ) const = 0;
+
+    /**
+     * KICLOUD: R2-A2: true when the board has not changed since the last SyncWorld() except
+     * through this interface's own Commit()s, whose changes ROUTER::CommitRouting() also applied
+     * to its world. Read by ROUTER::KicloudTryKeepWorld(). The default (an interface that does not
+     * track board changes) is false: the caller rebuilds the world, as upstream always did.
+     */
+    virtual bool KicloudWorldMatchesBoard() const { return false; }
 };
 
 class ROUTER
@@ -242,6 +250,48 @@ public:
 
     bool GetNearestRatnestAnchor( VECTOR2I& aOtherEnd, PNS_LAYER_RANGE& aOtherEndLayers,
                                   ITEM*& aOtherEndItem );
+
+    /**
+     * KICLOUD: R2-A2: decide whether the world can be kept after the router's own commits instead
+     * of being rebuilt from the board (SyncWorld(), ~80-290 ms on the largest demo board).
+     * Caller: ROUTER_TOOL::MainLoop() on the TA_MODEL_CHANGE a commit posts. Returns true only when
+     * all of these hold: a world exists and no routing or drag is in progress; the interface
+     * reports that nobody else changed the board (KicloudWorldMatchesBoard()); the commits since
+     * the last sync moved no pad (component drags) and made no locked item; and around every
+     * place those commits touched, the world needs no virtual via (see the .cpp), which is the
+     * only thing NODE::FixupVirtualVias() adds at sync time that CommitRouting() does not.
+     * State when true: the rule resolver's caches are cleared (as a new resolver would be) and the
+     * list of touched places is emptied. When false nothing changes; the caller must sync.
+     */
+    bool KicloudTryKeepWorld();
+
+    /**
+     * KICLOUD: R2-A2: the test of KicloudTryKeepWorld() without its effects: true when the world
+     * could be kept right now. Also read by the test hook kicloudTestRouterWorldCheck (kicloud's
+     * bindings), which compares the world with a fresh sync whenever this says it is keepable.
+     */
+    bool KicloudWorldIsKeepable() const;
+
+private:
+    // KICLOUD: R2-A2: remember where a committed item (one removed from or added to the world by
+    // CommitRouting()) has its ends, so KicloudTryKeepWorld() can look at those joints later.
+    // Pads (component drags), locked items and unknown kinds set m_kicloudNeedsSync instead.
+    void kicloudNoteCommittedItem( const ITEM* aItem );
+
+    // KICLOUD: R2-A2: forget the touched places; called whenever the world is rebuilt or dropped.
+    void kicloudResetCommitTracking();
+
+    // KICLOUD: R2-A2: one place (position, PNS layer, net) where a committed item ended.
+    struct KICLOUD_JOINT_KEY
+    {
+        VECTOR2I   pos;
+        int        layer;
+        NET_HANDLE net;
+    };
+
+    std::vector<KICLOUD_JOINT_KEY> m_kicloudCommitJoints;     // KICLOUD: R2-A2
+    bool                           m_kicloudNeedsSync = false; // KICLOUD: R2-A2
+
 private:
     bool movePlacing( const VECTOR2I& aP, ITEM* aItem );
     bool moveDragging( const VECTOR2I& aP, ITEM* aItem );

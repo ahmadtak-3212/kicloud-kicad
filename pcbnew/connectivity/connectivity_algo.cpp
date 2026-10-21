@@ -359,6 +359,14 @@ void CN_CONNECTIVITY_ALGO::searchConnections()
                 {
                     KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified( cnItem->Parent(), false );
                 }
+
+                // KICLOUD: R2-A2: tell the router's board interface that an item changed without
+                // a notification (see BOARD::KicloudUnnotifiedChangeCount)
+                if( cnItem->Parent()->GetNetCode() != oldNetCode )
+                {
+                    if( BOARD* board = cnItem->Parent()->GetBoard() )
+                        board->KicloudNoteChange( true );
+                }
             }
         }
 
@@ -782,6 +790,12 @@ void CN_CONNECTIVITY_ALGO::propagateConnections( BOARD_COMMIT* aCommit )
                         aCommit->Modify( item->Parent() );
 
                     item->Parent()->SetNetCode( cluster->OriginNet() );
+
+                    // KICLOUD: R2-A2: an item changed without a notification (see
+                    // BOARD::KicloudUnnotifiedChangeCount); counted even inside a commit, whose
+                    // Push may be the router's own
+                    if( BOARD* board = item->Parent()->GetBoard() )
+                        board->KicloudNoteChange( true );
 
                     // KICLOUD: L8.3a the collab bridge captures the new net (no listener hears it
                     // when the propagation runs without a commit: undo, a connectivity rebuild)

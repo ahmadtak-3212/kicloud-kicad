@@ -38,6 +38,7 @@
 #include <pcb_plot_params.h>
 #include <title_block.h>
 #include <zone_settings.h>
+#include <cstdint>      // KICLOUD: R2-A2 uint64_t change counters
 #include <shared_mutex>
 #include <unordered_set>
 #include <project.h>
@@ -1339,6 +1340,39 @@ public:
      */
     void RemoveAllListeners();
 
+    // KICLOUD: R2-A2: a counter of changes to the board's content. It goes up on every item added
+    // to or removed from the board (any mode, bulk or not), every bulk add/remove finalization,
+    // every item-changed / composite-update notification, every net and net class
+    // synchronization, every net reset by SanitizeNetcodes, and every net the connectivity
+    // propagation sets without a commit (CN_CONNECTIVITY_ALGO). It is not raised by highlight or
+    // ratsnest notifications, which change nothing a reader of the items would see.
+    // Who uses it: the router's board interface (PNS_KICAD_IFACE_BASE) remembers the value at its
+    // last world sync and after each of its own commits; when the value is unchanged at the next
+    // TA_MODEL_CHANGE, nobody but the router changed the board and its world need not be rebuilt.
+    // Why a counter and not a BOARD_LISTENER: a listener object must be unregistered before it or
+    // the board dies, and the router's interface outlives a replaced board (the router tool is not
+    // reset on MODEL_RELOAD); a counter holds no pointer in either direction. Never decreases.
+    uint64_t KicloudChangeCount() const { return m_kicloudChangeCount; }
+
+    // KICLOUD: R2-A2: a second counter for the changes made to board items without any listener
+    // notification (SanitizeNetcodes, the nets set by the connectivity propagation and by a via
+    // taking a zone's net). Those can happen in the middle of somebody else's BOARD_COMMIT::Push,
+    // including the router's own, so the router cannot attribute them to its commit: any change of
+    // this counter since the router's last sync means its world must be rebuilt. Never decreases.
+    uint64_t KicloudUnnotifiedChangeCount() const { return m_kicloudUnnotifiedChangeCount; }
+
+    // KICLOUD: R2-A2: raise KicloudChangeCount(); with aUnnotified also
+    // KicloudUnnotifiedChangeCount(). Called from the board's own notification points listed above
+    // (aUnnotified false), and with aUnnotified true by code that changes board items without any
+    // notification. Callers: BOARD (this file and board.cpp), CN_CONNECTIVITY_ALGO.
+    void KicloudNoteChange( bool aUnnotified = false )
+    {
+        ++m_kicloudChangeCount;
+
+        if( aUnnotified )
+            ++m_kicloudUnnotifiedChangeCount;
+    }
+
     /**
       * Notify the board and its listeners that an item on the board has
       * been modified in some way.
@@ -1581,6 +1615,9 @@ private:
     NETINFO_LIST                 m_NetInfo;         // net info list (name, design constraints...
 
     std::vector<BOARD_LISTENER*> m_listeners;
+
+    uint64_t                     m_kicloudChangeCount = 0;  // KICLOUD: R2-A2, see KicloudChangeCount()
+    uint64_t                     m_kicloudUnnotifiedChangeCount = 0;  // KICLOUD: R2-A2, ditto
 
     bool                         m_embedFonts;
 

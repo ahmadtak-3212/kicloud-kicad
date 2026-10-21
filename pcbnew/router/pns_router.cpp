@@ -30,11 +30,14 @@
 
 #include <pcb_painter.h>
 #include <pad.h>
+#include <pcb_track.h>  // KICLOUD: R2-A2 solder mask of a joint's tracks (KicloudTryKeepWorld)
 #include <zone.h>
 
 #include <geometry/shape.h>
 
 #include "pns_node.h"
+#include "pns_joint.h"    // KICLOUD: R2-A2
+#include "pns_segment.h"  // KICLOUD: R2-A2
 #include "pns_line_placer.h"
 #include "pns_line.h"
 #include "pns_solid.h"
@@ -92,6 +95,11 @@ ROUTER::~ROUTER()
 }
 
 
+// Rebuild the router's world from the board: drop the old world (and the placer), make a new root
+// NODE, let the interface fill it (PNS_KICAD_IFACE_BASE::SyncWorld) and add virtual vias at width
+// changes and locked joints. Callers: TOOL_BASE::Reset (tool activation), ROUTER_TOOL (drag start,
+// after undo/redo and board changes). Every PNS::ITEM pointer into the old world dangles after it.
+// KICLOUD: R2-A2: also forgets the places the router's own commits touched (ClearWorld does).
 void ROUTER::SyncWorld()
 {
     ClearWorld();
@@ -102,6 +110,9 @@ void ROUTER::SyncWorld()
 }
 
 
+// Delete the world (with every branch) and the placer. Callers: SyncWorld, the destructor, and
+// ROUTER_TOOL before an undo/redo (the world's items point at board items the undo may delete).
+// KICLOUD: R2-A2: also forgets the places the router's own commits touched.
 void ROUTER::ClearWorld()
 {
     if( m_world )
@@ -112,6 +123,153 @@ void ROUTER::ClearWorld()
     }
 
     m_placer.reset();
+    kicloudResetCommitTracking();
+}
+
+
+// KICLOUD: R2-A2: see the declaration (pns_router.h).
+void ROUTER::kicloudResetCommitTracking()
+{
+    m_kicloudCommitJoints.clear();
+    m_kicloudNeedsSync = false;
+}
+
+
+// KICLOUD: R2-A2: see the declaration (pns_router.h). Input: one item of the commit's removed or
+// added list (read before NODE::Commit deletes the removed ones). State: m_kicloudCommitJoints
+// grows by one key per anchor and layer, or m_kicloudNeedsSync is set.
+void ROUTER::kicloudNoteCommittedItem( const ITEM* aItem )
+{
+    // Bound the list; a session that commits this much simply syncs once.
+    static constexpr size_t MAX_KEYS = 200000;
+
+    if( !aItem || m_kicloudNeedsSync )
+        return;
+
+    if( aItem->OfKind( ITEM::HOLE_T ) )
+        return;     // a via's or pad's hole: its owner is in the list too
+
+    if( !aItem->OfKind( ITEM::SEGMENT_T | ITEM::ARC_T | ITEM::VIA_T ) || aItem->IsLocked()
+            || m_kicloudCommitJoints.size() > MAX_KEYS )
+    {
+        // Pads (a footprint moved: its texts and shapes in the world did not), locked items
+        // (virtual vias at both ends of a locked segment) and anything unexpected: rebuild.
+        m_kicloudNeedsSync = true;
+        return;
+    }
+
+    for( int i = 0; i < aItem->AnchorCount(); i++ )
+    {
+        for( int layer = aItem->Layers().Start(); layer <= aItem->Layers().End(); layer++ )
+            m_kicloudCommitJoints.push_back( { aItem->Anchor( i ), layer, aItem->Net() } );
+    }
+}
+
+
+// See the declaration (KICLOUD: R2-A2). The test below mirrors NODE::FixupVirtualVias()
+// (pns_node.cpp), which a SyncWorld() runs on the fresh world: a single-layer joint gets a virtual
+// via when its segments differ in width or solder mask and it has no pad or via, and a locked
+// segment gets one at both ends. CommitRouting() applies the routed changes to the world but never re-runs that fixup, so a
+// kept world could lack a virtual via a sync would add (a new neck-down), or keep one a sync would
+// not (a joint the route changed). Instead of editing the world (NODE internals), the world is kept
+// only when no touched joint has, or would get, a virtual via, i.e. when the fixup would leave
+// those joints exactly as they are. Note: if upstream changes FixupVirtualVias(), update this.
+bool ROUTER::KicloudWorldIsKeepable() const
+{
+    if( !m_world || RoutingInProgress() || m_kicloudNeedsSync || !m_iface
+            || !m_iface->KicloudWorldMatchesBoard() )
+    {
+        return false;
+    }
+
+    for( const KICLOUD_JOINT_KEY& key : m_kicloudCommitJoints )
+    {
+        const JOINT* joint = m_world->FindJoint( key.pos, key.layer, key.net );
+
+        if( !joint )
+            continue;   // nothing is left there
+
+        int  n_solid = 0;
+        int  n_real_vias = 0;
+        int  prev_w = -1;
+        bool prev_mask = false;
+        bool width_change = false;
+
+        std::optional<int> prev_mask_margin;
+
+        for( const ITEM* item : joint->LinkList() )
+        {
+            if( item->OfKind( ITEM::VIA_T ) )
+            {
+                if( item->IsVirtual() )
+                    return false;   // a virtual via a fresh sync may not add again
+
+                n_real_vias++;
+            }
+            else if( item->OfKind( ITEM::SOLID_T ) )
+            {
+                n_solid++;
+            }
+            else if( const SEGMENT* seg = dyn_cast<const SEGMENT*>( item ) )
+            {
+                if( seg->IsLocked() )
+                    return false;
+
+                bool               mask = false;
+                std::optional<int> mask_margin;
+
+                if( PCB_TRACK* track = static_cast<PCB_TRACK*>( seg->Parent() ) )
+                {
+                    mask = track->HasSolderMask();
+                    mask_margin = track->GetLocalSolderMaskMargin();
+                }
+
+                if( prev_w < 0 )
+                {
+                    prev_w = seg->Width();
+                    prev_mask = mask;
+                    prev_mask_margin = mask_margin;
+                }
+                else if( seg->Width() != prev_w || mask != prev_mask
+                         || mask_margin != prev_mask_margin )
+                {
+                    width_change = true;
+                }
+
+                prev_w = seg->Width();
+            }
+        }
+
+        if( joint->Layers().IsMultilayer() )
+        {
+            // A sync merges joints across layers only through a via or a pad. A multilayer joint
+            // without either was left over by a removal; a sync would build it differently.
+            if( n_real_vias == 0 && n_solid == 0 )
+                return false;
+
+            continue;   // the fixup skips multilayer joints
+        }
+
+        if( width_change && n_solid == 0 && n_real_vias == 0 )
+            return false;   // a sync would add a virtual via here
+    }
+
+    return true;
+}
+
+
+// See the declaration.
+bool ROUTER::KicloudTryKeepWorld()
+{
+    if( !KicloudWorldIsKeepable() )
+        return false;
+
+    // A new resolver is what a sync would make; its only state are caches keyed by items.
+    if( RULE_RESOLVER* resolver = m_iface->GetRuleResolver() )
+        resolver->ClearCaches();
+
+    kicloudResetCommitTracking();
+    return true;
 }
 
 
@@ -835,6 +993,13 @@ void ROUTER::GetUpdatedItems( std::vector<PNS::ITEM*>& aRemoved, std::vector<PNS
 }
 
 
+// Apply a routing or drag result to the board and to the world: the items aNode (a branch of the
+// world) removed, added or changed become one BOARD_COMMIT through the interface (RemoveItem,
+// AddItem, UpdateItem, Commit), then the world takes over aNode's changes (NODE::Commit, which
+// also deletes every branch). Callers: the placers and draggers when a route is fixed or a drag
+// placed. Items with the same parent in both lists are updates (keep the board item's UUID).
+// KICLOUD: R2-A2: also notes where the committed items end (kicloudNoteCommittedItem), before
+// NODE::Commit deletes the removed ones, for KicloudTryKeepWorld().
 void ROUTER::CommitRouting( NODE* aNode )
 {
     if( m_state == ROUTE_TRACK && !m_placer->HasPlacedAnything() )
@@ -845,6 +1010,12 @@ void ROUTER::CommitRouting( NODE* aNode )
     NODE::ITEM_VECTOR changed;
 
     aNode->GetUpdatedItems( removed, added );
+
+    for( const ITEM* item : removed )
+        kicloudNoteCommittedItem( item );
+
+    for( const ITEM* item : added )
+        kicloudNoteCommittedItem( item );
 
     for( ITEM* item : removed )
     {

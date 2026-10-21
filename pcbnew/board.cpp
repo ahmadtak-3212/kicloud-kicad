@@ -1228,6 +1228,8 @@ void BOARD::FixupEmbeddedData()
 
 void BOARD::Add( BOARD_ITEM* aBoardItem, ADD_MODE aMode, bool aSkipConnectivity )
 {
+    KicloudNoteChange();    // KICLOUD: R2-A2, see KicloudChangeCount()
+
     if( aBoardItem == nullptr )
     {
         wxFAIL_MSG( wxT( "BOARD::Add() param error: aBoardItem nullptr" ) );
@@ -1358,12 +1360,14 @@ void BOARD::Add( BOARD_ITEM* aBoardItem, ADD_MODE aMode, bool aSkipConnectivity 
 
 void BOARD::FinalizeBulkAdd( std::vector<BOARD_ITEM*>& aNewItems )
 {
+    KicloudNoteChange();    // KICLOUD: R2-A2, see KicloudChangeCount()
     InvokeListeners( &BOARD_LISTENER::OnBoardItemsAdded, *this, aNewItems );
 }
 
 
 void BOARD::FinalizeBulkRemove( std::vector<BOARD_ITEM*>& aRemovedItems )
 {
+    KicloudNoteChange();    // KICLOUD: R2-A2, see KicloudChangeCount()
     InvokeListeners( &BOARD_LISTENER::OnBoardItemsRemoved, *this, aRemovedItems );
 }
 
@@ -1387,6 +1391,8 @@ void BOARD::BulkRemoveStaleTeardrops( BOARD_COMMIT& aCommit )
 
 void BOARD::Remove( BOARD_ITEM* aBoardItem, REMOVE_MODE aRemoveMode )
 {
+    KicloudNoteChange();    // KICLOUD: R2-A2, see KicloudChangeCount()
+
     // find these calls and fix them!  Don't send me no stinking' nullptr.
     wxASSERT( aBoardItem );
 
@@ -1504,6 +1510,8 @@ void BOARD::Remove( BOARD_ITEM* aBoardItem, REMOVE_MODE aRemoveMode )
 
 void BOARD::RemoveAll( std::initializer_list<KICAD_T> aTypes )
 {
+    KicloudNoteChange();    // KICLOUD: R2-A2, see KicloudChangeCount()
+
     std::vector<BOARD_ITEM*> removed;
     bool                     clearNets = false;
 
@@ -2731,6 +2739,8 @@ void BOARD::SynchronizeTuningProfileProperties()
 
 void BOARD::SynchronizeNetsAndNetClasses( bool aResetTrackAndViaSizes )
 {
+    KicloudNoteChange();    // KICLOUD: R2-A2, see KicloudChangeCount()
+
     if( !m_project )
         return;
 
@@ -3267,6 +3277,7 @@ void BOARD::SanitizeNetcodes()
         if( FindNet( item->GetNetCode() ) == nullptr )
         {
             item->SetNetCode( NETINFO_LIST::ORPHANED );
+            KicloudNoteChange( true );    // KICLOUD: R2-A2, see KicloudUnnotifiedChangeCount()
 
             // KICLOUD: L8.3a the collab bridge captures the orphaned net (no listener hears it)
             if( KICLOUD_COLLAB_HOOKS::ItemChangedUnnotified )
@@ -3303,12 +3314,14 @@ void BOARD::RemoveAllListeners()
 
 void BOARD::OnItemChanged( BOARD_ITEM* aItem )
 {
+    KicloudNoteChange();    // KICLOUD: R2-A2, see KicloudChangeCount()
     InvokeListeners( &BOARD_LISTENER::OnBoardItemChanged, *this, aItem );
 }
 
 
 void BOARD::OnItemsChanged( std::vector<BOARD_ITEM*>& aItems )
 {
+    KicloudNoteChange();    // KICLOUD: R2-A2, see KicloudChangeCount()
     InvokeListeners( &BOARD_LISTENER::OnBoardItemsChanged, *this, aItems );
 }
 
@@ -3316,6 +3329,7 @@ void BOARD::OnItemsChanged( std::vector<BOARD_ITEM*>& aItems )
 void BOARD::OnItemsCompositeUpdate( std::vector<BOARD_ITEM*>& aAddedItems, std::vector<BOARD_ITEM*>& aRemovedItems,
                                     std::vector<BOARD_ITEM*>& aChangedItems )
 {
+    KicloudNoteChange();    // KICLOUD: R2-A2, see KicloudChangeCount()
     InvokeListeners( &BOARD_LISTENER::OnBoardCompositeUpdate, *this, aAddedItems, aRemovedItems, aChangedItems );
 }
 

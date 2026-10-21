@@ -2109,8 +2109,11 @@ bool PNS_KICAD_IFACE_BASE::syncBarcode( PNS::NODE* aWorld, PCB_BARCODE* aBarcode
 }
 
 
+// Attach the board this interface reads (SyncWorld) and writes (Commit). Caller: TOOL_BASE::Reset
+// right after creating the interface. KICLOUD: R2-A2: a new board means no world matches it yet.
 void PNS_KICAD_IFACE_BASE::SetBoard( BOARD* aBoard )
 {
+    m_kicloudWorldStale = true;
     m_board = aBoard;
     wxLogTrace( wxT( "PNS" ), wxT( "m_board = %p" ), m_board );
 }
@@ -2436,6 +2439,19 @@ void PNS_KICAD_IFACE_BASE::SyncWorld( PNS::NODE *aWorld )
 
     aWorld->SetRuleResolver( m_ruleResolver );
     aWorld->SetMaxClearance( worstClearance + m_ruleResolver->ClearanceEpsilon() );
+
+    // KICLOUD: R2-A2: the world now equals the board; remember the board's change counters
+    m_kicloudSyncedChanges = m_board->KicloudChangeCount();
+    m_kicloudSyncedUnnotifiedChanges = m_board->KicloudUnnotifiedChangeCount();
+    m_kicloudWorldStale = false;
+}
+
+
+bool PNS_KICAD_IFACE_BASE::KicloudWorldMatchesBoard() const
+{
+    return m_board && m_world && !m_kicloudWorldStale
+           && m_board->KicloudChangeCount() == m_kicloudSyncedChanges
+           && m_board->KicloudUnnotifiedChangeCount() == m_kicloudSyncedUnnotifiedChanges;
 }
 
 
@@ -2900,10 +2916,24 @@ void PNS_KICAD_IFACE::AddItem( PNS::ITEM* aItem )
 }
 
 
+// Push the board changes collected by RemoveItem/AddItem/UpdateItem as one "Routing" commit:
+// footprints whose pads the router moved (component drag) are moved as a whole, new items join
+// the group their source item was in (or the entered group), then BOARD_COMMIT::Push. Caller:
+// ROUTER::CommitRouting(), which then applies the same changes to its world (NODE::Commit).
+// State: the board, the undo list; a fresh BOARD_COMMIT for the next commit; offsets and group
+// maps emptied.
+// KICLOUD: R2-A2: also decides whether the router's world will still equal the board after this
+// commit (read later through KicloudWorldMatchesBoard()). It will when the world equalled the
+// board before, no footprint moves (the world moves only the pads, not the footprint's texts and
+// shapes), and Push added nothing the router sees (teardrop zones are ignored: copper zones are
+// not in the world). The change counter is then advanced past this commit's own notifications.
 void PNS_KICAD_IFACE::Commit()
 {
     PCB_SELECTION_TOOL*  selTool = m_tool->GetManager()->GetTool<PCB_SELECTION_TOOL>();
     std::set<FOOTPRINT*> processedFootprints;
+
+    const bool kicloudMatchedBefore = KicloudWorldMatchesBoard();
+    const bool kicloudMovesFootprints = !m_fpOffsets.empty();
 
     EraseView();
 
@@ -2946,6 +2976,13 @@ void PNS_KICAD_IFACE::Commit()
     m_replacementMap.clear();
 
     m_commit->Push( _( "Routing" ), m_commitFlags | SKIP_ENTERED_GROUP );
+
+    // KICLOUD: R2-A2: see the comment above this function
+    const bool kicloudPushAddedVisible = m_commit->KicloudLastPushAddedEntries( false ) > 0;
+
+    m_kicloudWorldStale = !kicloudMatchedBefore || kicloudMovesFootprints || kicloudPushAddedVisible;
+    m_kicloudSyncedChanges = m_board ? m_board->KicloudChangeCount() : 0;
+
     m_commit = std::make_unique<BOARD_COMMIT>( m_tool );
 }
 

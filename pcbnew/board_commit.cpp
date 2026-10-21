@@ -186,6 +186,14 @@ void BOARD_COMMIT::propagateDamage( BOARD_ITEM* aChangedItem, std::vector<ZONE*>
 }
 
 
+// Apply the staged changes to the board: add, remove and modify the items, update connectivity,
+// ratsnest, teardrops, zones to refill, the view and the selection, record one undo step (unless
+// SKIP_UNDO), post TA_MODEL_CHANGE and notify the board listeners. Called by every board edit
+// (tools, dialogs, the router's PNS_KICAD_IFACE::Commit, kicloud's bindings). aMessage names the
+// undo step, aCommitFlags are the SKIP_ / APPEND_UNDO / ZONE_FILL_OP flags above. State: the
+// board, its connectivity, the undo list; the commit is empty afterwards (clear()). Items removed
+// here belong to the undo list afterwards.
+// KICLOUD: R2-A2: also counts the entries it added itself (KicloudLastPushAddedEntries()).
 void BOARD_COMMIT::Push( const wxString& aMessage, int aCommitFlags )
 {
     KIGFX::PCB_VIEW*    view = static_cast<KIGFX::PCB_VIEW*>( m_toolMgr->GetView() );
@@ -209,8 +217,15 @@ void BOARD_COMMIT::Push( const wxString& aMessage, int aCommitFlags )
     std::vector<ZONE*>*      staleZones = nullptr;
     std::vector<BOX2I>       staleRuleAreas;
 
+    // KICLOUD: R2-A2: see KicloudLastPushAddedEntries(); the caller's entries are the ones staged
+    // before this call, everything past them is added by this function.
+    m_kicloudPushAddedEntries = 0;
+    m_kicloudPushAddedCopperZones = 0;
+
     if( Empty() )
         return;
+
+    const size_t kicloudCallerEntries = m_entries.size();
 
     undoList.SetDescription( aMessage );
 
@@ -617,6 +632,19 @@ void BOARD_COMMIT::Push( const wxString& aMessage, int aCommitFlags )
             else
                 frame->SaveCopyInUndoList( undoList, UNDO_REDO::UNSPECIFIED );
         }
+    }
+
+    // KICLOUD: R2-A2: count the entries this Push added (teardrops, propagated nets, the entered
+    // group) before clear() drops them. Every item is still alive here: removed ones belong to the
+    // undo list (or, with SKIP_UNDO, to the caller), and only the copies were deleted above.
+    for( size_t i = kicloudCallerEntries; i < m_entries.size(); ++i )
+    {
+        const EDA_ITEM* item = m_entries[i].m_item;
+
+        m_kicloudPushAddedEntries++;
+
+        if( item && item->Type() == PCB_ZONE_T && !static_cast<const ZONE*>( item )->GetIsRuleArea() )
+            m_kicloudPushAddedCopperZones++;
     }
 
     m_toolMgr->PostEvent( { TC_MESSAGE, TA_MODEL_CHANGE, AS_GLOBAL } );

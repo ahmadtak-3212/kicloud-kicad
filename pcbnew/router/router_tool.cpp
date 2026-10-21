@@ -1900,6 +1900,13 @@ int ROUTER_TOOL::RouteSelected( const TOOL_EVENT& aEvent )
 }
 
 
+// The interactive router (X, diff pair, tuning modes): runs while the routing tool is the active
+// tool, starts a route on a click or key, handles drags (D/G), track breaks, layer and via keys,
+// and keeps the router's world in step with the board between routes (undo/redo, board changes).
+// Called by the tool manager for the routeSingleTrack / routeDiffPair actions; aEvent's parameter
+// is the router mode. Returns when the tool is cancelled or another tool takes over.
+// KICLOUD: R2-A2: after a commit it keeps the world when the commit was the router's own (see
+// the TA_MODEL_CHANGE branch).
 int ROUTER_TOOL::MainLoop( const TOOL_EVENT& aEvent )
 {
     if( m_inRouterTool )
@@ -1975,7 +1982,18 @@ int ROUTER_TOOL::MainLoop( const TOOL_EVENT& aEvent )
         }
         else if( evt->Action() == TA_UNDO_REDO_POST || evt->Action() == TA_MODEL_CHANGE )
         {
-            m_router->SyncWorld();
+            // KICLOUD: R2-A2: a board commit posts TA_MODEL_CHANGE as a message (TC_MESSAGE).
+            // When the commit was the router's own and nothing else changed the board since the
+            // last sync, the world already holds the change (ROUTER::CommitRouting applied it), so
+            // it is kept instead of rebuilt from the whole board (~80-290 ms on the largest demo
+            // board after every finished route and drag). ROUTER::KicloudTryKeepWorld() checks
+            // that and answers false whenever in doubt. Undo/redo, and the TC_COMMAND
+            // TA_MODEL_CHANGE that Board Setup sends to reload design rules, always sync.
+            bool keepWorld = evt->Action() == TA_MODEL_CHANGE && evt->Category() == TC_MESSAGE
+                             && m_router->KicloudTryKeepWorld();
+
+            if( !keepWorld )
+                m_router->SyncWorld();
         }
         else if( evt->IsMotion() )
         {
@@ -2320,7 +2338,9 @@ void ROUTER_TOOL::restoreSelection( const PCB_SELECTION& aOriginalSelection )
 // is not active. Activates the router tool (TOOL_BASE::Reset rebuilds router and world), finds the
 // selected items in the world, runs the drag loop until a click places it or Escape cancels, then
 // restores the previous tool and the selection. aEvent's parameter is the drag mode. A locked item
-// is unlocked for the drag and stays unlocked. State: the board (one commit when placed).
+// is unlocked for the drag, locked again if the drag is cancelled, and stays unlocked when it is
+// placed (the result may have a different number of segments). State: the board (one commit when
+// placed).
 // KICLOUD: R2-A1: the world is synced once (in Reset), not twice.
 int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
 {
@@ -2414,7 +2434,9 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
     // second sync would build the same world again (~80-290 ms of the drag start on the largest
     // demo board). When the tool was already active, Activate() does not reset it, the flag stays
     // false and the sync runs as upstream.
-    if( !worldJustSynced )
+    // KICLOUD: R2-A2: and only while the interface reports the board unchanged since that sync
+    // (the board's change counter), in case anything during Activate() edited the board.
+    if( !worldJustSynced || !m_iface->KicloudWorldMatchesBoard() )
         m_router->SyncWorld();
 
     if( !footprints.empty() )

@@ -117,7 +117,21 @@ public:
     PNS::RULE_RESOLVER* GetRuleResolver() override;
     PNS::DEBUG_DECORATOR* GetDebugDecorator() override;
 
+    // KICLOUD: R2-A2: see PNS::ROUTER_IFACE::KicloudWorldMatchesBoard(). True when a world was
+    // synced from m_board, nothing marked it stale, the board's change counter
+    // (BOARD::KicloudChangeCount) is where SyncWorld() or our own last Commit() left it, and no
+    // item changed without a notification since the sync (BOARD::KicloudUnnotifiedChangeCount).
+    bool KicloudWorldMatchesBoard() const override;
+
 protected:
+    // KICLOUD: R2-A2: the board's two change counters as of the last SyncWorld() (and, for the
+    // first one, the last own Commit()); m_kicloudWorldStale is set when our own commit could not
+    // be matched by the world (footprints moved, Push added entries of its own, or the board had
+    // already changed before it). Read by KicloudWorldMatchesBoard().
+    uint64_t m_kicloudSyncedChanges = 0;
+    uint64_t m_kicloudSyncedUnnotifiedChanges = 0;
+    bool     m_kicloudWorldStale = true;
+
     PNS_PCBNEW_RULE_RESOLVER* m_ruleResolver;
     PNS::DEBUG_DECORATOR* m_debugDecorator;
 

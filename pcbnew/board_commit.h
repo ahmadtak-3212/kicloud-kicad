@@ -71,6 +71,21 @@ public:
 
     static EDA_ITEM* MakeImage( EDA_ITEM* aItem );
 
+    /**
+     * KICLOUD: R2-A2: how many entries the last Push() added to this commit on its own, beyond the
+     * ones the caller staged: teardrops removed and re-created, nets changed by the connectivity
+     * propagation, the entered group. With aIncludeCopperZones false, copper zones that are not
+     * rule areas (teardrops among them) are not counted, because nothing reads them except the zone
+     * filler and the drawing; the router ignores them.
+     * Caller: PNS_KICAD_IFACE::Commit(), right after its Push(), to learn whether the board now
+     * differs from what the router committed. 0 before the first Push() and after an empty one.
+     */
+    int KicloudLastPushAddedEntries( bool aIncludeCopperZones ) const
+    {
+        return aIncludeCopperZones ? m_kicloudPushAddedEntries
+                                   : m_kicloudPushAddedEntries - m_kicloudPushAddedCopperZones;
+    }
+
 private:
     EDA_ITEM* undoLevelItem( EDA_ITEM* aItem ) const override;
 
@@ -83,4 +98,7 @@ private:
     TOOL_MANAGER*  m_toolMgr;
     bool           m_isBoardEditor;
     bool           m_isFootprintEditor;
+
+    int            m_kicloudPushAddedEntries = 0;     // KICLOUD: R2-A2, see KicloudLastPushAddedEntries()
+    int            m_kicloudPushAddedCopperZones = 0; // KICLOUD: R2-A2, ditto
 };
