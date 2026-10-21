@@ -26,6 +26,7 @@
 #include <thread>
 #include <zone.h>
 #include <connectivity/connectivity_data.h>
+#include <connectivity/connectivity_algo.h>   // KICLOUD: R2-F5a MarkNetAsDirty after a fill
 #include <board_commit.h>
 #include <footprint.h>
 #include <pcb_track.h>
@@ -91,17 +92,22 @@ void ZONE_FILLER_TOOL::CheckAllZones( wxWindow* aCaller, PROGRESS_REPORTER* aRep
         m_filler->SetProgressReporter( reporter.get() );
     }
 
+    // KICLOUD: R2-F5a: see updateConnectivityAfterFill()
+    const std::vector<ZONE_LAYER_OVERRIDE> kicloudOverridesBefore = kicloudZoneLayerOverrides();
+    bool                                   kicloudCommitted = false;
+
     if( m_filler->Fill( toFill, true, aCaller ) )
     {
         commit.Push( _( "Fill Zone(s)" ), SKIP_CONNECTIVITY | ZONE_FILL_OP );
         getEditFrame<PCB_EDIT_FRAME>()->m_ZoneFillsDirty = false;
+        kicloudCommitted = true;
     }
     else
     {
         commit.Revert();
     }
 
-    rebuildConnectivity();
+    updateConnectivityAfterFill( toFill, kicloudCommitted, kicloudOverridesBefore );
     refresh();
 
     m_fillInProgress = false;
@@ -170,6 +176,10 @@ void ZONE_FILLER_TOOL::FillAllZones( wxWindow* aCaller, PROGRESS_REPORTER* aRepo
         m_filler->SetProgressReporter( reporter.get() );
     }
 
+    // KICLOUD: R2-F5a: see updateConnectivityAfterFill()
+    const std::vector<ZONE_LAYER_OVERRIDE> kicloudOverridesBefore = kicloudZoneLayerOverrides();
+    bool                                   kicloudCommitted = false;
+
     if( m_filler->Fill( toFill ) )
     {
         if( m_filler->GetProgressReporter() )
@@ -178,13 +188,15 @@ void ZONE_FILLER_TOOL::FillAllZones( wxWindow* aCaller, PROGRESS_REPORTER* aRepo
         commit.Push( _( "Fill Zone(s)" ), SKIP_CONNECTIVITY | ZONE_FILL_OP );
         if( !aHeadless )
             frame->m_ZoneFillsDirty = false;
+
+        kicloudCommitted = true;
     }
     else
     {
         commit.Revert();
     }
 
-    rebuildConnectivity( aHeadless );
+    updateConnectivityAfterFill( toFill, kicloudCommitted, kicloudOverridesBefore, aHeadless );
 
     if( !aHeadless )
     {
@@ -271,12 +283,21 @@ int ZONE_FILLER_TOOL::ZoneFillDirty( const TOOL_EVENT& aEvent )
         }
     }
 
-    if( m_filler->Fill( toFill ) )
-        commit.Push( _( "Auto-fill Zone(s)" ), APPEND_UNDO | SKIP_CONNECTIVITY | ZONE_FILL_OP );
-    else
-        commit.Revert();
+    // KICLOUD: R2-F5a: see updateConnectivityAfterFill()
+    const std::vector<ZONE_LAYER_OVERRIDE> kicloudOverridesBefore = kicloudZoneLayerOverrides();
+    bool                                   kicloudCommitted = false;
 
-    rebuildConnectivity();
+    if( m_filler->Fill( toFill ) )
+    {
+        commit.Push( _( "Auto-fill Zone(s)" ), APPEND_UNDO | SKIP_CONNECTIVITY | ZONE_FILL_OP );
+        kicloudCommitted = true;
+    }
+    else
+    {
+        commit.Revert();
+    }
+
+    updateConnectivityAfterFill( toFill, kicloudCommitted, kicloudOverridesBefore );
     refresh();
 
     if( GetRunningMicroSecs() - startTime > 3000000 )   // 3 seconds
@@ -358,17 +379,22 @@ int ZONE_FILLER_TOOL::ZoneFill( const TOOL_EVENT& aEvent )
     reporter = std::make_unique<WX_PROGRESS_REPORTER>( frame(), _( "Fill Zone" ), 5, PR_CAN_ABORT );
     m_filler->SetProgressReporter( reporter.get() );
 
+    // KICLOUD: R2-F5a: see updateConnectivityAfterFill()
+    const std::vector<ZONE_LAYER_OVERRIDE> kicloudOverridesBefore = kicloudZoneLayerOverrides();
+    bool                                   kicloudCommitted = false;
+
     if( m_filler->Fill( toFill ) )
     {
         reporter->AdvancePhase();
         commit.Push( _( "Fill Zone(s)" ), SKIP_CONNECTIVITY | ZONE_FILL_OP );
+        kicloudCommitted = true;
     }
     else
     {
         commit.Revert();
     }
 
-    rebuildConnectivity();
+    updateConnectivityAfterFill( toFill, kicloudCommitted, kicloudOverridesBefore );
     refresh();
 
     m_fillInProgress = false;
@@ -451,10 +477,132 @@ PROGRESS_REPORTER* ZONE_FILLER_TOOL::GetProgressReporter()
 }
 
 
+// Rebuild the whole board's connectivity and ratsnest from scratch (BOARD::BuildConnectivity),
+// tell the tools connectivity changed, and redraw the ratsnest unless aHeadless (no canvas: the
+// headless fill of a plot or a script). Used after a fill whose result cannot be applied zone by
+// zone (see updateConnectivityAfterFill). Cost on the largest demo board: ~120 ms.
 void ZONE_FILLER_TOOL::rebuildConnectivity( bool aHeadless )
 {
     board()->BuildConnectivity();
     m_toolMgr->PostEvent( EVENTS::ConnectivityChangedEvent );
+    if( !aHeadless )
+        canvas()->RedrawRatsnest();
+}
+
+
+std::vector<ZONE_LAYER_OVERRIDE> ZONE_FILLER_TOOL::kicloudZoneLayerOverrides()
+{
+    std::vector<ZONE_LAYER_OVERRIDE> overrides;
+    const LSEQ                       layers = LSET::AllCuMask().Seq();
+
+    for( PCB_TRACK* track : board()->Tracks() )
+    {
+        if( track->Type() != PCB_VIA_T )
+            continue;
+
+        for( PCB_LAYER_ID layer : layers )
+            overrides.push_back( static_cast<PCB_VIA*>( track )->GetZoneLayerOverride( layer ) );
+    }
+
+    for( FOOTPRINT* footprint : board()->Footprints() )
+    {
+        for( PAD* pad : footprint->Pads() )
+        {
+            for( PCB_LAYER_ID layer : layers )
+                overrides.push_back( pad->GetZoneLayerOverride( layer ) );
+        }
+    }
+
+    return overrides;
+}
+
+
+// Why this is enough (KICLOUD: R2-F5a). ZONE_FILLER::Fill() itself rebuilt the whole connectivity
+// when it started (CONNECTIVITY_DATA::Build, from the board as it was then), and later replaced
+// the connectivity items of every zone it filled while it looked for isolated islands; but it then
+// removed islands from those fills, so only the refilled zones' connectivity items are out of date
+// when it returns. Upstream answered with a second full rebuild (~120 ms on the largest demo
+// board). Here, when the fill was committed, the refilled zones are taken out of the connectivity
+// data and put back with their final fills (CONNECTIVITY_DATA::Remove/Add, which re-searches
+// their connections and marks their nets dirty, as FillIsolatedIslandsMap does), every net is
+// marked dirty (the commit's SKIP_CONNECTIVITY cleared every net's ratsnest), and the ratsnest is
+// recalculated, which also propagates nets as a rebuild does; then the ratsnest exclusions are
+// applied as BOARD::BuildConnectivity() does. The same pattern as F-P3 (undo/redo,
+// PutDataInPreviousState).
+// The full rebuild is kept when the fill was cancelled or failed (the commit was reverted, so the
+// zones went back to fills the connectivity data no longer holds), and when Fill() changed the
+// conditional-flashing overrides of a via or pad while some fillable zone was not refilled (the
+// override decides whether a zone connects to that via or pad, and only refilled zones had their
+// connections searched again). Pad-to-track and track-to-track connections do not read the
+// overrides. Teardrops added or removed before the fill went through BOARD::Add/Remove, which
+// update connectivity themselves. Gate: kicloudTestRatsnestCheck after every refill
+// (routing-soak.mjs --check-connectivity).
+// Callers: CheckAllZones, FillAllZones, ZoneFillDirty, ZoneFill, right after their Fill().
+// State: the board's connectivity and ratsnest; posts ConnectivityChangedEvent; redraws the
+// ratsnest unless aHeadless.
+void ZONE_FILLER_TOOL::updateConnectivityAfterFill( const std::vector<ZONE*>& aFilled, bool aCommitted,
+                                                    const std::vector<ZONE_LAYER_OVERRIDE>& aOverridesBefore,
+                                                    bool aHeadless )
+{
+    // The zones Fill() fills: not rule areas, not degenerate (its own filter)
+    auto fillable =
+            []( ZONE* aZone )
+            {
+                return !aZone->GetIsRuleArea() && aZone->GetNumCorners() > 2;
+            };
+
+    std::vector<ZONE*> refilled;
+
+    for( ZONE* zone : aFilled )
+    {
+        if( fillable( zone ) )
+            refilled.push_back( zone );
+    }
+
+    bool incremental = aCommitted;
+
+    if( incremental && kicloudZoneLayerOverrides() != aOverridesBefore )
+    {
+        // Allowed only when every fillable zone of the board was refilled
+        size_t fillableCount = 0;
+
+        for( ZONE* zone : board()->Zones() )
+        {
+            if( fillable( zone ) )
+                fillableCount++;
+        }
+
+        std::set<ZONE*> refilledSet( refilled.begin(), refilled.end() );
+        incremental = refilledSet.size() == fillableCount;
+    }
+
+    if( !incremental )
+    {
+        rebuildConnectivity( aHeadless );
+        return;
+    }
+
+    std::shared_ptr<CONNECTIVITY_DATA> connectivity = board()->GetConnectivity();
+
+    if( !refilled.empty() )
+        board()->CacheTriangulation( nullptr, refilled );   // the connectivity items read it
+
+    for( ZONE* zone : refilled )
+    {
+        connectivity->Remove( zone );
+        connectivity->Add( zone );
+    }
+
+    std::shared_ptr<CN_CONNECTIVITY_ALGO> algo = connectivity->GetConnectivityAlgo();
+
+    for( int net = 0; net < algo->NetCount(); net++ )
+        algo->MarkNetAsDirty( net );
+
+    connectivity->RecalculateRatsnest();
+    board()->UpdateRatsnestExclusions();
+
+    m_toolMgr->PostEvent( EVENTS::ConnectivityChangedEvent );
+
     if( !aHeadless )
         canvas()->RedrawRatsnest();
 }

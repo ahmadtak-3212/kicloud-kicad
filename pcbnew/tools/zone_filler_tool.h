@@ -77,6 +77,20 @@ private:
     void rebuildConnectivity( bool aHeadless = false );
     void refresh();
 
+    // KICLOUD: R2-F5a: the conditional-flashing overrides (BOARD_ITEM::GetZoneLayerOverride) of
+    // every via and pad on every copper layer, in board order. ZONE_FILLER::Fill() recomputes them
+    // for all vias and pads; comparing a copy taken before Fill() with one taken after tells
+    // whether a zone that was not refilled may now connect differently.
+    std::vector<ZONE_LAYER_OVERRIDE> kicloudZoneLayerOverrides();
+
+    // KICLOUD: R2-F5a: bring connectivity and ratsnest up to date after a fill, updating only the
+    // refilled zones when that gives the same result as a full rebuild, else rebuildConnectivity().
+    // aFilled: the zones passed to Fill(); aCommitted: Fill() succeeded and its commit was pushed;
+    // aOverridesBefore: kicloudZoneLayerOverrides() taken just before Fill(). See the .cpp.
+    void updateConnectivityAfterFill( const std::vector<ZONE*>& aFilled, bool aCommitted,
+                                      const std::vector<ZONE_LAYER_OVERRIDE>& aOverridesBefore,
+                                      bool aHeadless = false );
+
     ///< Set up handlers for various events.
     void setTransitions() override;
 
