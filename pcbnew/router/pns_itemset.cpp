@@ -33,19 +33,24 @@ ITEM_SET::~ITEM_SET()
 }
 
 
+// KICLOUD: F7 round 3. The copy is also kept in m_owned, which frees it when this set (and every set copied from it)
+// has let go of it; before, it was never freed.
 void ITEM_SET::Add( const LINE& aLine )
 {
     LINE* copy = aLine.Clone();
     copy->SetOwner( this );
     m_items.emplace_back( copy );
+    m_owned.emplace_back( copy );
 }
 
 
+// KICLOUD: F7 round 3. As Add( const LINE& ), at the front.
 void ITEM_SET::Prepend( const LINE& aLine )
 {
     LINE* copy = aLine.Clone();
     copy->SetOwner( this );
     m_items.emplace( m_items.begin(), copy );
+    m_owned.emplace_back( copy );
 }
 
 

@@ -22,6 +22,7 @@
 #ifndef __PNS_ITEMSET_H
 #define __PNS_ITEMSET_H
 
+#include <memory>   // KICLOUD: F7 round 3 (m_owned)
 #include <vector>
 #include <core/kicad_algo.h>
 #include "pns_item.h"
@@ -45,9 +46,12 @@ public:
             aInitialItem->SetOwner( this );
     }
 
+    // KICLOUD: F7 round 3. A copy shares the copies of lines the other set owns (m_owned), so they stay alive
+    // while any set that lists them does.
     ITEM_SET( const ITEM_SET& aOther )
     {
         m_items = aOther.m_items;
+        m_owned = aOther.m_owned;
     }
 
     ~ITEM_SET();
@@ -60,6 +64,7 @@ public:
         for( ITEM* item : aOther.m_items )
             m_items.push_back( item );
 
+        m_owned = aOther.m_owned;   // KICLOUD: F7 round 3 (see the copy constructor)
         return *this;
     }
 
@@ -143,9 +148,11 @@ public:
             aItem->SetOwner( this );
     }
 
+    // KICLOUD: F7 round 3. Also lets go of the line copies this set made (freed once no other set shares them).
     void Clear()
     {
         m_items.clear();
+        m_owned.clear();
     }
 
     bool Contains( ITEM* aItem ) const
@@ -184,6 +191,12 @@ public:
 
 private:
     std::vector<ITEM*> m_items;
+
+    // KICLOUD: F7 round 3. The copies Add( const LINE& ) and Prepend( const LINE& ) make. Nothing deleted them, so
+    // every drag step (DRAGGER::m_draggedItems is cleared and refilled on each) leaked a PNS::LINE with its points
+    // and, for a line ending in a via, the via and its hole: ~46 lines per routing-soak cycle. Shared, because sets
+    // are copied by value (DRAGGER::Traces() returns a copy) and a copy may outlive the set that made the line.
+    std::vector<std::shared_ptr<ITEM>> m_owned;
 };
 
 }
