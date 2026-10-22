@@ -40,6 +40,22 @@ class TRACK_BUFFER
 public:
     TRACK_BUFFER() {}
 
+    // KICLOUD: F7 round 3. AddTrack allocates one std::vector per (layer, net) group with new, and nothing freed
+    // them: BOARD_COMMIT::Push builds a TEARDROP_MANAGER (and so this buffer) for every commit that touches tracks,
+    // vias or pads, and its UpdateTeardrops fills the buffer with every track of the board, so each such commit
+    // leaked one vector per group plus its storage (largest demo board: ~1,400 vectors, ~90 KB per commit; the
+    // routing soak's route and drag commits made it ~175 KB per cycle, ~110 MB per hour). The destructor gives the
+    // vectors back when the manager goes out of scope. Copying is deleted because two buffers would then free the
+    // same vectors.
+    ~TRACK_BUFFER()
+    {
+        for( auto& [idx, tracks] : m_map_tracks )
+            delete tracks;
+    }
+
+    TRACK_BUFFER( const TRACK_BUFFER& ) = delete;
+    TRACK_BUFFER& operator=( const TRACK_BUFFER& ) = delete;
+
     /**
      * Add a track in buffer, in space grouping tracks having the same netcode and the same layer
      */
