@@ -138,7 +138,7 @@ SHOVE::ROOT_LINE_ENTRY* SHOVE::replaceLine( LINE& aOld, LINE& aNew, bool aInclud
     {
         if( ! rootEntry )
         {
-            rootEntry = new ROOT_LINE_ENTRY( aOld.Clone() );
+            rootEntry = kicloudNewRootLineEntry( aOld.Clone() );   // KICLOUD: F7 round 3 (owned)
         }
 
         for( LINKED_ITEM* link : aOld.Links() )
@@ -212,6 +212,20 @@ SHOVE::SHOVE( NODE* aWorld, ROUTER* aRouter ) :
 
 SHOVE::~SHOVE()
 {
+}
+
+
+// KICLOUD: F7 round 3: see the declaration (pns_shove.h). Input: aRootLine, a LINE made with new for this entry (or
+// null). State: m_rootLineEntries and m_rootLineCopies grow by one each; both are freed with the SHOVE (its
+// implicit member destruction after ~SHOVE), so the pointers handed out stay valid for the SHOVE's whole life,
+// as before, and are no longer leaked after it.
+SHOVE::ROOT_LINE_ENTRY* SHOVE::kicloudNewRootLineEntry( LINE* aRootLine )
+{
+    if( aRootLine )
+        m_rootLineCopies.emplace_back( aRootLine );
+
+    m_rootLineEntries.push_back( std::make_unique<ROOT_LINE_ENTRY>( aRootLine ) );
+    return m_rootLineEntries.back().get();
 }
 
 
@@ -1977,7 +1991,7 @@ SHOVE::ROOT_LINE_ENTRY* SHOVE::touchRootLine( const LINE& aLine )
         }
     }
 
-    auto rootEntry = new ROOT_LINE_ENTRY( aLine.Clone() );
+    auto rootEntry = kicloudNewRootLineEntry( aLine.Clone() );   // KICLOUD: F7 round 3 (owned)
 
 
     for( const LINKED_ITEM* link : aLine.Links() )
@@ -2001,7 +2015,7 @@ SHOVE::ROOT_LINE_ENTRY* SHOVE::touchRootLine( const LINKED_ITEM* aItem )
         return it->second;
     }
 
-    auto rootEntry = new ROOT_LINE_ENTRY( nullptr );
+    auto rootEntry = kicloudNewRootLineEntry( nullptr );   // KICLOUD: F7 round 3 (owned)
 
     PNS_DBG( Dbg(), Message, wxString::Format( wxT( "touch [create] uid=%llu"), aItem->Uid() ) );
     m_rootLineHistory[ aItem->Uid() ] = rootEntry;
@@ -2503,6 +2517,7 @@ SHOVE::SHOVE_STATUS SHOVE::Run()
             auto headRoot = touchRootLine( *headLineEntry.origHead );
             headRoot->isHead = true;
             headRoot->rootLine = new PNS::LINE( *headLineEntry.origHead );
+            m_rootLineCopies.emplace_back( headRoot->rootLine );   // KICLOUD: F7 round 3 (owned)
             headRoot->policy = headLineEntry.policy;
             if( head.EndsWithVia() )
             {

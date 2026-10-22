@@ -22,6 +22,7 @@
 #ifndef __PNS_SHOVE_H
 #define __PNS_SHOVE_H
 
+#include <memory>   // KICLOUD: F7 round 3 (m_rootLineEntries)
 #include <vector>
 #include <stack>
 
@@ -275,6 +276,17 @@ private:
     std::deque<HEAD_LINE_ENTRY> m_headLines;
 
     std::unordered_map<LINKED_ITEM::UNIQ_ID, ROOT_LINE_ENTRY*> m_rootLineHistory;
+
+    // KICLOUD: F7 round 3. Every ROOT_LINE_ENTRY made with new (several history keys can point at one, and
+    // pruneRootLines() drops keys without freeing) and every root line copy given to an entry: nothing freed them,
+    // so each route or drag that shoved tracks leaked its entries and the pre-shove LINE copies (~26 of each per
+    // routing-soak cycle). They are freed with the SHOVE, i.e. when the route or drag ends.
+    std::vector<std::unique_ptr<ROOT_LINE_ENTRY>> m_rootLineEntries;
+    std::vector<std::unique_ptr<LINE>>            m_rootLineCopies;
+
+    // KICLOUD: F7 round 3. Makes a ROOT_LINE_ENTRY for aRootLine (a copy made with new, or null) owned by this
+    // SHOVE (m_rootLineEntries; the line in m_rootLineCopies). Callers: replaceLine, both touchRootLine.
+    ROOT_LINE_ENTRY* kicloudNewRootLineEntry( LINE* aRootLine );
 
     NODE*                       m_root;
     NODE*                       m_currentNode;
