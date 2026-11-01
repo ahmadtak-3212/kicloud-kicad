@@ -605,9 +605,8 @@ bool LINE_PLACER::cursorDistMinimum( const SHAPE_LINE_CHAIN& aL, const VECTOR2I&
 bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisionMask,
                               PNS::PNS_MODE aMode, bool& aViaOk )
 {
-    // KICLOUD: R3.1b: the walk's cost for LastWalkStats(), on every return path
-    m_walkStats = WALK_STATS();
-
+    // KICLOUD: R3.1b: the walk's cost for LastWalkStats(), on every return path (added up over the
+    // walks of one routing step: Shove mode's walk around solids and its fallback full walk)
     struct WALK_TIMER
     {
         WALK_STATS&                           stats;
@@ -615,8 +614,8 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
 
         ~WALK_TIMER()
         {
-            stats.walkMs = std::chrono::duration<double, std::milli>(
-                                   std::chrono::steady_clock::now() - t0 ).count();
+            stats.walkMs += std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - t0 ).count();
         }
     } walkTimer{ m_walkStats };
 
@@ -1301,7 +1300,7 @@ void LINE_PLACER::acceptWalk()
         const auto t0 = std::chrono::steady_clock::now();
 
         recordObstacleSides( m_pendingWalk, m_pendingWalkMask, firstSegment );
-        m_walkStats.recordMs = std::chrono::duration<double, std::milli>(
+        m_walkStats.recordMs += std::chrono::duration<double, std::milli>(
                                        std::chrono::steady_clock::now() - t0 ).count();
         m_walkMemory[m_pendingWalkSlot] = std::move( m_pendingWalk );
     }
@@ -1698,7 +1697,12 @@ bool LINE_PLACER::rhShoveOnly( const VECTOR2I& aP, LINE& aNewHead, LINE& aNewTai
 
     m_shove->ClearHeads();
     m_shove->AddHeads( newHead, SHOVE::SHP_SHOVE );
+
+    const auto shoveStart = std::chrono::steady_clock::now();   // KICLOUD: R3.1b (LastWalkStats)
     bool shoveOk = m_shove->Run() == SHOVE::SH_OK;
+
+    m_walkStats.shoveMs += std::chrono::duration<double, std::milli>(
+                                   std::chrono::steady_clock::now() - shoveStart ).count();
 
     m_currentNode = m_shove->CurrentNode();
 
@@ -1755,6 +1759,7 @@ bool LINE_PLACER::rhShoveOnly( const VECTOR2I& aP, LINE& aNewHead, LINE& aNewTai
     }
     else
     {
+        m_walkStats.shoveFallbacks++;   // KICLOUD: R3.1b (LastWalkStats)
         return rhWalkOnly( aP, aNewHead, aNewTail );
     }
 
@@ -1870,6 +1875,21 @@ void LINE_PLACER::routeStep( const VECTOR2I& aP )
                                                m_tail.ShapeCount() ) );
 
     PNS_DBG( Dbg(), BeginGroup, wxT( "route-step" ), 0 );
+
+    // KICLOUD: R3.1b: LastWalkStats() describes this step (its whole time on every return path)
+    m_walkStats = WALK_STATS();
+
+    struct STEP_TIMER
+    {
+        WALK_STATS&                           stats;
+        std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+
+        ~STEP_TIMER()
+        {
+            stats.stepMs = std::chrono::duration<double, std::milli>(
+                                   std::chrono::steady_clock::now() - t0 ).count();
+        }
+    } stepTimer{ m_walkStats };
 
     PNS_DBG( Dbg(), AddItem, &m_tail, WHITE, 10000, wxT( "tail-init" ) );
     PNS_DBG( Dbg(), AddItem, &m_head, GREEN, 10000, wxT( "head-init" ) );

@@ -167,15 +167,23 @@ public:
     /**
      * KICLOUD: R3.1b: what the walk of the last routing step cost, for the routing plan's
      * measurements (FEATURE_ROUTING_TOOLS.md 5.1 item 1b; read by the test hook
-     * kicloudTestRouterHead, wasm/bindings/pcbnew_embind.cpp). Written by rhWalkBase(),
-     * walkSides() and acceptWalk(); reading it changes nothing.
+     * kicloudTestRouterHead, wasm/bindings/pcbnew_embind.cpp). Reset by routeStep() and added up
+     * over the step (Shove mode walks around solids, shoves and may then walk again);
+     * written by routeStep(), rhWalkBase(), walkSides(), rhShoveOnly() and acceptWalk(); reading
+     * it changes nothing.
      */
+    /// KICLOUD: R3.1b: tells code outside the fork (the test hook) that LastWalkStats() exists.
+#define KICLOUD_LINE_PLACER_WALK_STATS 1
+
     struct WALK_STATS
     {
-        int    routes = 0;     ///< WALKAROUND::Route calls (one per policy walked)
-        int    walksB = 0;     ///< walks without the per-obstacle memory after one with it (walk B)
-        double walkMs = 0.0;   ///< the time in rhWalkBase() (all walks, retries and choices)
-        double recordMs = 0.0; ///< the time in recordObstacleSides() after the step was shown
+        int    routes = 0;         ///< WALKAROUND::Route calls (one per policy walked)
+        int    walksB = 0;         ///< walks without the per-obstacle memory after one with it
+        int    shoveFallbacks = 0; ///< Shove mode: the shove failed and the full walk ran
+        double walkMs = 0.0;       ///< the time in rhWalkBase() (all walks, retries and choices)
+        double shoveMs = 0.0;      ///< Shove mode: the time in SHOVE::Run()
+        double recordMs = 0.0;     ///< the time in recordObstacleSides() after the step was shown
+        double stepMs = 0.0;       ///< the whole routeStep() (walks, shove, optimizer, gloss)
     };
 
     const WALK_STATS& LastWalkStats() const { return m_walkStats; }
