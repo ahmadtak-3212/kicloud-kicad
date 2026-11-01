@@ -43,7 +43,80 @@ void WALKAROUND::start( const LINE& aInitialPath )
         m_currentResult.status[ pol ] = ST_IN_PROGRESS;
         m_currentResult.lines[ pol ] = aInitialPath;
         m_currentResult.lines[ pol ].ClearLinks();
+        m_currentResult.overrides[ pol ] = 0;     // KICLOUD: R3.1b
+        m_currentResult.freeChoices[ pol ] = 0;
     }
+}
+
+
+// KICLOUD: R3.1b per-obstacle side memory (docs/patches.md); see the comment in the header.
+int WALKAROUND::ObstacleSide( const SHAPE_LINE_CHAIN& aLine, const VECTOR2I& aPoint )
+{
+    const int segCount = aLine.SegmentCount();
+
+    if( segCount < 1 )
+        return 0;
+
+    // The segment nearest to the point (the first one on a tie) and the nearest point on it.
+    int        best = -1;
+    SEG::ecoord bestDist = 0;
+    VECTOR2I   nearest;
+
+    for( int i = 0; i < segCount; i++ )
+    {
+        const SEG      seg = aLine.CSegment( i );
+        const VECTOR2I p = seg.NearestPoint( aPoint );
+        const SEG::ecoord d = ( aPoint - p ).SquaredEuclideanNorm();
+
+        if( best < 0 || d < bestDist )
+        {
+            best = i;
+            bestDist = d;
+            nearest = p;
+        }
+    }
+
+    const SEG seg = aLine.CSegment( best );
+
+    // Behind the start or ahead of the end: the line does not pass the point.
+    if( ( best == 0 && nearest == seg.A ) || ( best == segCount - 1 && nearest == seg.B ) )
+        return 0;
+
+    auto unit = []( const VECTOR2I& aV )
+            {
+                const double l = aV.EuclideanNorm();
+                return l > 0 ? VECTOR2D( aV.x / l, aV.y / l ) : VECTOR2D( 0, 0 );
+            };
+
+    VECTOR2D dir = unit( seg.B - seg.A );
+
+    // At a corner the direction is the mean of the two segments' directions.
+    if( nearest == seg.B && best + 1 < segCount )
+    {
+        const SEG next = aLine.CSegment( best + 1 );
+        dir = dir + unit( next.B - next.A );
+    }
+    else if( nearest == seg.A && best > 0 )
+    {
+        const SEG prev = aLine.CSegment( best - 1 );
+        dir = dir + unit( prev.B - prev.A );
+    }
+
+    const double cross = dir.x * (double) ( aPoint.y - nearest.y )
+                         - dir.y * (double) ( aPoint.x - nearest.x );
+
+    return cross >= 0.0 ? 1 : -1;
+}
+
+
+std::optional<VECTOR2I> WALKAROUND::ObstacleAnchor( const ITEM* aItem, int aLayer )
+{
+    const SHAPE* shape = aItem ? aItem->Shape( aLayer ) : nullptr;
+
+    if( !shape )
+        return std::nullopt;
+
+    return shape->BBox().Centre();
 }
 
 
@@ -95,6 +168,7 @@ bool WALKAROUND::singleStep()
 {
     TOPOLOGY topo( m_world );
     TOPOLOGY::CLUSTER pendingClusters[MaxWalkPolicies];
+    const ITEM*       hitItems[MaxWalkPolicies] = {};   // KICLOUD: R3.1b: the obstacle each policy hit
 
     for( int i = 0; i < MaxWalkPolicies; i++ )
     {
@@ -122,6 +196,7 @@ bool WALKAROUND::singleStep()
 
 
         pendingClusters[ i ] = topo.AssembleCluster( obstacle->m_item, line.Layer(), 0.0, line.Net() );
+        hitItems[ i ] = obstacle->m_item;
         PNS_DBG( Dbg(), AddItem, obstacle->m_item, BLUE, 10000, wxString::Format( "col-item owner-depth %d cl-items=%d", static_cast<const NODE*>( obstacle->m_item->Owner() )->Depth(), (int) pendingClusters[i].m_items.size() ) );
 
     }
@@ -196,16 +271,94 @@ bool WALKAROUND::singleStep()
         return true;
     };
 
+    // KICLOUD: R3.1b per-obstacle side memory (docs/patches.md): walks policy aPol's pending
+    // cluster. Without a winding preference, or when it names no side for the cluster, with the
+    // policy's own winding aCw, as KiCad 10. Otherwise with the winding that keeps the obstacle on
+    // the preferred side: the clockwise walk puts the obstacle to the right of the direction of
+    // travel (KiCad's hulls are clockwise in its y-down coordinates), and the result is checked
+    // with ObstacleSide(); when that winding fails or ends on the wrong side, the other winding is
+    // tried, and when neither keeps the side the policy's own winding is used. Counts the cluster
+    // in m_currentResult.overrides (walked against aCw) or freeChoices (no preferred side).
+    // Result: processCluster()'s (false: the walk is stuck).
+    auto walkPolicy = [&]( int aPol, bool aCw ) -> bool
+    {
+        TOPOLOGY::CLUSTER& cluster = pendingClusters[aPol];
+        LINE&              line = m_currentResult.lines[aPol];
+
+        if( !m_windingPreference || cluster.m_items.empty() )
+            return processCluster( cluster, line, aCw );
+
+        // The preferred side of the item hit first, else of the first cluster member that has one.
+        std::optional<int>      side;
+        std::optional<VECTOR2I> anchor;
+
+        auto tryItem = [&]( const ITEM* aItem )
+                {
+                    if( side || !aItem )
+                        return;
+
+                    std::optional<int> s = m_windingPreference( aItem );
+
+                    if( !s || *s == 0 )
+                        return;
+
+                    anchor = ObstacleAnchor( aItem, line.Layer() );
+
+                    if( anchor )
+                        side = s;
+                };
+
+        tryItem( hitItems[aPol] );
+
+        for( const ITEM* item : cluster.m_items )
+            tryItem( item );
+
+        if( !side )
+        {
+            m_currentResult.freeChoices[aPol]++;
+            return processCluster( cluster, line, aCw );
+        }
+
+        const LINE before( line );
+        bool       cw = *side > 0;
+        bool       ok = processCluster( cluster, line, cw );
+
+        if( !ok || ObstacleSide( line.CLine(), *anchor ) != *side )
+        {
+            LINE retry( before );
+            bool okRetry = processCluster( cluster, retry, !cw );
+
+            if( okRetry && ObstacleSide( retry.CLine(), *anchor ) == *side )
+            {
+                line = retry;
+                ok = true;
+                cw = !cw;
+            }
+            else if( cw != aCw )
+            {
+                // Neither winding keeps the side: the policy's own (the retry's), as without one.
+                line = retry;
+                ok = okRetry;
+                cw = aCw;
+            }
+        }
+
+        if( cw != aCw )
+            m_currentResult.overrides[aPol]++;
+
+        return ok;
+    };
+
     if ( m_enabledPolicies[WP_CW] )
     {
-        bool stat = processCluster( pendingClusters[ WP_CW ], m_currentResult.lines[ WP_CW ], true );
+        bool stat = walkPolicy( WP_CW, true );
         if( !stat )
             m_currentResult.status[ WP_CW ] = ST_STUCK;
     }
 
     if ( m_enabledPolicies[WP_CCW] )
     {
-        bool stat = processCluster( pendingClusters[ WP_CCW ], m_currentResult.lines[ WP_CCW ], false );
+        bool stat = walkPolicy( WP_CCW, false );
         if( !stat )
             m_currentResult.status[ WP_CCW ] = ST_STUCK;
     }

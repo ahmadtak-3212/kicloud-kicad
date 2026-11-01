@@ -22,6 +22,8 @@
 #ifndef __PNS_WALKAROUND_H
 #define __PNS_WALKAROUND_H
 
+#include <functional>   // KICLOUD: R3.1b (WINDING_PREFERENCE)
+#include <optional>     // KICLOUD: R3.1b
 #include <set>
 
 #include "pns_line.h"
@@ -84,7 +86,25 @@ public:
 
         STATUS status[ MaxWalkPolicies ];
         LINE lines[ MaxWalkPolicies ];
+
+        /// KICLOUD: R3.1b per-obstacle side memory: per policy, how many obstacle clusters were
+        /// walked with the other winding than the policy's own because the winding preference
+        /// asked for it (0: the line is the one the policy gives without a preference), and how
+        /// many were walked with the policy's own winding because the preference had no side for
+        /// them (0: every cluster's winding came from the preference, so the other policy, walked
+        /// with the same preference, gives the same line). Reset by start(), counted by
+        /// singleStep(); both stay 0 without a preference.
+        int  overrides[ MaxWalkPolicies ] = {};
+        int  freeChoices[ MaxWalkPolicies ] = {};
     };
+
+    /**
+     * KICLOUD: R3.1b per-obstacle side memory (docs/patches.md). A function that says on which
+     * side of the line an obstacle item should stay: +1 or -1 as ObstacleSide() measures it, or
+     * no value when it has no preference for that item. Set by the caller (LINE_PLACER) from the
+     * sides the route head showed on its earlier steps; WALKAROUND only reads it.
+     */
+    using WINDING_PREFERENCE = std::function<std::optional<int>( const ITEM* aObstacle )>;
 
     void SetWorld( NODE* aNode )
     {
@@ -135,6 +155,36 @@ public:
 
     void SetAllowedPolicies( std::vector<WALK_POLICY> aPolicies);
 
+    /**
+     * KICLOUD: R3.1b per-obstacle side memory: with \a aPreference set, the WP_CW and WP_CCW
+     * policies walk each obstacle cluster they meet so that it stays on the side the preference
+     * names for the item they hit (or for the first cluster member it names), and with the
+     * policy's own winding only when it names none (RESULT::overrides and freeChoices count
+     * both). An empty function (the default) gives KiCad 10's walk. WP_SHORTEST ignores it.
+     * Caller: LINE_PLACER::walkInitialTrack(); valid until the next call.
+     */
+    void SetWindingPreference( WINDING_PREFERENCE aPreference )
+    {
+        m_windingPreference = std::move( aPreference );
+    }
+
+    /**
+     * KICLOUD: R3.1b: on which side of \a aLine the point \a aPoint lies, seen along the line's
+     * direction at the line's point nearest to it: +1 when the cross product of that direction
+     * and (aPoint - nearest point) is >= 0 (KiCad's y axis points down, so +1 is to the right of
+     * the direction of travel), -1 otherwise; at a corner the direction is the mean of the two
+     * segments' directions. 0 when the line has no segment, or the nearest point is the line's
+     * first or last point (the point lies behind the start or ahead of the end: the line does
+     * not pass it). The same rule as the routing plan's R-J1 measurement. Pure.
+     * Callers: singleStep() (checking a preferred winding) and LINE_PLACER::acceptWalk().
+     */
+    static int ObstacleSide( const SHAPE_LINE_CHAIN& aLine, const VECTOR2I& aPoint );
+
+    /// KICLOUD: R3.1b: the point ObstacleSide() measures an obstacle item by: the centre of its
+    /// shape's bounding box on \a aLayer (a pad's or via's centre, a track's middle), or no value
+    /// when the item has no shape there. Pure.
+    static std::optional<VECTOR2I> ObstacleAnchor( const ITEM* aItem, int aLayer );
+
 private:
     void start( const LINE& aInitialPath );
     bool singleStep();
@@ -161,6 +211,7 @@ private:
     std::set<ITEM*> m_processedItems;
     RESULT m_currentResult;
     double m_initialLength;
+    WINDING_PREFERENCE m_windingPreference;   ///< KICLOUD: R3.1b (SetWindingPreference)
 };
 
 }
