@@ -977,7 +977,8 @@ LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTrack, 
         const double   heldDist = ( aP - m_head.CLine().CLastPoint() ).EuclideanNorm();
 
         if( choiceB.cursorDist >= heldDist - WALK_SIDE_SWITCH_MARGIN * headLength
-                && crossesRememberedSide( walkB.CLine(), *memory, aCollisionMask )
+                && crossesRememberedSide( walkB.CLine(), Trace().CLine(), *memory,
+                                          aCollisionMask )
                 && !( m_head.SegmentCount() > 0
                       && m_currentNode->CheckColliding( &m_head, aCollisionMask ) ) )
         {
@@ -1434,13 +1435,28 @@ bool LINE_PLACER::endBlocked( const LINE& aTrack, int aCollisionMask ) const
 
 
 // KICLOUD: R3.1b per-obstacle side memory (docs/patches.md); see the comment in the header.
-bool LINE_PLACER::crossesRememberedSide( const SHAPE_LINE_CHAIN& aLine, const WALK_MEMORY& aMemory,
+bool LINE_PLACER::crossesRememberedSide( const SHAPE_LINE_CHAIN& aLine,
+                                         const SHAPE_LINE_CHAIN& aShown, const WALK_MEMORY& aMemory,
                                          int aCollisionMask ) const
 {
-    if( !m_currentNode || aLine.SegmentCount() < 1 || aMemory.sides.empty() )
+    if( !m_currentNode || aLine.SegmentCount() < 1 || aShown.SegmentCount() < 1
+            || aLine.ArcCount() || aShown.ArcCount() || aMemory.sides.empty() )
+    {
         return false;
+    }
 
-    // The obstacles near the line, found as recordObstacleSides() finds them.
+    // The obstacles near the part of aLine past the tail (one segment before where it leaves
+    // m_tail, as rhWalkBase() finds the head of a walk), found as recordObstacleSides() finds
+    // them: the tail's obstacles are passed the same way by both lines.
+    const SHAPE_LINE_CHAIN& tail = m_tail.CLine();
+    int                     same = 0;
+
+    while( same < aLine.PointCount() && same < tail.PointCount()
+           && aLine.CPoint( same ) == tail.CPoint( same ) )
+    {
+        same++;
+    }
+
     COLLISION_SEARCH_OPTIONS opts;
 
     opts.m_kindMask = aCollisionMask;
@@ -1452,7 +1468,7 @@ bool LINE_PLACER::crossesRememberedSide( const SHAPE_LINE_CHAIN& aLine, const WA
 
     probe.SetShape( aLine );
 
-    for( int i = 0; i < aLine.SegmentCount(); i++ )
+    for( int i = std::max( 0, same - 2 ); i < aLine.SegmentCount(); i++ )
     {
         SEGMENT s( probe, aLine.CSegment( i ) );
 
@@ -1460,6 +1476,9 @@ bool LINE_PLACER::crossesRememberedSide( const SHAPE_LINE_CHAIN& aLine, const WA
         m_currentNode->QueryColliding( &s, near, opts );
     }
 
+    // Other side: the shown line passes the obstacle on its remembered side and aLine on the
+    // other (an obstacle remembered from an earlier detour that the shown line does not pass
+    // does not count, so a slide along an obstacle on the same side is not held).
     for( const OBSTACLE& obs : near )
     {
         std::optional<OBSTACLE_KEY> key = obstacleKey( obs.m_item, aMemory.layer );
@@ -1470,6 +1489,7 @@ bool LINE_PLACER::crossesRememberedSide( const SHAPE_LINE_CHAIN& aLine, const WA
         auto it = aMemory.sides.find( *key );
 
         if( it != aMemory.sides.end()
+                && WALKAROUND::ObstacleSide( aShown, key->anchor ) == it->second
                 && WALKAROUND::ObstacleSide( aLine, key->anchor ) == -it->second )
         {
             return true;

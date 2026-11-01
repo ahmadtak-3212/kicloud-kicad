@@ -618,12 +618,14 @@ private:
                     bool aObstaclePreference, const WALK_CHOICE* aReuse, LINE& aWalkFull,
                     VECTOR2I& aWalkP, WALKAROUND::WALK_POLICY& aSide, WALK_CHOICE& aChoice );
 
-    /// KICLOUD: R3.1b: whether \a aLine passes an obstacle remembered in \a aMemory.sides (one
-    /// within WALK_OBSTACLE_MEMORY_REACH widths of it, found as recordObstacleSides() finds them)
-    /// on the other side than remembered. Caller: walkInitialTrack(), for the held head. Changes
-    /// nothing.
-    bool crossesRememberedSide( const SHAPE_LINE_CHAIN& aLine, const WALK_MEMORY& aMemory,
-                                int aCollisionMask ) const;
+    /// KICLOUD: R3.1b: whether \a aLine (walk B's partial path) passes an obstacle remembered in
+    /// \a aMemory.sides on the other side than \a aShown (the line shown last, m_tail + m_head)
+    /// passes it, \a aShown passing it on the remembered side. The obstacles are those within
+    /// WALK_OBSTACLE_MEMORY_REACH widths of \a aLine's part past m_tail (from one segment before
+    /// where it leaves the tail, found as recordObstacleSides() finds them); false for lines with
+    /// arcs. Caller: walkInitialTrack(), for the held head. Changes nothing.
+    bool crossesRememberedSide( const SHAPE_LINE_CHAIN& aLine, const SHAPE_LINE_CHAIN& aShown,
+                                const WALK_MEMORY& aMemory, int aCollisionMask ) const;
 
     /// KICLOUD: R3.1b: whether a track end of \a aTrack's width at its last point (the cursor)
     /// collides with an obstacle in \a aCollisionMask in m_currentNode, i.e. no walk can be complete
