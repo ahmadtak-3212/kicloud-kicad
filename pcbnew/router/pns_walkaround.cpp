@@ -20,6 +20,7 @@
  */
 
 #include <chrono>
+#include <cmath>      // KICLOUD: R3.1b (std::hypot)
 #include <optional>
 
 #include <advanced_config.h>
@@ -102,10 +103,49 @@ int WALKAROUND::ObstacleSide( const SHAPE_LINE_CHAIN& aLine, const VECTOR2I& aPo
         dir = dir + unit( prev.B - prev.A );
     }
 
+    const double dirLength = std::hypot( dir.x, dir.y );
+
+    // Opposite directions at a turn-back corner: no direction, no side.
+    if( dirLength < 1e-9 )
+        return 0;
+
     const double cross = dir.x * (double) ( aPoint.y - nearest.y )
                          - dir.y * (double) ( aPoint.x - nearest.x );
 
-    return cross >= 0.0 ? 1 : -1;
+    // The point on the line itself (within 1 nm): no side.
+    if( std::abs( cross ) <= dirLength )
+        return 0;
+
+    return cross > 0.0 ? 1 : -1;
+}
+
+
+// KICLOUD: R3.1b per-obstacle side memory (docs/patches.md); see the comment in the header.
+SHAPE_LINE_CHAIN WALKAROUND::changedPart( const SHAPE_LINE_CHAIN& aBefore,
+                                          const SHAPE_LINE_CHAIN& aAfter )
+{
+    const int n = aAfter.PointCount();
+    const int m = aBefore.PointCount();
+    int       prefix = 0;
+    int       suffix = 0;
+
+    while( prefix < n && prefix < m && aAfter.CPoint( prefix ) == aBefore.CPoint( prefix ) )
+        prefix++;
+
+    while( suffix < n - prefix && suffix < m - prefix
+           && aAfter.CPoint( n - 1 - suffix ) == aBefore.CPoint( m - 1 - suffix ) )
+    {
+        suffix++;
+    }
+
+    // One point on each side of the changed points, so the changed segments are whole.
+    const int first = std::max( 0, prefix - 1 );
+    const int last = std::min( n - 1, n - suffix );
+
+    if( last - first < 1 )
+        return aAfter;
+
+    return aAfter.Slice( first, last );
 }
 
 
@@ -323,12 +363,21 @@ bool WALKAROUND::singleStep()
         bool       cw = *side > 0;
         bool       ok = processCluster( cluster, line, cw );
 
-        if( !ok || ObstacleSide( line.CLine(), *anchor ) != *side )
+        // The side is measured on the part of the line this cluster's walk changed (a line that
+        // passes the same obstacle twice, as in a U-turn, is not judged by its other pass). The
+        // other winding is walked only when this one failed or puts the obstacle on the other
+        // side for sure (0, no clear side, keeps this result): with KiCad's clockwise hulls the
+        // preferred winding normally gives the side at once.
+        const int measured = ok ? ObstacleSide( changedPart( before.CLine(), line.CLine() ), *anchor )
+                                : 0;
+
+        if( !ok || measured == -*side )
         {
             LINE retry( before );
             bool okRetry = processCluster( cluster, retry, !cw );
 
-            if( okRetry && ObstacleSide( retry.CLine(), *anchor ) == *side )
+            if( okRetry
+                    && ObstacleSide( changedPart( before.CLine(), retry.CLine() ), *anchor ) != -*side )
             {
                 line = retry;
                 ok = true;

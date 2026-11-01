@@ -160,7 +160,8 @@ public:
      * policies walk each obstacle cluster they meet so that it stays on the side the preference
      * names for the item they hit (or for the first cluster member it names), and with the
      * policy's own winding only when it names none (RESULT::overrides and freeChoices count
-     * both). An empty function (the default) gives KiCad 10's walk. WP_SHORTEST ignores it.
+     * both). The other winding is walked only when the preferred one fails or clearly puts the
+     * obstacle on the other side (measured on the part of the line that cluster's walk changed). An empty function (the default) gives KiCad 10's walk. WP_SHORTEST ignores it.
      * Caller: LINE_PLACER::walkInitialTrack(); valid until the next call.
      */
     void SetWindingPreference( WINDING_PREFERENCE aPreference )
@@ -173,9 +174,10 @@ public:
      * direction at the line's point nearest to it: +1 when the cross product of that direction
      * and (aPoint - nearest point) is >= 0 (KiCad's y axis points down, so +1 is to the right of
      * the direction of travel), -1 otherwise; at a corner the direction is the mean of the two
-     * segments' directions. 0 when the line has no segment, or the nearest point is the line's
+     * segments' directions. 0 when the line has no segment, the nearest point is the line's
      * first or last point (the point lies behind the start or ahead of the end: the line does
-     * not pass it). The same rule as the routing plan's R-J1 measurement. Pure.
+     * not pass it), the point lies on the line (within 1 nm) or the two directions at a corner
+     * cancel out (a turn-back). The same rule as the routing plan's R-J1 measurement. Pure.
      * Callers: singleStep() (checking a preferred winding) and LINE_PLACER::acceptWalk().
      */
     static int ObstacleSide( const SHAPE_LINE_CHAIN& aLine, const VECTOR2I& aPoint );
@@ -186,6 +188,13 @@ public:
     static std::optional<VECTOR2I> ObstacleAnchor( const ITEM* aItem, int aLayer );
 
 private:
+    /// KICLOUD: R3.1b: the part of \a aAfter (a line after one cluster's walk) that differs from
+    /// \a aBefore (the line before it), with one unchanged point on each side, or the whole of
+    /// \a aAfter when nothing in it can be told apart. singleStep() measures the walked obstacle's
+    /// side on it. Pure.
+    static SHAPE_LINE_CHAIN changedPart( const SHAPE_LINE_CHAIN& aBefore,
+                                         const SHAPE_LINE_CHAIN& aAfter );
+
     void start( const LINE& aInitialPath );
     bool singleStep();
 

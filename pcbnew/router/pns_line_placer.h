@@ -165,6 +165,22 @@ public:
     const LINE& Head() const { return m_head; }
 
     /**
+     * KICLOUD: R3.1b: what the walk of the last routing step cost, for the routing plan's
+     * measurements (FEATURE_ROUTING_TOOLS.md 5.1 item 1b; read by the test hook
+     * kicloudTestRouterHead, wasm/bindings/pcbnew_embind.cpp). Written by rhWalkBase(),
+     * walkSides() and acceptWalk(); reading it changes nothing.
+     */
+    struct WALK_STATS
+    {
+        int    routes = 0;     ///< WALKAROUND::Route calls (one per policy walked)
+        int    walksB = 0;     ///< walks without the per-obstacle memory after one with it (walk B)
+        double walkMs = 0.0;   ///< the time in rhWalkBase() (all walks, retries and choices)
+        double recordMs = 0.0; ///< the time in recordObstacleSides() after the step was shown
+    };
+
+    const WALK_STATS& LastWalkStats() const { return m_walkStats; }
+
+    /**
      * Return the "tail" of the line being placed, the part which has already wrapped around
      * and shoved some obstacles.
      */
@@ -368,6 +384,36 @@ private:
      * (walkMemoryFor()), so a fixing click, Backspace or a layer or width change make the next
      * step behave like the first one.
      */
+    /**
+     * KICLOUD: R3.1b: the key of one obstacle in WALK_MEMORY::sides (obstacleKey()): the board
+     * item it was made from and its anchor (WALKAROUND::ObstacleAnchor()). The anchor is part of
+     * the key because one board item can become several router obstacles: a keepout rule area one
+     * per triangle, a board edge or copper graphic one per piece; each piece keeps its own side
+     * (a route through the channel of a U-shaped keepout passes its two arms on opposite sides).
+     */
+    struct OBSTACLE_KEY
+    {
+        const BOARD_ITEM* item = nullptr;
+        VECTOR2I          anchor;
+
+        bool operator==( const OBSTACLE_KEY& aOther ) const
+        {
+            return item == aOther.item && anchor == aOther.anchor;
+        }
+    };
+
+    /// KICLOUD: R3.1b: the hash of an OBSTACLE_KEY (the item's address mixed with the anchor).
+    struct OBSTACLE_KEY_HASH
+    {
+        size_t operator()( const OBSTACLE_KEY& aKey ) const
+        {
+            size_t h = std::hash<const void*>()( aKey.item );
+            const size_t a = std::hash<long long>()( ( (long long) aKey.anchor.x << 32 )
+                                                     ^ (unsigned int) aKey.anchor.y );
+            return h ^ ( a + 0x9e3779b97f4a7c15ULL + ( h << 6 ) + ( h >> 2 ) );
+        }
+    };
+
     struct WALK_MEMORY
     {
         bool     valid = false;
@@ -383,7 +429,13 @@ private:
         /// it. Filled by acceptWalk(); read by walkInitialTrack() as the walk's winding
         /// preference. No layer in the key: the memory as a whole applies to one layer
         /// (walkMemoryFor()).
-        std::unordered_map<const BOARD_ITEM*, int> sides;
+        std::unordered_map<OBSTACLE_KEY, int, OBSTACLE_KEY_HASH> sides;
+
+        /// KICLOUD: R3.1b: the length of the walk the last time walkInitialTrack() compared the
+        /// remembered sides' walk with R3.1's (walk B), or 0 when it never did in this stage.
+        /// While the remembered walk stays complete and within WALK_SIDE_SWITCH_MARGIN of this
+        /// length, walk B is not walked again (it cost a second walk on every mouse move).
+        double   checkedLength = 0.0;
     };
 
     /// KICLOUD: R3.1b: what walkSides() chose, for walkInitialTrack()'s comparison of the walk
@@ -396,6 +448,12 @@ private:
         /// the walk may differ from the one without the per-obstacle memory: the memory changed
         /// a winding, or the other side was not walked because the memory decided every winding
         bool   differsFromPlainWalk = false;
+
+        /// the walk's raw results per policy (before optimization) and, per policy, whether that
+        /// result is the walk without the per-obstacle memory (walked, no winding overridden): a
+        /// later walkSides() without the memory reuses it instead of walking that policy again
+        WALKAROUND::RESULT raw;
+        bool               plainKnown[2] = { false, false };
     };
 
     /**
@@ -459,12 +517,22 @@ private:
      * A is not, or it is shorter by more than the margin, or, between two partial paths, it ends
      * nearer the cursor by more than the margin of \a aInitialLength; so an obstacle keeps its
      * side until the other side is clearly better, the same rule as R3.1's for the whole walk.
-     * Inputs and results as walkSides() (whose length limits both walks keep). Caller:
+     * The cost is bounded: both walks stop growing at WALK_MEMORY_LENGTH_LIMIT times the
+     * complete-path limit (beyond it neither could be chosen); walk B reuses walk A's result for
+     * each policy whose winding the memory did not change; it is not walked while walk A stays
+     * complete and within the margin of the length at which the two were last compared
+     * (WALK_MEMORY::checkedLength; a detour that grows by more than the margin is compared again),
+     * nor when the cursor cannot be reached at all (endBlocked()) and walk A failed or ends within
+     * the margin of it. So a steady mouse move past remembered obstacles costs about one walk per
+     * step (measured in FEATURE_ROUTING_TOOLS.md 5.1 item 1b).
+     * Inputs and results as walkSides() (whose length limits both walks keep), and
+     * \a aCheckedLength: the WALK_MEMORY::checkedLength the shown walk should carry. Caller:
      * rhWalkBase(), up to twice per round. Changes no member.
      */
     bool walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTrack, const VECTOR2I& aP,
                            int aCollisionMask, double aInitialLength, bool aRememberedSideOnly,
-                           LINE& aWalkFull, VECTOR2I& aWalkP, WALKAROUND::WALK_POLICY& aSide );
+                           LINE& aWalkFull, VECTOR2I& aWalkP, WALKAROUND::WALK_POLICY& aSide,
+                           double& aCheckedLength );
 
     /**
      * KICLOUD: R3.1 stable walkaround (docs/patches.md); R3.1's walkInitialTrack(). One walk:
@@ -481,7 +549,9 @@ private:
      * without a memory). Caller: rhWalkBase(), up to twice per round.
      * \a aObstaclePreference (KICLOUD: R3.1b): \a aWalkaround carries walkInitialTrack()'s
      * per-obstacle winding preference; when the remembered side's walk left no winding to its
-     * policy, the other side (which would give the same line) is not walked.
+     * policy, the other side (which would give the same line) is not walked. \a aReuse (R3.1b,
+     * or nullptr): an earlier walkSides() of the same track whose plain per-policy results
+     * (WALK_CHOICE::plainKnown) are taken instead of walking those policies again.
      * Results: true, \a aWalkFull (its shape set to the chosen walk, from the tail's start),
      * \a aWalkP (that walk's end) and \a aSide on success; false when neither side gives a usable
      * path (the outputs are then unchanged); \a aChoice (R3.1b) says what was chosen. Changes no
@@ -489,24 +559,33 @@ private:
      */
     bool walkSides( WALKAROUND& aWalkaround, const LINE& aInitTrack, const VECTOR2I& aP,
                     int aCollisionMask, double aInitialLength, bool aRememberedSideOnly,
-                    bool aObstaclePreference, LINE& aWalkFull, VECTOR2I& aWalkP,
-                    WALKAROUND::WALK_POLICY& aSide, WALK_CHOICE& aChoice );
+                    bool aObstaclePreference, const WALK_CHOICE* aReuse, LINE& aWalkFull,
+                    VECTOR2I& aWalkP, WALKAROUND::WALK_POLICY& aSide, WALK_CHOICE& aChoice );
 
-    /// KICLOUD: R3.1b: the key of an obstacle item in WALK_MEMORY::sides: the board item it was
-    /// made from (a hole counts as its pad or via), which stays the same while the route runs
-    /// even when Shove mode's nodes copy the item; nullptr (not remembered) for an item the
-    /// router made itself. Pure.
-    static const BOARD_ITEM* obstacleKey( const ITEM* aItem );
+    /// KICLOUD: R3.1b: whether a track end of \a aTrack's width at its last point (the cursor)
+    /// collides with an obstacle in \a aCollisionMask in m_currentNode, i.e. no walk can be complete
+    /// there (2 um of slack, so an end just touching a clearance does not count). Caller:
+    /// walkInitialTrack(), before walk B. Changes nothing.
+    bool endBlocked( const LINE& aTrack, int aCollisionMask ) const;
+
+    /// KICLOUD: R3.1b: the key of an obstacle item on \a aLayer in WALK_MEMORY::sides: the board
+    /// item it was made from (a hole counts as its pad or via), which stays the same while the
+    /// route runs even when Shove mode's nodes copy the item, with the item's anchor on that
+    /// layer (OBSTACLE_KEY); no value (not remembered) for an item the router made itself or one
+    /// without a shape on the layer. Pure.
+    static std::optional<OBSTACLE_KEY> obstacleKey( const ITEM* aItem, int aLayer );
 
     /**
      * KICLOUD: R3.1b: adds to \a aMemory.sides the side of every obstacle in \a aCollisionMask
      * (other nets, in m_currentNode) within WALK_OBSTACLE_MEMORY_REACH track widths plus its
      * clearance of \a aMemory.walk, measured by WALKAROUND::ObstacleSide() at the obstacle's
      * anchor; obstacles behind the walk's start or ahead of its end are left out (side 0), as
-     * are walks with arcs. Caller: acceptWalk() (only shown walks are remembered). Changes only
-     * \a aMemory.
+     * are walks with arcs. Only the walk's segments from \a aFirstSegment on are searched (the
+     * part the step changed: the tail before it was searched on the earlier steps of the stage);
+     * the side is measured against the whole walk. Caller: acceptWalk() (only shown walks are
+     * remembered). Changes only \a aMemory.
      */
-    void recordObstacleSides( WALK_MEMORY& aMemory, int aCollisionMask ) const;
+    void recordObstacleSides( WALK_MEMORY& aMemory, int aCollisionMask, int aFirstSegment ) const;
 
     /**
      * KICLOUD: R3.1 stable walkaround: which of this step's two walks, \a aCw (clockwise) or
@@ -602,6 +681,8 @@ private:
     WALK_MEMORY              m_pendingWalk;        ///< rhWalkBase()'s walk until acceptWalk()
     int                      m_pendingWalkSlot = 1;
     int                      m_pendingWalkMask = ITEM::ANY_T; ///< KICLOUD: R3.1b: its collision mask
+    int                      m_pendingWalkHeadSegment = 0;    ///< R3.1b: its first segment not in the tail
+    mutable WALK_STATS       m_walkStats;                     ///< R3.1b: LastWalkStats()
     std::optional<VECTOR2I>  m_walkRetryFailedAt[2]; ///< by slot: where lastWalkTrack()'s retry failed
     GLOSS_HEAD_CACHE         m_glossHeadCache;
 };
