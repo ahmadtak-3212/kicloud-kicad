@@ -25,6 +25,9 @@
 #include <math/vector2d.h>
 
 #include "pns_drag_algo.h"
+#include "pns_item.h"   // KICLOUD: R3.5 (ITEM::PnsKind, NET_HANDLE in KICLOUD_DROP_COLLISION)
+
+class BOARD_ITEM;
 
 namespace PNS
 {
@@ -116,7 +119,34 @@ public:
         return false;
     }
 
+    /**
+     * KICLOUD: R3.5 what stops the part from being dropped here: the first collision that the
+     * last Drag() or FixRoute() found between a dragged item (a moved pad, a footprint graphic,
+     * or a track bent to follow a pad) and the rest of the board. Filled by findCollision(); empty
+     * (m_found false) when the dragged items collide with nothing, or in Highlight collisions mode
+     * (which commits anyway). The board items it points to are the ones the router world was
+     * built from: they live as long as the drag (the board is not edited during a drag); the
+     * router's own items are not kept, because the next Drag() frees its branch.
+     */
+    struct KICLOUD_DROP_COLLISION
+    {
+        bool        m_found = false;
+        bool        m_headIsLine = false;          ///< the dragged item is a track
+        BOARD_ITEM* m_headParent = nullptr;        ///< the dragged pad (or shape), if any
+        NET_HANDLE  m_headNet = nullptr;
+        ITEM::PnsKind m_obstacleKind = ITEM::INVALID_T;
+        BOARD_ITEM* m_obstacleParent = nullptr;    ///< the board item hit, if the hit has one
+        NET_HANDLE  m_obstacleNet = nullptr;
+    };
+
+    /// KICLOUD: R3.5 the collision that blocks the drop at the current position (see above).
+    const KICLOUD_DROP_COLLISION& KicloudDropCollision() const { return m_kicloudCollision; }
+
 private:
+    // KICLOUD: R3.5 checks every dragged item against aNode, stops at the first collision and
+    // records it in m_kicloudCollision. Returns whether one was found.
+    bool findCollision( NODE* aNode );
+
     struct DRAGGED_CONNECTION
     {
         LINE     origLine;
@@ -134,6 +164,8 @@ private:
     ITEM_SET m_initialDraggedItems;
     NODE*    m_currentNode;
     VECTOR2I m_p0;
+
+    KICLOUD_DROP_COLLISION m_kicloudCollision;   // KICLOUD: R3.5
 };
 
 }; // namespace PNS

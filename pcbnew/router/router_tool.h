@@ -79,6 +79,12 @@ private:
     void breakTrack();
     void restoreSelection( const PCB_SELECTION& aOriginalSelection );
 
+    // KICLOUD: R3.5 why the current drag cannot be dropped here, as a message and a hint (what
+    // the person can do), from the component dragger's collision record; generic for the other
+    // draggers. kicloudShowDragRefusal() writes them into the status bar and next to the cursor.
+    void kicloudDragRefusalText( wxString& aMessage, wxString& aHint );
+    void kicloudShowDragRefusal( bool aAlsoStatusBar );
+
     void handleCommonEvents( TOOL_EVENT& evt );
     int handleLayerSwitch( const TOOL_EVENT& aEvent, bool aForceVia );
     int handlePnSCornerModeChange( const TOOL_EVENT& aEvent );

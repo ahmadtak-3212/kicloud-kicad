@@ -240,17 +240,77 @@ bool COMPONENT_DRAGGER::Drag( const VECTOR2I& aP )
         m_currentNode->Add( l_new );
     }
 
+    // KICLOUD: R3.5 know at every step whether this position could be dropped, so the router
+    // tool can say so next to the cursor while the person is still moving (Highlight collisions
+    // mode commits anyway, so nothing is checked there). The check is the one FixRoute() makes,
+    // over the few items this drag moved.
+    m_dragStatus = Settings().AllowDRCViolations() || !findCollision( m_currentNode );
+
     return true;
 }
 
 
+// KICLOUD: R3.5 Checks each dragged item (m_draggedItems: the moved pads and footprint shapes,
+// the tracks between two of the part's pads, and every track bent to follow a pad) against
+// aNode with NODE::CheckColliding, in the order they were added, and stops at the first hit:
+// the same test, in the same order, as KiCad's FixRoute made with CheckColliding( ITEM_SET ).
+// Records the dragged item (pad or track, its board item and net) and the item it hits (kind,
+// board item, net) in m_kicloudCollision, for the router tool's message; a hole hit is recorded as
+// its pad or via; an obstacle the drag itself created (another bent track of the same part) has no
+// board item, only its net.
+// Input: the node to check in (the drag's current branch). Result: whether a collision exists.
+// State: m_kicloudCollision only.
+bool COMPONENT_DRAGGER::findCollision( NODE* aNode )
+{
+    m_kicloudCollision = KICLOUD_DROP_COLLISION();
+
+    if( !aNode )
+        return false;
+
+    for( const ITEM* item : m_draggedItems.CItems() )
+    {
+        NODE::OPT_OBSTACLE obs = aNode->CheckColliding( item );
+
+        if( !obs )
+            continue;
+
+        m_kicloudCollision.m_found = true;
+        m_kicloudCollision.m_headIsLine =
+                item->OfKind( ITEM::LINE_T | ITEM::SEGMENT_T | ITEM::ARC_T );
+        m_kicloudCollision.m_headParent = item->Parent();
+        m_kicloudCollision.m_headNet = item->Net();
+
+        if( const ITEM* hit = obs->m_item )
+        {
+            // a pad's or via's hole is an item of its own without a board item: name its pad or via
+            if( !hit->Parent() && hit->ParentPadVia() )
+                hit = hit->ParentPadVia();
+
+            m_kicloudCollision.m_obstacleKind = hit->Kind();
+            m_kicloudCollision.m_obstacleParent = hit->Parent();
+            m_kicloudCollision.m_obstacleNet = hit->Net();
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+
+// Commits the drag at the position of the last Drag(): when nothing collides (or in Highlight
+// collisions mode, or when the person forces it with Ctrl+click), the drag's branch becomes the
+// board. Otherwise nothing changes, the drag stays where it is and false is returned.
+// KICLOUD: R3.5: the collision is found by findCollision(), which also records what collides, so
+// that the router tool can tell the person why the drop was refused (KiCad ended the drag
+// silently and the part went back).
 bool COMPONENT_DRAGGER::FixRoute( bool aForceCommit )
 {
     NODE* node = CurrentNode();
 
     if( node )
     {
-        if( Settings().AllowDRCViolations() || aForceCommit || !node->CheckColliding( m_draggedItems ) )
+        if( Settings().AllowDRCViolations() || aForceCommit || !findCollision( node ) )
         {
             Router()->CommitRouting( node );
             return true;

@@ -81,6 +81,7 @@ using namespace std::placeholders;
 #include "pns_logger.h"
 #include "pns_placement_algo.h"
 #include "pns_drag_algo.h"
+#include "pns_component_dragger.h"   // KICLOUD: R3.5 (why a part drop is refused)
 #include "pns_optimizer.h"   // KICLOUD: R3.2 (Gloss Selected Tracks)
 
 #include "pns_kicad_iface.h"
@@ -2312,6 +2313,9 @@ void ROUTER_TOOL::performDragging( int aMode )
 
             if( m_router->FixRoute( m_endSnapPoint, m_endItem, forceFinish, forceCommit ) )
                 break;
+
+            // KICLOUD: R3.5 the drag stays (as before) but no longer silently: say why.
+            kicloudShowDragRefusal( true );
         }
         else if( evt->IsClick( BUT_RIGHT ) )
         {
@@ -2496,6 +2500,10 @@ void ROUTER_TOOL::restoreSelection( const PCB_SELECTION& aOriginalSelection )
 // placed (the result may have a different number of segments). State: the board (one commit when
 // placed).
 // KICLOUD: R2-A1: the world is synced once (in Reset), not twice.
+// KICLOUD: R3.5: a click the dragger refuses (a collision; Ctrl+click forces it) keeps the drag
+// running with a message in the status bar and at the cursor (kicloudShowDragRefusal), instead of
+// ending it with nothing committed and no message; a part drag also shows at the cursor, while it
+// moves, whether the current position would be refused.
 int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
 {
     const PCB_SELECTION selection = m_toolMgr->GetTool<PCB_SELECTION_TOOL>()->GetSelection();
@@ -2889,6 +2897,15 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
                         view()->AddToPreview( statusItem );
                     }
                 }
+                // KICLOUD: R3.5 a part drag (the component dragger has no "force mark obstacles"
+                // mode, so the block above never shows for it): while the part or its tracks
+                // collide at this position, say so next to the cursor, so the person knows before
+                // clicking that this spot will be refused. Not in the status bar: it would flicker
+                // with every step.
+                else if( dynamic_cast<PNS::COMPONENT_DRAGGER*>( dragger ) && !dragStatus )
+                {
+                    kicloudShowDragRefusal( false );
+                }
             }
         }
         else if( hasMouseMoved && ( evt->IsMouseUp( BUT_LEFT ) || evt->IsClick( BUT_LEFT ) ) )
@@ -2897,7 +2914,19 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
             bool forceCommit = evt->Modifier( MD_CTRL );
 
             updateEndItem( *evt );
-            m_router->FixRoute( m_endSnapPoint, m_endItem, forceFinish, forceCommit );
+
+            // KICLOUD: R3.5 a refused drop (the dragger found a collision; Ctrl+click forces it)
+            // used to end the drag here with nothing committed and no message: the part jumped back
+            // and the person could not tell why. Now the drag keeps running, as the router's own
+            // drag (performDragging) and a refused fixing click while routing already do, and the
+            // status bar and the cursor say what collides; the person drops elsewhere, presses Esc
+            // (the part goes back, nothing is committed) or Ctrl+clicks.
+            if( !m_router->FixRoute( m_endSnapPoint, m_endItem, forceFinish, forceCommit ) )
+            {
+                kicloudShowDragRefusal( true );
+                continue;
+            }
+
             leaderSegments = m_router->GetLastCommittedLeaderSegments();
 
             break;
@@ -2992,6 +3021,90 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
     view()->ShowPreview( false );
 
     return 0;
+}
+
+
+// KICLOUD: R3.5 The words for a drop the dragger refuses. For a part drag (PNS::COMPONENT_DRAGGER)
+// they name what collides, from the dragger's collision record (KicloudDropCollision, filled by
+// its last Drag() or FixRoute()): the dragged pad by its board description ("Pad 2 [GND] of C5"),
+// or "The track on net X" for a track bent to follow the part, and the item it hits by its board
+// description (a hole by its pad or via), or by kind and net for a track this drag bent itself.
+// Other drags (a segment, a via) get a general sentence. aHint says what the person can do: drop
+// elsewhere, Esc, or force the drop with Ctrl+click (KiCad's own "commit anyway" key in a drag).
+// Called by kicloudShowDragRefusal(); reads the router state only.
+void ROUTER_TOOL::kicloudDragRefusalText( wxString& aMessage, wxString& aHint )
+{
+    aHint.Printf( _( "Drop elsewhere, press Esc to cancel, or %s to drop anyway." ),
+                  KeyNameFromKeyCode( MD_CTRL + PSEUDO_WXK_CLICK ) );
+    aMessage = _( "The dragged tracks would collide here." );
+
+    PNS::COMPONENT_DRAGGER* cd = dynamic_cast<PNS::COMPONENT_DRAGGER*>( m_router->GetDragger() );
+
+    if( !cd )
+        return;
+
+    const PNS::COMPONENT_DRAGGER::KICLOUD_DROP_COLLISION& c = cd->KicloudDropCollision();
+
+    // describe: a board item by its own description, else a track or via by its kind and net
+    // (the router's bent copies have no board item yet), else a general word.
+    auto describe =
+            [&]( BOARD_ITEM* aParent, int aKind, PNS::NET_HANDLE aNet ) -> wxString
+            {
+                if( aParent )
+                    return aParent->GetItemDescription( frame(), false );
+
+                wxString net = m_iface->GetNetName( aNet );
+                bool     isTrack = aKind & ( PNS::ITEM::LINE_T | PNS::ITEM::SEGMENT_T
+                                             | PNS::ITEM::ARC_T );
+                bool     isVia = aKind & PNS::ITEM::VIA_T;
+
+                if( isTrack )
+                    return net.IsEmpty() ? _( "a track" )
+                                         : wxString::Format( _( "the track on net %s" ), net );
+
+                if( isVia )
+                    return net.IsEmpty() ? _( "a via" )
+                                         : wxString::Format( _( "a via on net %s" ), net );
+
+                return _( "an item" );
+            };
+
+    if( !c.m_found )
+    {
+        aMessage = _( "The dragged part or its tracks would collide here." );
+        return;
+    }
+
+    int      headKind = c.m_headIsLine ? PNS::ITEM::LINE_T : PNS::ITEM::SOLID_T;
+    wxString head = describe( c.m_headIsLine ? nullptr : c.m_headParent, headKind, c.m_headNet );
+    wxString obstacle = describe( c.m_obstacleParent, c.m_obstacleKind, c.m_obstacleNet );
+
+    if( !head.IsEmpty() )
+        head[0] = wxToupper( head[0] );
+
+    aMessage = wxString::Format( _( "%s would collide with %s." ), head, obstacle );
+}
+
+
+// KICLOUD: R3.5 Tells the person that the drag cannot be dropped at the cursor: a status item
+// next to the cursor (the same view item as KiCad's "Track violates DRC." in a drag; it lives in
+// the view's preview, so the next drag step clears it and shows it again only if the new position
+// collides) and, when aAlsoStatusBar (a refused click), the same words in the status bar's tool
+// message, where they stay until the drag ends. Called by InlineDrag (a part drag's steps and a
+// refused click) and performDragging (a refused click). State: the view's preview, the status bar.
+void ROUTER_TOOL::kicloudShowDragRefusal( bool aAlsoStatusBar )
+{
+    wxString msg, hint;
+    kicloudDragRefusalText( msg, hint );
+
+    if( aAlsoStatusBar )
+        frame()->DisplayToolMsg( msg + wxS( " " ) + hint );
+
+    ROUTER_STATUS_VIEW_ITEM* statusItem = new ROUTER_STATUS_VIEW_ITEM();
+    statusItem->SetMessage( msg );
+    statusItem->SetHint( hint );
+    statusItem->SetPosition( frame()->GetToolManager()->GetMousePosition() );
+    view()->AddToPreview( statusItem );
 }
 
 
