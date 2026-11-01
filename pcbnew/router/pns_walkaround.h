@@ -98,10 +98,15 @@ public:
         int  freeChoices[ MaxWalkPolicies ] = {};
 
         /// KICLOUD: R3.1b, for the measurements (LINE_PLACER::LastWalkStats): the walk's
-        /// iterations (singleStep() calls) and the clusters walked a second time with the other
-        /// winding because the preferred one failed or gave the wrong side.
+        /// singleStep() calls and the clusters walked a second time with the other winding
+        /// because the preferred one failed or gave the wrong side.
         int  iterations = 0;
         int  retries = 0;
+
+        /// KICLOUD: R3.1b: the walk stopped at its iteration limit while still in progress (set
+        /// by Route()); its lines may be cut short, so LINE_PLACER::walkSides() neither reuses
+        /// such a walk as the walk without the memory nor treats it as equal to that walk.
+        bool hitLimit = false;
     };
 
     /**

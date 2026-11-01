@@ -199,8 +199,10 @@ public:
      * KICLOUD: R3.1b: for the routing plan's measurements only (the test hook
      * kicloudTestRouterObstacleMemory): \a aOn false makes every walk R3.1's, as if no obstacle
      * side were remembered, so one build can be measured with and without the per-obstacle
-     * memory on the same cursor path. On by default; the sides are still recorded. Affects every
-     * LINE_PLACER (a process-wide switch), read by walkInitialTrack().
+     * memory on the same cursor path. On by default (the page never calls the hook); the sides are
+     * still recorded. With it off walkInitialTrack() is R3.1's walk, so the held head, the lower
+     * iteration limit and walk B are off too. Affects every LINE_PLACER (a process-wide switch),
+     * read by walkInitialTrack().
      */
     static void SetObstacleMemoryForTests( bool aOn ) { s_obstacleMemoryOn = aOn; }
 
@@ -537,6 +539,17 @@ private:
      */
     void glossHead( LINE& aHead );
 
+    /// KICLOUD: R3.1b: what walkInitialTrack() did: SHOWN (\a aWalkFull holds the walk to show),
+    /// HELD (the head shown last is kept: rhWalkBase() returns at once, without the retry from
+    /// the last walk, and routeStep() keeps m_head) or FAILED (no usable walk: rhWalkBase() may
+    /// retry from the last walk).
+    enum class WALK_OUTCOME
+    {
+        SHOWN,
+        HELD,
+        FAILED
+    };
+
     /**
      * KICLOUD: R3.1b per-obstacle side memory (docs/patches.md). One walk of rhWalkBase():
      * walks \a aInitTrack (the tail plus a new head to the cursor) around the obstacles in
@@ -557,20 +570,25 @@ private:
      * complete and within the margin of a lower bound of walk B (WALK_MEMORY::checked, less the
      * distance the cursor moved since), nor when the cursor cannot be reached at all
      * (endBlocked()) and walk A's partial path ends within the margin of it; walk A stops after
-     * WALK_MEMORY_ITERATION_LIMIT iterations (remembered sides can send it back and forth). When
-     * walk A finds nothing and walk B only a partial path, the head shown last is held unless it
-     * now collides or walk B ends nearer the cursor by more than the margin (stock KiCad shows the
-     * nearest partial path, which with the memory is often a flip to the other side and back).
+     * WALK_MEMORY_ITERATION_LIMIT iterations (remembered sides can send it back and forth; a walk
+     * A cut short there is never taken for the plain walk). When walk A finds nothing and walk B
+     * only a partial path that passes a remembered obstacle on its other side, the head shown last
+     * is held (HELD) unless it now collides, a via is being placed, or walk B ends nearer the
+     * cursor by more than the margin of the head's straight length (stock KiCad shows the nearest
+     * partial path, which with the memory is often a flip to the other side and back).
      * Measured in FEATURE_ROUTING_TOOLS.md 5.1 item 1b.
-     * Inputs and results as walkSides() (whose length limits both walks keep), and
-     * \a aChecked: the WALK_MEMORY::checked the shown walk should carry. Caller: rhWalkBase(), up
-     * to twice per round. Changes m_walkStats and, for the duration of the call, \a aWalkaround's
-     * length limit (put back on return); no other member.
+     * Inputs as walkSides() (whose length limits both walks keep); the result is a WALK_OUTCOME
+     * (HELD only in the case above, never on the first step of a stage), with \a aWalkFull,
+     * \a aWalkP and \a aSide set when SHOWN, and \a aChecked: the WALK_MEMORY::checked the shown
+     * walk should carry. Reads m_head, m_tail, m_placingVia and m_currentNode (the held head's
+     * collision check, endBlocked(), crossesRememberedSide()). Caller: rhWalkBase(), up to twice
+     * per round. Changes m_walkStats and, for the duration of the call, \a aWalkaround's length
+     * limit, iteration limit and winding preference (all put back on return); no other member.
      */
-    bool walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTrack, const VECTOR2I& aP,
-                           int aCollisionMask, double aInitialLength, bool aRememberedSideOnly,
-                           LINE& aWalkFull, VECTOR2I& aWalkP, WALKAROUND::WALK_POLICY& aSide,
-                           WALK_CHECK& aChecked );
+    WALK_OUTCOME walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTrack,
+                                   const VECTOR2I& aP, int aCollisionMask, double aInitialLength,
+                                   bool aRememberedSideOnly, LINE& aWalkFull, VECTOR2I& aWalkP,
+                                   WALKAROUND::WALK_POLICY& aSide, WALK_CHECK& aChecked );
 
     /**
      * KICLOUD: R3.1 stable walkaround (docs/patches.md); R3.1's walkInitialTrack(). One walk:
@@ -599,6 +617,13 @@ private:
                     int aCollisionMask, double aInitialLength, bool aRememberedSideOnly,
                     bool aObstaclePreference, const WALK_CHOICE* aReuse, LINE& aWalkFull,
                     VECTOR2I& aWalkP, WALKAROUND::WALK_POLICY& aSide, WALK_CHOICE& aChoice );
+
+    /// KICLOUD: R3.1b: whether \a aLine passes an obstacle remembered in \a aMemory.sides (one
+    /// within WALK_OBSTACLE_MEMORY_REACH widths of it, found as recordObstacleSides() finds them)
+    /// on the other side than remembered. Caller: walkInitialTrack(), for the held head. Changes
+    /// nothing.
+    bool crossesRememberedSide( const SHAPE_LINE_CHAIN& aLine, const WALK_MEMORY& aMemory,
+                                int aCollisionMask ) const;
 
     /// KICLOUD: R3.1b: whether a track end of \a aTrack's width at its last point (the cursor)
     /// collides with an obstacle in \a aCollisionMask in m_currentNode, i.e. no walk can be complete

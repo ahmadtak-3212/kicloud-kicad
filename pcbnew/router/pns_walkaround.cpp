@@ -50,6 +50,7 @@ void WALKAROUND::start( const LINE& aInitialPath )
 
     m_currentResult.iterations = 0;               // KICLOUD: R3.1b
     m_currentResult.retries = 0;
+    m_currentResult.hitLimit = false;
 }
 
 
@@ -540,6 +541,7 @@ const WALKAROUND::RESULT WALKAROUND::Route( const LINE& aInitialPath )
     while( m_iteration < m_iterationLimit )
     {
         singleStep();
+        m_currentResult.iterations++;   // KICLOUD: R3.1b (measurement: singleStep() calls)
 
         bool stillInProgress = false;
 
@@ -574,6 +576,10 @@ const WALKAROUND::RESULT WALKAROUND::Route( const LINE& aInitialPath )
         m_iteration++;
     }
 
+    // KICLOUD: R3.1b: the walk stopped at the iteration limit, still in progress (its lines may be
+    // cut short); LINE_PLACER::walkSides() then does not take it for the walk without the memory.
+    m_currentResult.hitLimit = m_iteration >= m_iterationLimit;
+
 
     for( int pol = 0; pol < MaxWalkPolicies; pol++ )
     {
@@ -598,8 +604,6 @@ const WALKAROUND::RESULT WALKAROUND::Route( const LINE& aInitialPath )
 
     }
 
-
-    m_currentResult.iterations = m_iteration;   // KICLOUD: R3.1b (measurement)
 
     return m_currentResult;
 }
