@@ -122,7 +122,11 @@ bool COMPONENT_DRAGGER::Start( const VECTOR2I& aP, ITEM_SET& aPrimitives )
         SOLID* solid = static_cast<SOLID*>( item );
 
         m_solids.insert( solid );
-        padBox.Merge( solid->Pos() );
+
+        if( const SHAPE* shape = solid->Shape( -1 ) )   // KICLOUD: R3.5 review: the pad's outline
+            padBox.Merge( shape->BBox() );
+        else
+            padBox.Merge( solid->Pos() );
 
         if( !item->IsRoutable() )
             continue;
@@ -152,7 +156,11 @@ bool COMPONENT_DRAGGER::Start( const VECTOR2I& aP, ITEM_SET& aPrimitives )
         }
     }
 
-    m_kicloudPartSize = std::max( padBox.GetWidth(), padBox.GetHeight() );   // KICLOUD: R3.5 review
+    // KICLOUD: R3.5 review: the larger side of the pads' outlines, at least 1 mm (a single pad, or
+    // pads without a shape, would give 0 and reset the rotation on every step)
+    const int oneMm = 1000000;   // the router's units are nanometres
+
+    m_kicloudPartSize = std::max( { (int) padBox.GetWidth(), (int) padBox.GetHeight(), oneMm } );
     m_kicloudHaveLastP = false;
 
     return true;
@@ -398,11 +406,12 @@ bool COMPONENT_DRAGGER::liveCollision( NODE* aNode )
 // checked in rotation. Runs findCollision() on the drag's current branch (the position of the last
 // Drag()), sets m_dragStatus from it (Highlight collisions mode: always fine) and starts a new
 // round that remembers the result. Result: whether the part collides there. State: the drag
-// status, the collision record and the rotation.
+// status, the collision record, the rotation and the program-wide count of rest checks.
 bool COMPONENT_DRAGGER::KicloudCheckNow()
 {
     bool hit = !Settings().AllowDRCViolations() && findCollision( m_currentNode );
 
+    s_kicloudRestChecks++;
     m_liveNext = 0;
     m_liveHitThisRound = false;
     m_liveHitLastRound = hit;

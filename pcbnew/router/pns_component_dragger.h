@@ -158,6 +158,10 @@ public:
     /// collision record exactly, and starts the rotation afresh. Result: whether it collides.
     bool KicloudCheckNow();
 
+    /// KICLOUD: R3.5 review: how many KicloudCheckNow() runs this program has made, over all
+    /// drags (a test hook reads it to wait for the rest check instead of sleeping).
+    static uint64_t KicloudRestChecks() { return s_kicloudRestChecks; }
+
 private:
     // KICLOUD: R3.5 checks every dragged item against aNode, stops at the first collision and
     // records it in m_kicloudCollision. Returns whether one was found.
@@ -203,9 +207,12 @@ private:
     bool   m_liveHitLastRound = false;
     bool   m_livePartial = false;        ///< the last step checked only part of the items
 
-    // KICLOUD: R3.5 review: the part's size (the larger side of its pads' box, set by Start) and
+    // KICLOUD: R3.5 review: the part's size (the larger side of its pads' outlines' box, at least
+    // 1 mm, set by Start) and
     // the last dragged position: a step that jumps farther than the part's size starts the
     // rotation's round flags afresh (what was found far away says nothing about here).
+    static inline uint64_t s_kicloudRestChecks = 0;   ///< see KicloudRestChecks()
+
     int      m_kicloudPartSize = 0;
     VECTOR2I m_kicloudLastP;
     bool     m_kicloudHaveLastP = false;

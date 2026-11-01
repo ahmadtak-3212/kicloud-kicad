@@ -118,6 +118,11 @@ private:
 
 } // anonymous namespace
 
+// KICLOUD: R3.5 review: the tool event of InlineDrag's rest check, sent by the router tool's rest
+// timer (m_kicloudDragRestTimer) 200 ms after the last move of a large part (see InlineDrag).
+static const TOOL_EVENT kicloudDragRestEvent( TC_MESSAGE, TA_ACTION,
+                                              "pcbnew.InteractiveRouter.kicloudDragRest" );
+
 /**
  * Flags used by via tool actions
  */
@@ -275,6 +280,19 @@ ROUTER_TOOL::ROUTER_TOOL() :
         m_inRouteSelected( false ),
         m_startWithVia( false )
 {
+    // KICLOUD: R3.5 review: the rest timer resumes a running part drag with its rest event (only
+    // while a drag is in progress; a late tick after the drag ended does nothing). As the
+    // selection tool's disambiguation timer, the event is processed at once, so the check runs
+    // while the cursor still rests.
+    m_kicloudDragRestTimer.Bind( wxEVT_TIMER,
+                                 [this]( wxTimerEvent& )
+                                 {
+                                     if( m_router && m_router->RoutingInProgress()
+                                             && m_router->GetDragger() )
+                                     {
+                                         m_toolMgr->ProcessEvent( kicloudDragRestEvent );
+                                     }
+                                 } );
 }
 
 
@@ -526,6 +544,7 @@ private:
 
 ROUTER_TOOL::~ROUTER_TOOL()
 {
+    m_kicloudDragRestTimer.Stop();   // KICLOUD: R3.5 review
 }
 
 
@@ -2927,17 +2946,11 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
 
     // KICLOUD: R3.5 review: the rest check. A large part's live check runs in rotation, one part
     // per mouse move (PNS::COMPONENT_DRAGGER::liveCollision), so it stops when the cursor stops.
-    // 200 ms after the last move of such a part, the timer sends kicloudDragRestEvent to this
-    // loop (as the selection tool's disambiguation timer does), which runs the full check once.
-    static const TOOL_EVENT kicloudDragRestEvent( TC_MESSAGE, TA_ACTION,
-                                                  "pcbnew.InteractiveRouter.kicloudDragRest" );
-    wxTimer kicloudRestTimer;
-
-    kicloudRestTimer.Bind( wxEVT_TIMER,
-                           [this]( wxTimerEvent& )
-                           {
-                               m_toolMgr->ProcessEvent( kicloudDragRestEvent );
-                           } );
+    // 200 ms after the last move of such a part, the rest timer (m_kicloudDragRestTimer, a member)
+    // sends kicloudDragRestEvent to this loop, which runs the full check once.
+    // The kind of the dragged item, read now while it surely exists: after a board change the
+    // item may be gone, and its pointer is then only compared (see the end of the loop).
+    const bool kicloudItemIsFootprint = item->Type() == PCB_FOOTPRINT_T;
 
     while( TOOL_EVENT* evt = Wait() )
     {
@@ -3054,9 +3067,9 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
                 PNS::COMPONENT_DRAGGER* cd = dynamic_cast<PNS::COMPONENT_DRAGGER*>( dragger );
 
                 if( cd && cd->KicloudLiveCheckIsPartial() )
-                    kicloudRestTimer.StartOnce( 200 );
+                    m_kicloudDragRestTimer.StartOnce( 200 );
                 else
-                    kicloudRestTimer.Stop();
+                    m_kicloudDragRestTimer.Stop();
             }
         }
         else if( hasMouseMoved && ( evt->IsMouseUp( BUT_LEFT ) || evt->IsClick( BUT_LEFT ) ) )
@@ -3149,7 +3162,7 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
         handleCommonEvents( *evt );
     }
 
-    kicloudRestTimer.Stop();   // KICLOUD: R3.5 review
+    m_kicloudDragRestTimer.Stop();   // KICLOUD: R3.5 review
 
     const bool hadFootprints = !footprints.empty();   // KICLOUD: R3.5 review
 
@@ -3159,10 +3172,12 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
     // only when it is still on the board.
     if( kicloudBoardChanged )
     {
+        // onBoard: whether the pointer is one of the board's footprints (aIsFootprint) or tracks;
+        // only compares pointers (the kind comes from the caller, never from the item)
         auto onBoard =
-                [&]( const BOARD_ITEM* aItem ) -> bool
+                [&]( const BOARD_ITEM* aItem, bool aIsFootprint ) -> bool
                 {
-                    if( aItem->Type() == PCB_FOOTPRINT_T )
+                    if( aIsFootprint )
                     {
                         const FOOTPRINTS& fps = board()->Footprints();
                         return std::find( fps.begin(), fps.end(), aItem ) != fps.end();
@@ -3175,10 +3190,10 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
         std::erase_if( footprints,
                        [&]( FOOTPRINT* fp )
                        {
-                           return !onBoard( fp );
+                           return !onBoard( fp, true );
                        } );
 
-        if( wasLocked && onBoard( item ) )
+        if( wasLocked && onBoard( item, kicloudItemIsFootprint ) )
             item->SetLocked( true );
     }
 

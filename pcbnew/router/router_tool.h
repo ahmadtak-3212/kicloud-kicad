@@ -24,6 +24,7 @@
 #define __ROUTER_TOOL_H
 
 #include "pns_tool_base.h"
+#include <wx/timer.h>   // KICLOUD: R3.5 review (m_kicloudDragRestTimer)
 
 class PCB_SELECTION_TOOL;
 
@@ -116,6 +117,12 @@ private:
     bool                         m_inRouteSelected;
 
     bool                         m_startWithVia;         // User pressed V before routing started
+
+    // KICLOUD: R3.5 review: InlineDrag's rest timer (a large part's full collision check 200 ms
+    // after the cursor stops). A member, not a local of InlineDrag, for the same reason as the
+    // selection tool's disambiguation timer: its handler resumes InlineDrag, which may return
+    // inside that call, so the timer must outlive the drag. Stopped at every InlineDrag exit.
+    wxTimer                      m_kicloudDragRestTimer;
 };
 
 #endif
