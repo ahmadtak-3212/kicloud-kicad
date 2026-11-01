@@ -1567,7 +1567,8 @@ void Tighten( NODE *aNode, const SHAPE_LINE_CHAIN& aOldLine, const LINE& aNewLin
 // track that ends on it), so connectivity cannot change; satisfies the optimizer's other
 // constraints (vertex to keep, area, topology); and leaves alone the first or last segment where
 // the line ends on a pad or via, so the pad entry SMART_PADS made stays centred. Lines with arcs
-// and closed lines (a ring from a via back to the same via) are not glossed.
+// and closed lines (a ring from a via back to the same via, or with both ends inside the same pad
+// or via) are not glossed, and no loop cut takes the whole line.
 //
 // Cost: each candidate is scored from the few segments it changes (glossRegionScore) against the
 // line's running total, so a candidate costs O(window x segments) for the crossing test and
@@ -1748,10 +1749,32 @@ bool OPTIMIZER::gloss( LINE* aLine, const LINE* aOrigin )
     glossMergeExact( line );
 
     const std::vector<ITEM*> contacts = glossContacts( aOrigin );
-    const bool startAnchored =
-            findPadOrVia( aLine->Layer(), aLine->Net(), line.CPoint( 0 ) ) != nullptr;
-    const bool endAnchored =
-            findPadOrVia( aLine->Layer(), aLine->Net(), line.CLastPoint() ) != nullptr;
+    ITEM*      startItem = findPadOrVia( aLine->Layer(), aLine->Net(), line.CPoint( 0 ) );
+    ITEM*      endItem = findPadOrVia( aLine->Layer(), aLine->Net(), line.CLastPoint() );
+    const bool startAnchored = startItem != nullptr;
+    const bool endAnchored = endItem != nullptr;
+
+    // A ring whose two ends lie in the same pad or via (on its anchor or anywhere inside it) is
+    // closed as far as the copper goes; it is left alone like a ring closing at one point.
+    if( startItem && startItem == endItem )
+    {
+        line = SHAPE_LINE_CHAIN( before );
+        return false;
+    }
+
+    for( ITEM* contact : contacts )
+    {
+        if( !contact->OfKind( ITEM::SOLID_T | ITEM::VIA_T ) )
+            continue;
+
+        const SHAPE* shape = contact->Shape( aLine->Layer() );
+
+        if( shape && shape->Collide( line.CPoint( 0 ) ) && shape->Collide( line.CLastPoint() ) )
+        {
+            line = SHAPE_LINE_CHAIN( before );
+            return false;
+        }
+    }
 
     GLOSS_SCORE score = glossScore( line, aLine->Width() );
 
@@ -1904,6 +1927,11 @@ bool OPTIMIZER::glossStep( LINE* aLine, const std::vector<ITEM*>& aContacts, boo
     {
         for( int j = i + 2; j < nSegs && j + 1 <= lastTo; j++ )
         {
+            // never the whole line: a cut from its first to its last segment would leave a V of
+            // its two ends (a ring that crosses itself inside the pad it starts and ends in)
+            if( i == 0 && j == nSegs - 1 )
+                continue;
+
             OPT_VECTOR2I ip = current.CSegment( i ).Intersect( current.CSegment( j ) );
 
             if( !ip || !touchesNewCopper( i, j + 1 ) )
@@ -2117,6 +2145,68 @@ bool OPTIMIZER::glossSegmentIsNew( const SEG& aSeg, const LINE* aLine ) const
 }
 
 
+// AssembleUniformLine(): see the header. NODE::AssembleLine() with aAllowSegmentSizeMismatch =
+// false does not stop at a width change: it walks on and only leaves the other width's points
+// out, which joins the two ends of that stretch with a straight piece that does not exist. Here
+// the whole line is assembled as it is (widths mixed), checked to have exactly one segment link
+// per segment of its shape, and then cut down to the seed's width on both sides.
+bool OPTIMIZER::AssembleUniformLine( NODE* aNode, LINKED_ITEM* aSeed, bool aStopAtLockedJoints,
+                                     LINE& aLine )
+{
+    if( !aSeed || !aSeed->OfKind( ITEM::SEGMENT_T ) )
+        return false;
+
+    LINE full = aNode->AssembleLine( aSeed, nullptr, aStopAtLockedJoints, false, true );
+
+    if( full.ArcCount() )
+        return false;
+
+    const SHAPE_LINE_CHAIN&           shape = full.CLine();
+    const std::vector<LINKED_ITEM*>&  links = full.Links();
+    int                               seedIndex = -1;
+
+    if( (int) links.size() != shape.SegmentCount() )
+        return false;
+
+    for( int k = 0; k < shape.SegmentCount(); k++ )
+    {
+        if( !links[k]->OfKind( ITEM::SEGMENT_T ) )
+            return false;
+
+        const SEG& s = static_cast<const SEGMENT*>( links[k] )->Seg();
+        const SEG& t = shape.CSegment( k );
+
+        if( !( ( s.A == t.A && s.B == t.B ) || ( s.A == t.B && s.B == t.A ) ) )
+            return false;
+
+        if( links[k] == aSeed )
+            seedIndex = k;
+    }
+
+    if( seedIndex < 0 )
+        return false;
+
+    const int width = aSeed->Width();
+    int       lo = seedIndex;
+    int       hi = seedIndex;
+
+    while( lo > 0 && links[lo - 1]->Width() == width )
+        lo--;
+
+    while( hi + 1 < (int) links.size() && links[hi + 1]->Width() == width )
+        hi++;
+
+    aLine = LINE( full, shape.Slice( lo, hi + 1 ) );
+    aLine.SetWidth( width );
+    aLine.ClearLinks();
+
+    for( int k = lo; k <= hi; k++ )
+        aLine.Link( links[k] );
+
+    return true;
+}
+
+
 // GlossLines(): see the header. Each line is assembled once (stopping at locked joints and at
 // width changes), glossed with a fresh optimizer on aNode and, when it changed, written back:
 // the segments of the old line the new shape no longer has are removed and the new shape is added,
@@ -2150,9 +2240,17 @@ int OPTIMIZER::GlossLines( NODE* aNode, const std::vector<LINKED_ITEM*>& aSeeds,
             break;
         }
 
-        // aAllowSegmentSizeMismatch = false: a line never spans two widths, so writing it back
-        // cannot give one part another part's width (as LINE_PLACER::simplifyNewLine).
-        LINE line = aNode->AssembleLine( seed, nullptr, true, false, false );
+        // The line through the seed up to the first width change on each side, whose links are
+        // exactly its segments (AssembleUniformLine), so writing it back can neither change a
+        // width nor bridge a stretch of another width.
+        LINE line;
+
+        if( !AssembleUniformLine( aNode, seed, true, line ) )
+        {
+            visited.insert( seed );
+            continue;
+        }
+
         bool locked = false;
 
         for( const LINKED_ITEM* link : line.Links() )

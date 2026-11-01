@@ -148,8 +148,9 @@ private:
      * committed), every line the drag changed: the dragged section with the segments next to it,
      * and the tracks a shove pushed, compared with the board so copper the drag did not touch
      * keeps its shape (OPTIMIZER::GlossChangedLines()), and the point the drag ended at stays on
-     * the copper, so a corner dragged into a sharp spike is kept. Skipped when "Gloss while routing" is off
-     * and in free-angle drags (G), whose angles glossing would make 45-degree again; a forced
+     * the copper, so a corner dragged into a sharp spike is kept. Skipped when "Gloss while routing" is off,
+     * in free-angle drags (G), whose angles glossing would make 45-degree again, and in Highlight
+     * collisions mode (also when a drag fell back to it), as LINE_PLACER::glossWhileRouting(); a forced
      * commit of a colliding drag is not glossed either (FixRoute() does not call it then).
      * Caller: FixRoute(). State: only \a aNode.
      */

@@ -628,12 +628,15 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
         // from the last shown walk of this route (lastWalkTrack()), on that walk's side only and
         // with the length limits of the original walk, before giving up, which KiCad 10 did at
         // once (the head then froze at its last position). A cursor position where that retry
-        // failed is not retried (m_walkRetryFailedAt).
+        // failed is not retried for that walk kind (m_walkRetryFailedAt) until a fixing click or
+        // Backspace.
         const double initialLength = initTrack.CLine().Length();
         bool         walked = walkInitialTrack( walkaround, initTrack, aP, aCollisionMask,
                                                 initialLength, false, walkFull, walkP, walkSide );
 
-        if( !walked && m_walkRetryFailedAt != aP )
+        std::optional<VECTOR2I>& retryFailedAt = m_walkRetryFailedAt[walkMemorySlot( aCollisionMask )];
+
+        if( !walked && retryFailedAt != aP )
         {
             LINE fromLastWalk( initTrack );
 
@@ -644,7 +647,7 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
                                            initialLength, true, walkFull, walkP, walkSide );
 
                 if( !walked )
-                    m_walkRetryFailedAt = aP;
+                    retryFailedAt = aP;
             }
         }
 
@@ -1024,18 +1027,26 @@ void LINE_PLACER::glossHead( LINE& aHead )
     if( !glossWhileRouting() || aHead.PointCount() < 3 )
         return;
 
-    if( m_glossHeadCache.valid && m_glossHeadCache.node == m_currentNode
+    // Only in Walk around mode, where the world node stays the same between fixing clicks (the
+    // cache is cleared when it changes: FixRoute, UnfixRoute, SetLayer). In Shove mode every step
+    // has a new node with the tracks pushed elsewhere, and a freed node's address can come back.
+    const bool cacheable = Settings().Mode() == RM_Walkaround;
+    const int  cornerMode = static_cast<int>( Settings().GetCornerMode() );
+
+    if( cacheable && m_glossHeadCache.valid && m_glossHeadCache.node == m_currentNode
             && m_glossHeadCache.layer == aHead.Layer() && m_glossHeadCache.width == aHead.Width()
+            && m_glossHeadCache.cornerMode == cornerMode
             && m_glossHeadCache.in == aHead.CLine().CPoints() )
     {
         aHead.Line() = m_glossHeadCache.out;
         return;
     }
 
-    m_glossHeadCache.valid = true;
+    m_glossHeadCache.valid = cacheable;
     m_glossHeadCache.node = m_currentNode;
     m_glossHeadCache.layer = aHead.Layer();
     m_glossHeadCache.width = aHead.Width();
+    m_glossHeadCache.cornerMode = cornerMode;
     m_glossHeadCache.in = aHead.CLine().CPoints();
 
     OPTIMIZER optimizer( m_currentNode );
@@ -1734,6 +1745,7 @@ bool LINE_PLACER::SetLayer( int aLayer )
         m_tail.RemoveVia();
         m_head.SetLayer( m_currentLayer );
         m_tail.SetLayer( m_currentLayer );
+        m_glossHeadCache = GLOSS_HEAD_CACHE();   // KICLOUD: R3.2
         Move( m_currentEnd, nullptr );
         return true;
     }
@@ -1824,7 +1836,8 @@ void LINE_PLACER::initPlacement()
     m_direction = m_initial_direction;
     // KICLOUD: R3.1 / R3.2: a new route has no previous walk side and no glossed head yet
     m_walkMemory[0] = m_walkMemory[1] = m_pendingWalk = WALK_MEMORY();
-    m_walkRetryFailedAt.reset();
+    m_walkRetryFailedAt[0].reset();
+    m_walkRetryFailedAt[1].reset();
     m_glossHeadCache = GLOSS_HEAD_CACHE();
 
     NODE* world = Router()->GetWorld();
@@ -2103,6 +2116,12 @@ bool LINE_PLACER::FixRoute( const VECTOR2I& aP, ITEM* aEndItem, bool aForceFinis
         m_currentNode = m_lastNode;
         m_lastNode = m_lastNode->Branch();
 
+        // KICLOUD: R3.1 / R3.2: a new stage: its walks may be retried anywhere, and the glossed
+        // head of the old world node is not reused
+        m_walkRetryFailedAt[0].reset();
+        m_walkRetryFailedAt[1].reset();
+        m_glossHeadCache = GLOSS_HEAD_CACHE();
+
         m_shove->AddLockedSpringbackNode( m_currentNode );
 
         DIRECTION_45 lastSegDir = pl.EndsWithVia() ? DIRECTION_45::UNDEFINED : d_last;
@@ -2165,6 +2184,11 @@ std::optional<VECTOR2I> LINE_PLACER::UnfixRoute()
     }
 
     m_lastNode = m_currentNode->Branch();
+
+    // KICLOUD: R3.1 / R3.2: as after a fixing click (FixRoute)
+    m_walkRetryFailedAt[0].reset();
+    m_walkRetryFailedAt[1].reset();
+    m_glossHeadCache = GLOSS_HEAD_CACHE();
 
     return ret;
 }
@@ -2352,8 +2376,22 @@ void LINE_PLACER::simplifyNewLine( NODE* aNode, LINKED_ITEM* aLatest )
 
     bool optimized;
 
-    if( glossWhileRouting() )
+    // KICLOUD: R3.2: the line glossed is the one through aLatest up to the first width change on
+    // each side (OPTIMIZER::AssembleUniformLine: AssembleLine() above walks through a narrower
+    // stretch and joins its ends straight); without such a line, or with a locked segment in it,
+    // this click is not glossed.
+    LINE uniform;
+    bool glossIt = glossWhileRouting()
+                   && OPTIMIZER::AssembleUniformLine( aNode, aLatest, false, uniform );
+
+    for( const LINKED_ITEM* link : uniform.Links() )
+        glossIt = glossIt && !link->IsLocked();
+
+    if( glossIt )
     {
+        l_orig = uniform;
+        l = uniform;
+
         // KICLOUD: R3.2: gloss the line each fixing click lays, but only where it differs from the
         // board (the root of aNode) and next to those places: the track the route continued from
         // is not reshaped further away.

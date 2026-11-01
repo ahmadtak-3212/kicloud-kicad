@@ -705,7 +705,8 @@ void DRAGGER::glossBeforeCommit( NODE* aNode )
 {
     // The point the drag put a segment or a corner at stays on the copper (even a sharp corner the
     // person dragged there); m_lastValidPoint is where the committed drag ended.
-    if( aNode && Settings().GetGlossWhileRouting() && !m_freeAngleMode )
+    if( aNode && Settings().GetGlossWhileRouting() && !m_freeAngleMode
+            && m_currentMode != RM_MarkObstacles && !m_forceMarkObstaclesMode )
         OPTIMIZER::GlossChangedLines( aNode, VECTOR2I( m_lastValidPoint ) );
 }
 

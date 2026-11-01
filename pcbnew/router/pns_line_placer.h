@@ -379,8 +379,10 @@ private:
 
     /**
      * KICLOUD: R3.2 glossing: the last head glossHead() glossed and its result. When the next
-     * step brings the same head on the same layer, width and world node, the result is reused
-     * instead of glossing again (the cursor often moves without changing the head).
+     * step brings the same head on the same layer, width, corner mode and world node, the result
+     * is reused instead of glossing again (the cursor often moves without changing the head).
+     * Walk around mode only; cleared whenever the world node changes (FixRoute, UnfixRoute,
+     * SetLayer, initPlacement).
      */
     struct GLOSS_HEAD_CACHE
     {
@@ -388,6 +390,7 @@ private:
         const NODE*           node = nullptr;
         int                   layer = -1;
         int                   width = 0;
+        int                   cornerMode = -1;
         std::vector<VECTOR2I> in;
         SHAPE_LINE_CHAIN      out;
     };
@@ -532,7 +535,7 @@ private:
     WALK_MEMORY              m_walkMemory[2];      ///< by walkMemorySlot(): solids-only, full walk
     WALK_MEMORY              m_pendingWalk;        ///< rhWalkBase()'s walk until acceptWalk()
     int                      m_pendingWalkSlot = 1;
-    std::optional<VECTOR2I>  m_walkRetryFailedAt;  ///< the cursor where lastWalkTrack()'s retry failed
+    std::optional<VECTOR2I>  m_walkRetryFailedAt[2]; ///< by slot: where lastWalkTrack()'s retry failed
     GLOSS_HEAD_CACHE         m_glossHeadCache;
 };
 

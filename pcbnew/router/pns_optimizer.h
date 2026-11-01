@@ -138,8 +138,8 @@ public:
      * Callers: GlossChangedLines(), and ROUTER_TOOL for Gloss Selected Tracks.
      * With \a aPreserve, a line that passes that point still passes it afterwards (the point a
      * drag put a corner or a segment at: the person asked for that shape, even a sharp corner).
-     * Lines are assembled without crossing a width change, so a written-back line keeps its own
-     * width; closed lines, locked lines (tuning patterns included) and the lines of a
+     * Lines are assembled up to the first width change (AssembleUniformLine()), so a written-back
+     * line keeps its own width and never bridges a stretch of another width; closed lines, locked lines (tuning patterns included) and the lines of a
      * differential pair's nets are left alone; segments the new shape shares with the old line
      * keep their board item. \a aBudget bounds the candidates evaluated over all lines (0: the
      * default, GlossDefaultBudget); when it runs out the remaining lines are left as they are and
@@ -151,6 +151,17 @@ public:
                            const NODE* aReference, int* aLinesChanged = nullptr,
                            const std::optional<VECTOR2I>& aPreserve = std::nullopt,
                            int aBudget = 0, bool* aPartial = nullptr );
+
+    /**
+     * KICLOUD: R3.2 glossing: the line through \a aSeed (a segment in \a aNode) up to the first
+     * width change on each side, and up to locked joints when \a aStopAtLockedJoints, into
+     * \a aLine, linked to exactly the segments of its shape. Returns false (\a aLine unusable)
+     * for a line with arcs or one whose links do not match its shape one to one, which the caller
+     * must then leave alone. Callers: GlossLines(), LINE_PLACER::simplifyNewLine(). Changes
+     * nothing in \a aNode.
+     */
+    static bool AssembleUniformLine( NODE* aNode, LINKED_ITEM* aSeed, bool aStopAtLockedJoints,
+                                     LINE& aLine );
 
     /// KICLOUD: R3.2: the candidate replacements one gloss evaluates when not told otherwise.
     static constexpr int GlossDefaultBudget = 4000;
