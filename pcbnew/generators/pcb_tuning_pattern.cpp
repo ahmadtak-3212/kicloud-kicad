@@ -423,25 +423,29 @@ bool PCB_TUNING_PATTERN::baselineValid()
 }
 
 
-// KICLOUD: R3.3 (docs/patches.md): whether the tuning profile of aTrack's net class has time
-// domain tuning enabled, the test CreateNew() makes before it switches a new pattern to delay
-// tuning. Callers: the two places in EditStart that fall back to the tuning profile when no length
-// or skew rule applies; they used to switch to delay tuning for any profile, so a pattern on a net
-// class with a length-only profile (an impedance profile) had no target and placed no meanders
-// unless "Override custom rules" was set. Returns false when the class has no profile or the board
-// no project. Changes nothing.
-static bool kicloudProfileTunesTimeDomain( BOARD* aBoard, PCB_TRACK* aTrack )
+// KICLOUD: R3.3 (docs/patches.md): whether the tuning profile of aTrack's net class tunes delay
+// (time domain tuning enabled) or length. Callers: the two places in EditStart that fall back to
+// the tuning profile when no length or skew rule applies; they used to switch to delay tuning for
+// any profile, so a pattern on a net class with a length-only profile (an impedance profile) had
+// no target and placed no meanders unless "Override custom rules" was set. Results: true (delay),
+// false (length), or no value when the class has no profile, the board no project, or the project
+// no profile of that name (GetTuningProfile() then returns a placeholder whose time domain flag is
+// not initialized, so it is not read). Changes nothing.
+static std::optional<bool> kicloudProfileTunesTimeDomain( BOARD* aBoard, PCB_TRACK* aTrack )
 {
     if( !aBoard || !aTrack || !aBoard->GetProject()
             || !aTrack->GetEffectiveNetClass()->HasTuningProfile() )
     {
-        return false;
+        return std::nullopt;
     }
 
+    const wxString name = aTrack->GetEffectiveNetClass()->GetTuningProfile();
     const std::shared_ptr<TUNING_PROFILES> tuningParams =
             aBoard->GetProject()->GetProjectFile().TuningProfileParameters();
-    TUNING_PROFILE& profile =
-            tuningParams->GetTuningProfile( aTrack->GetEffectiveNetClass()->GetTuningProfile() );
+    TUNING_PROFILE& profile = tuningParams->GetTuningProfile( name );
+
+    if( profile.m_ProfileName != name )
+        return std::nullopt;
 
     return profile.m_EnableTimeDomainTuning;
 }
@@ -612,10 +616,12 @@ void PCB_TUNING_PATTERN::EditStart( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_
                 aTool->GetManager()->PostEvent( EVENTS::SelectedItemsModified );
             }
             // KICLOUD: R3.3: as CreateNew(): only a tuning profile with time domain tuning enabled
-            // makes the pattern tune delay (else it tuned an unset delay and placed nothing)
-            else if( kicloudProfileTunesTimeDomain( aBoard, track ) )
+            // makes the pattern tune delay (else it tuned an unset delay and placed nothing); a
+            // length-only profile makes it tune length, also when the pattern was saved tuning
+            // delay under an earlier profile (is_time_domain is kept in the file)
+            else if( std::optional<bool> timeDomain = kicloudProfileTunesTimeDomain( aBoard, track ) )
             {
-                m_settings.m_isTimeDomain = true;
+                m_settings.m_isTimeDomain = *timeDomain;
                 aTool->GetManager()->PostEvent( EVENTS::SelectedItemsModified );
             }
         }
@@ -651,9 +657,10 @@ void PCB_TUNING_PATTERN::EditStart( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_
                     aTool->GetManager()->PostEvent( EVENTS::SelectedItemsModified );
                 }
                 // KICLOUD: R3.3: as above (CreateNew())
-                else if( kicloudProfileTunesTimeDomain( aBoard, track ) )
+                else if( std::optional<bool> timeDomain =
+                                 kicloudProfileTunesTimeDomain( aBoard, track ) )
                 {
-                    m_settings.m_isTimeDomain = true;
+                    m_settings.m_isTimeDomain = *timeDomain;
                     aTool->GetManager()->PostEvent( EVENTS::SelectedItemsModified );
                 }
             }
