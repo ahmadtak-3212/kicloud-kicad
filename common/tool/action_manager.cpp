@@ -140,6 +140,38 @@ TOOL_ACTION* ACTION_MANAGER::FindAction( const std::string& aActionName ) const
 }
 
 
+// KICLOUD: R0.2 (docs/patches.md): whether aAction is an activation action of another KiCad program
+// than the one whose tool is running now. The browser editor links every program (eeschema,
+// pcbnew, gerbview, ...) into one binary, so ACTION_MANAGER::GetActionList() is one static list and
+// every frame's action manager holds every program's actions; on the desktop each program is its
+// own library with its own list. A hotkey can then name actions of two programs, and the hotkey
+// map lists them in name order: W is "eeschema...drawWires" before "pcbnew...trackWidthInc". The
+// eeschema activation reaches the pcbnew tool that is running (the router), which ends its route
+// on any activation, and RunHotKey stops there because the event was handled. Called by RunHotKey
+// for each candidate action. Inputs: the action and this manager's tool manager. Result: true only
+// when the action activates a tool (AF_ACTIVATE), no tool of that name is registered here, the
+// action's program (its name up to the first '.') is not "common", and a tool of a different
+// program is running; with the selection tool running ("common.") the result is false and nothing
+// changes. No state is changed.
+static bool kicloudIsForeignActivation( const TOOL_ACTION& aAction, TOOL_MANAGER* aToolMgr )
+{
+    if( !aToolMgr || !aAction.IsActivation() || aToolMgr->FindTool( aAction.GetToolName() ) )
+        return false;
+
+    TOOL_BASE* current = aToolMgr->GetCurrentTool();
+
+    if( !current )
+        return false;
+
+    const std::string& actionName = aAction.GetName();
+    const std::string& toolName = current->GetName();
+    const std::string  actionApp = actionName.substr( 0, actionName.find( '.' ) );
+    const std::string  toolApp = toolName.substr( 0, toolName.find( '.' ) );
+
+    return actionApp != "common" && toolApp != "common" && actionApp != toolApp;
+}
+
+
 bool ACTION_MANAGER::RunHotKey( int aHotKey ) const
 {
     int key = aHotKey & ~MD_MODIFIER_MASK;
@@ -184,6 +216,10 @@ bool ACTION_MANAGER::RunHotKey( int aHotKey ) const
     {
         if( action->GetScope() == AS_GLOBAL )
         {
+            // KICLOUD: R0.2: another program's activation never runs here (see above)
+            if( kicloudIsForeignActivation( *action, m_toolMgr ) )
+                continue;
+
             // Store the global action in case there are no context actions to run
             global.emplace_back( action );
             continue;
