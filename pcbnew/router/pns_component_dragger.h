@@ -120,13 +120,18 @@ public:
     }
 
     /**
-     * KICLOUD: R3.5 what stops the part from being dropped here: the first collision that the
-     * last Drag() or FixRoute() found between a dragged item (a moved pad, a footprint graphic,
-     * or a track bent to follow a pad) and the rest of the board. Filled by findCollision(); empty
-     * (m_found false) when the dragged items collide with nothing, or in Highlight collisions mode
-     * (which commits anyway). The board items it points to are the ones the router world was
-     * built from: they live as long as the drag (the board is not edited during a drag); the
-     * router's own items are not kept, because the next Drag() frees its branch.
+     * KICLOUD: R3.5 what stops the part from being dropped here: a collision between a dragged
+     * item (a moved pad, a footprint graphic, or a track bent to follow a pad) and the rest of
+     * the board. After FixRoute() it is exact: the first collision at the drop position, or empty
+     * (m_found false) when nothing collides. During the drag (Drag()) it is the last collision the
+     * live check found, which for a large part (more than KICLOUD_LIVE_CHECK_BUDGET queries) may
+     * come from a step or two back (see liveCollision()). In Highlight collisions mode (which
+     * commits anyway) nothing is checked. The board items it points to are the ones the router
+     * world was built from. They stay valid while the board is unchanged, which the router tool
+     * guarantees for its drags: ROUTER_TOOL::InlineDrag swallows the editing actions while a drag
+     * runs and cancels the drag when the board changes under it (TA_MODEL_CHANGE with the world no
+     * longer matching the board), before the record is read again. The router's own items are not
+     * kept, because the next Drag() frees its branch.
      */
     struct KICLOUD_DROP_COLLISION
     {
@@ -147,6 +152,17 @@ private:
     // records it in m_kicloudCollision. Returns whether one was found.
     bool findCollision( NODE* aNode );
 
+    // KICLOUD: R3.5 checks one dragged item against aNode; on a hit records it in
+    // m_kicloudCollision and returns true.
+    bool checkItem( NODE* aNode, const ITEM* aItem );
+
+    // KICLOUD: R3.5 review: the bounded check of a drag step (see the .cpp).
+    bool liveCollision( NODE* aNode );
+
+    /// KICLOUD: R3.5 review: world queries (one per pad or shape, one per track segment) the live
+    /// check may make per drag step; a part whose dragged items need more is checked in rotation.
+    static constexpr int KICLOUD_LIVE_CHECK_BUDGET = 64;
+
     struct DRAGGED_CONNECTION
     {
         LINE     origLine;
@@ -166,6 +182,12 @@ private:
     VECTOR2I m_p0;
 
     KICLOUD_DROP_COLLISION m_kicloudCollision;   // KICLOUD: R3.5
+
+    // KICLOUD: R3.5 review: the live check's rotation (liveCollision): the next item to check, and
+    // whether the round in progress and the last full round found a collision.
+    size_t m_liveNext = 0;
+    bool   m_liveHitThisRound = false;
+    bool   m_liveHitLastRound = false;
 };
 
 }; // namespace PNS

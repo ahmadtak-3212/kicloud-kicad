@@ -2274,6 +2274,11 @@ void ROUTER_TOOL::performDragging( int aMode )
 
     UI_UPDATE_INTERVAL_GUARD uiGuard( 200 );
 
+    // KICLOUD: R3.5 review: a refused click's note at the cursor is cleared by the next move, and
+    // its status bar text is replaced by the tool's own message when the drag ends.
+    bool kicloudRefusalNote = false;
+    bool kicloudRefusalMsg = false;
+
     while( TOOL_EVENT* evt = Wait() )
     {
         ctls->ForceCursorPosition( false );
@@ -2282,6 +2287,12 @@ void ROUTER_TOOL::performDragging( int aMode )
         {
             updateEndItem( *evt );
             m_router->Move( m_endSnapPoint, m_endItem );
+
+            if( kicloudRefusalNote )
+            {
+                view()->ClearPreview();   // the preview holds only notes in this drag
+                kicloudRefusalNote = false;
+            }
 
             if( PNS::DRAG_ALGO* dragger = m_router->GetDragger() )
             {
@@ -2314,8 +2325,12 @@ void ROUTER_TOOL::performDragging( int aMode )
             if( m_router->FixRoute( m_endSnapPoint, m_endItem, forceFinish, forceCommit ) )
                 break;
 
-            // KICLOUD: R3.5 the drag stays (as before) but no longer silently: say why.
+            // KICLOUD: R3.5 the drag stays (as before) but no longer silently: say why (the note
+            // replaces a "Track violates DRC." note of the last move).
+            view()->ClearPreview();
             kicloudShowDragRefusal( true );
+            kicloudRefusalNote = true;
+            kicloudRefusalMsg = true;
         }
         else if( evt->IsClick( BUT_RIGHT ) )
         {
@@ -2384,6 +2399,16 @@ void ROUTER_TOOL::performDragging( int aMode )
     ctls->SetAutoPan( false );
     ctls->ForceCursorPosition( false );
     highlightNets( false );
+
+    // KICLOUD: R3.5 review: no PopTool here (the router tool stays), so put its own tool message
+    // back over a refusal's text.
+    if( kicloudRefusalMsg )
+    {
+        std::string  name = frame()->CurrentToolName();
+        TOOL_ACTION* action = m_toolMgr->GetActionManager()->FindAction( name );
+
+        frame()->DisplayToolMsg( action ? action->GetFriendlyName() : wxString( name ) );
+    }
 }
 
 
@@ -2491,6 +2516,35 @@ void ROUTER_TOOL::restoreSelection( const PCB_SELECTION& aOriginalSelection )
 }
 
 
+// KICLOUD: R3.5 review: whether aEvent runs one of the board editor's editing actions that would
+// commit on the item under the cursor (rotate, flip, mirror, delete, properties, duplicate, array,
+// swap, move exactly / relative to, break track). InlineDrag swallows them while a drag runs: the
+// drag cleared the selection, and an edit committed under the router would leave its world (and
+// the drag's next commit) stale. Activations (Move, the drawing tools) already end the drag as Esc
+// does; anything else that commits is caught by InlineDrag's TA_MODEL_CHANGE branch. Input: a
+// TC_COMMAND event. No state is changed.
+static bool kicloudIsEditAction( const TOOL_EVENT& aEvent )
+{
+    static const TOOL_ACTION* const editActions[] = {
+        &PCB_ACTIONS::rotateCw,          &PCB_ACTIONS::rotateCcw,     &PCB_ACTIONS::flip,
+        &PCB_ACTIONS::mirrorH,           &PCB_ACTIONS::mirrorV,       &PCB_ACTIONS::properties,
+        &ACTIONS::doDelete,              &PCB_ACTIONS::deleteFull,    &ACTIONS::duplicate,
+        &PCB_ACTIONS::duplicateIncrement, &PCB_ACTIONS::createArray,  &PCB_ACTIONS::swap,
+        &PCB_ACTIONS::move,              &PCB_ACTIONS::moveIndividually,
+        &PCB_ACTIONS::moveExact,         &PCB_ACTIONS::moveWithReference,
+        &PCB_ACTIONS::positionRelative,  &PCB_ACTIONS::breakTrack
+    };
+
+    for( const TOOL_ACTION* action : editActions )
+    {
+        if( aEvent.IsAction( action ) )
+            return true;
+    }
+
+    return false;
+}
+
+
 // Drag the selected track, via, arc or footprint(s) with the router (push-and-shove), started from
 // the selection/edit tool (EDIT_TOOL::invokeInlineRouter, the D/G drag keys) while the router tool
 // is not active. Activates the router tool (TOOL_BASE::Reset rebuilds router and world), finds the
@@ -2503,7 +2557,9 @@ void ROUTER_TOOL::restoreSelection( const PCB_SELECTION& aOriginalSelection )
 // KICLOUD: R3.5: a click the dragger refuses (a collision; Ctrl+click forces it) keeps the drag
 // running with a message in the status bar and at the cursor (kicloudShowDragRefusal), instead of
 // ending it with nothing committed and no message; a part drag also shows at the cursor, while it
-// moves, whether the current position would be refused.
+// moves, whether the current position would be refused. While the drag runs, the editing actions
+// are swallowed (kicloudIsEditAction), and a change of the board under it (TA_MODEL_CHANGE with
+// the router's world no longer matching the board) cancels it with a message in the info bar.
 int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
 {
     const PCB_SELECTION selection = m_toolMgr->GetTool<PCB_SELECTION_TOOL>()->GetSelection();
@@ -2790,8 +2846,60 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
 
     UI_UPDATE_INTERVAL_GUARD uiGuard( 200 );
 
+    // KICLOUD: R3.5 the dragged footprints' graphics, pads without copper, reference and value as
+    // preview copies moved by aOffset (the router draws the copper pads and tracks), the originals
+    // hidden. Moved here from the motion step unchanged, so that a refused click can redraw the
+    // preview after clearing it (the click's note must replace the motion step's, not pile on it).
+    // State: the view's preview and the originals' hidden flags (shown again after the loop).
+    auto addFootprintPreview =
+            [&]( const VECTOR2I& aOffset )
+            {
+                BOARD_ITEM* previewItem;
+
+                for( FOOTPRINT* footprint : footprints )
+                {
+                    for( BOARD_ITEM* drawing : footprint->GraphicalItems() )
+                    {
+                        previewItem = static_cast<BOARD_ITEM*>( drawing->Clone() );
+                        previewItem->Move( aOffset );
+
+                        view()->AddToPreview( previewItem );
+                        view()->Hide( drawing, true );
+                    }
+
+                    for( PAD* pad : footprint->Pads() )
+                    {
+                        if( ( pad->GetLayerSet() & LSET::AllCuMask() ).none()
+                            && pad->GetDrillSize().x == 0 )
+                        {
+                            previewItem = static_cast<BOARD_ITEM*>( pad->Clone() );
+                            previewItem->Move( aOffset );
+
+                            view()->AddToPreview( previewItem );
+                        }
+                        else
+                        {
+                            // Pads with copper or holes are handled by the router
+                        }
+
+                        view()->Hide( pad, true );
+                    }
+
+                    previewItem = static_cast<BOARD_ITEM*>( footprint->Reference().Clone() );
+                    previewItem->Move( aOffset );
+                    view()->AddToPreview( previewItem );
+                    view()->Hide( &footprint->Reference() );
+
+                    previewItem = static_cast<BOARD_ITEM*>( footprint->Value().Clone() );
+                    previewItem->Move( aOffset );
+                    view()->AddToPreview( previewItem );
+                    view()->Hide( &footprint->Value() );
+                }
+            };
+
     bool hasMouseMoved = false;
     bool hasMultidragCancelled = false;
+    bool kicloudBoardChanged = false;   // KICLOUD: R3.5 review (the board changed under the drag)
 
     while( TOOL_EVENT* evt = Wait() )
     {
@@ -2818,48 +2926,12 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
             if( !footprints.empty() )
             {
                 VECTOR2I offset = m_endSnapPoint - p;
-                BOARD_ITEM* previewItem;
 
-                for( FOOTPRINT* footprint : footprints )
+                addFootprintPreview( offset );   // KICLOUD: R3.5 (moved into a lambda)
+
+                if( showCourtyardConflicts )
                 {
-                    for( BOARD_ITEM* drawing : footprint->GraphicalItems() )
-                    {
-                        previewItem = static_cast<BOARD_ITEM*>( drawing->Clone() );
-                        previewItem->Move( offset );
-
-                        view()->AddToPreview( previewItem );
-                        view()->Hide( drawing, true );
-                    }
-
-                    for( PAD* pad : footprint->Pads() )
-                    {
-                        if( ( pad->GetLayerSet() & LSET::AllCuMask() ).none()
-                            && pad->GetDrillSize().x == 0 )
-                        {
-                            previewItem = static_cast<BOARD_ITEM*>( pad->Clone() );
-                            previewItem->Move( offset );
-
-                            view()->AddToPreview( previewItem );
-                        }
-                        else
-                        {
-                            // Pads with copper or holes are handled by the router
-                        }
-
-                        view()->Hide( pad, true );
-                    }
-
-                    previewItem = static_cast<BOARD_ITEM*>( footprint->Reference().Clone() );
-                    previewItem->Move( offset );
-                    view()->AddToPreview( previewItem );
-                    view()->Hide( &footprint->Reference() );
-
-                    previewItem = static_cast<BOARD_ITEM*>( footprint->Value().Clone() );
-                    previewItem->Move( offset );
-                    view()->AddToPreview( previewItem );
-                    view()->Hide( &footprint->Value() );
-
-                    if( showCourtyardConflicts )
+                    for( FOOTPRINT* footprint : footprints )
                         footprint->Move( offset );
                 }
 
@@ -2923,6 +2995,13 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
             // (the part goes back, nothing is committed) or Ctrl+clicks.
             if( !m_router->FixRoute( m_endSnapPoint, m_endItem, forceFinish, forceCommit ) )
             {
+                // the click's note (from FixRoute's exact check) replaces the motion step's note:
+                // clear the preview and draw the footprints again under it
+                view()->ClearPreview();
+
+                if( !footprints.empty() )
+                    addFootprintPreview( m_endSnapPoint - p );
+
                 kicloudShowDragRefusal( true );
                 continue;
             }
@@ -2937,15 +3016,33 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
             wxFAIL;
             break;
         }
+        // KICLOUD: R3.5 review: the board changed under the drag (a commit: anything not blocked
+        // below, or a remote change). The router's world and the board items it points to (the
+        // dragged items, the collision record) may be stale, and a later click would commit the
+        // stale branch: cancel the drag, as Esc does, and say why. A commit posted before the drag
+        // started (the router's world was synced after it) leaves the world matching and is
+        // passed on as before.
+        else if( evt->Category() == TC_MESSAGE && evt->Action() == TA_MODEL_CHANGE
+                 && !m_iface->KicloudWorldMatchesBoard() )
+        {
+            kicloudBoardChanged = true;
+            hasMultidragCancelled = true;
+            break;
+        }
         else if( evt->Category() == TC_COMMAND )
         {
             // TODO: It'd be nice to be able to say "don't allow any non-trivial editing actions",
             // but we don't at present have that, so we just knock out some of the egregious ones.
+            // KICLOUD: R3.5 review: and the editing actions (rotate, flip, mirror, delete,
+            // properties, duplicate, move, ...): the selection is cleared during the drag, so they
+            // would act on the item under the cursor and commit under the router (a refused drop
+            // now keeps the drag running for as long as the person likes).
             if( evt->IsAction( &ACTIONS::cut )
                 || evt->IsAction( &ACTIONS::copy )
                 || evt->IsAction( &ACTIONS::paste )
                 || evt->IsAction( &ACTIONS::pasteSpecial )
-                || ZONE_FILLER_TOOL::IsZoneFillAction( evt ) )
+                || ZONE_FILLER_TOOL::IsZoneFillAction( evt )
+                || kicloudIsEditAction( *evt ) )
             {
                 wxBell();
             }
@@ -2968,6 +3065,19 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
         }
 
         handleCommonEvents( *evt );
+    }
+
+    // KICLOUD: R3.5 review: a dragged footprint the change removed is not touched again (its
+    // pointer is only compared, never dereferenced, by this filter). The lock of an item unlocked
+    // for the drag is not restored either: the item may be gone.
+    if( kicloudBoardChanged )
+    {
+        std::erase_if( footprints,
+                       [&]( FOOTPRINT* fp )
+                       {
+                           const FOOTPRINTS& onBoard = board()->Footprints();
+                           return std::find( onBoard.begin(), onBoard.end(), fp ) == onBoard.end();
+                       } );
     }
 
     if( !footprints.empty() )
@@ -2997,7 +3107,13 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
         m_router->StopRouting();
 
 
-    if( itemsToDrag.Size() && hasMultidragCancelled )
+    if( kicloudBoardChanged )
+    {
+        // KICLOUD: R3.5 review: the selected items may be gone; the selection stays empty.
+        frame()->ShowInfoBarMsg( _( "The board changed during the drag; the drag was "
+                                    "cancelled." ) );
+    }
+    else if( itemsToDrag.Size() && hasMultidragCancelled )
     {
         restoreSelection( selection );
     }

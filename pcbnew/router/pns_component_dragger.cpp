@@ -243,8 +243,8 @@ bool COMPONENT_DRAGGER::Drag( const VECTOR2I& aP )
     // KICLOUD: R3.5 know at every step whether this position could be dropped, so the router
     // tool can say so next to the cursor while the person is still moving (Highlight collisions
     // mode commits anyway, so nothing is checked there). The check is the one FixRoute() makes,
-    // over the few items this drag moved.
-    m_dragStatus = Settings().AllowDRCViolations() || !findCollision( m_currentNode );
+    // bounded per step (liveCollision); the drop's own check in FixRoute() stays exact.
+    m_dragStatus = Settings().AllowDRCViolations() || !liveCollision( m_currentNode );
 
     return true;
 }
@@ -252,14 +252,10 @@ bool COMPONENT_DRAGGER::Drag( const VECTOR2I& aP )
 
 // KICLOUD: R3.5 Checks each dragged item (m_draggedItems: the moved pads and footprint shapes,
 // the tracks between two of the part's pads, and every track bent to follow a pad) against
-// aNode with NODE::CheckColliding, in the order they were added, and stops at the first hit:
-// the same test, in the same order, as KiCad's FixRoute made with CheckColliding( ITEM_SET ).
-// Records the dragged item (pad or track, its board item and net) and the item it hits (kind,
-// board item, net) in m_kicloudCollision, for the router tool's message; a hole hit is recorded as
-// its pad or via; an obstacle the drag itself created (another bent track of the same part) has no
-// board item, only its net.
+// aNode with checkItem(), in the order they were added, and stops at the first hit: the same
+// test, in the same order, as KiCad's FixRoute made with NODE::CheckColliding( ITEM_SET ).
 // Input: the node to check in (the drag's current branch). Result: whether a collision exists.
-// State: m_kicloudCollision only.
+// State: m_kicloudCollision (cleared first, then the hit if any).
 bool COMPONENT_DRAGGER::findCollision( NODE* aNode )
 {
     m_kicloudCollision = KICLOUD_DROP_COLLISION();
@@ -269,32 +265,110 @@ bool COMPONENT_DRAGGER::findCollision( NODE* aNode )
 
     for( const ITEM* item : m_draggedItems.CItems() )
     {
-        NODE::OPT_OBSTACLE obs = aNode->CheckColliding( item );
-
-        if( !obs )
-            continue;
-
-        m_kicloudCollision.m_found = true;
-        m_kicloudCollision.m_headIsLine =
-                item->OfKind( ITEM::LINE_T | ITEM::SEGMENT_T | ITEM::ARC_T );
-        m_kicloudCollision.m_headParent = item->Parent();
-        m_kicloudCollision.m_headNet = item->Net();
-
-        if( const ITEM* hit = obs->m_item )
-        {
-            // a pad's or via's hole is an item of its own without a board item: name its pad or via
-            if( !hit->Parent() && hit->ParentPadVia() )
-                hit = hit->ParentPadVia();
-
-            m_kicloudCollision.m_obstacleKind = hit->Kind();
-            m_kicloudCollision.m_obstacleParent = hit->Parent();
-            m_kicloudCollision.m_obstacleNet = hit->Net();
-        }
-
-        return true;
+        if( checkItem( aNode, item ) )
+            return true;
     }
 
     return false;
+}
+
+
+// KICLOUD: R3.5 Checks one dragged item against aNode (NODE::CheckColliding, the router's
+// clearance rules). On a hit, records the dragged item (pad or track, its board item and net) and
+// the item it hits (kind, board item, net) in m_kicloudCollision, for the router tool's message;
+// a hole hit is recorded as its pad or via; an obstacle the drag itself created (another bent
+// track of the same part) has no board item, only its net. Result: whether aItem collides.
+// State: m_kicloudCollision on a hit only.
+bool COMPONENT_DRAGGER::checkItem( NODE* aNode, const ITEM* aItem )
+{
+    NODE::OPT_OBSTACLE obs = aNode->CheckColliding( aItem );
+
+    if( !obs )
+        return false;
+
+    m_kicloudCollision = KICLOUD_DROP_COLLISION();
+    m_kicloudCollision.m_found = true;
+    m_kicloudCollision.m_headIsLine =
+            aItem->OfKind( ITEM::LINE_T | ITEM::SEGMENT_T | ITEM::ARC_T );
+    m_kicloudCollision.m_headParent = aItem->Parent();
+    m_kicloudCollision.m_headNet = aItem->Net();
+
+    if( const ITEM* hit = obs->m_item )
+    {
+        // a pad's or via's hole is an item of its own without a board item: name its pad or via
+        if( !hit->Parent() && hit->ParentPadVia() )
+            hit = hit->ParentPadVia();
+
+        m_kicloudCollision.m_obstacleKind = hit->Kind();
+        m_kicloudCollision.m_obstacleParent = hit->Parent();
+        m_kicloudCollision.m_obstacleNet = hit->Net();
+    }
+
+    return true;
+}
+
+
+// KICLOUD: R3.5 review: the collision check of one drag step, bounded so that a large part does
+// not query the world for every moved item on every mouse move (upstream checked once, at the
+// drop). Cost is counted in world queries: one per pad or shape, one per segment of a bent track
+// (plus its via). When the dragged items need at most KICLOUD_LIVE_CHECK_BUDGET queries (any
+// two-pad part, an SOIC with its fan-out), the step runs findCollision(): exact. Otherwise the
+// step checks the next items in rotation until the budget is spent (m_draggedItems is rebuilt by
+// every Drag() in the same order, so the rotation index stays meaningful), and reports a
+// collision while the round in progress or the last complete round found one. The answer (the
+// note at the cursor) can then lag a few steps behind a fast move over a large part; the drop's
+// own check (FixRoute) is always the full findCollision(). Input: the drag's current branch.
+// Result: whether to show the drop as refused. State: the rotation (m_liveNext, the round flags)
+// and m_kicloudCollision.
+bool COMPONENT_DRAGGER::liveCollision( NODE* aNode )
+{
+    const std::vector<ITEM*>& items = m_draggedItems.CItems();
+
+    // cost: the world queries CheckColliding makes for an item at most
+    auto cost =
+            []( const ITEM* aItem ) -> int
+            {
+                if( const LINE* line = dyn_cast<const LINE*>( aItem ) )
+                {
+                    int n = line->CLine().SegmentCount() + ( line->EndsWithVia() ? 1 : 0 );
+                    return std::max( 1, n );
+                }
+
+                return 1;
+            };
+
+    int total = 0;
+
+    for( const ITEM* item : items )
+        total += cost( item );
+
+    if( !aNode || items.empty() || total <= KICLOUD_LIVE_CHECK_BUDGET )
+    {
+        m_liveNext = 0;
+        m_liveHitThisRound = m_liveHitLastRound = false;
+        return findCollision( aNode );
+    }
+
+    if( m_liveNext >= items.size() )
+        m_liveNext = 0;
+
+    for( int spent = 0; spent < KICLOUD_LIVE_CHECK_BUDGET; )
+    {
+        if( m_liveNext == 0 )
+        {
+            m_liveHitLastRound = m_liveHitThisRound;
+            m_liveHitThisRound = false;
+        }
+
+        const ITEM* item = items[m_liveNext];
+        m_liveNext = ( m_liveNext + 1 ) % items.size();
+        spent += cost( item );
+
+        if( checkItem( aNode, item ) )
+            m_liveHitThisRound = true;
+    }
+
+    return m_liveHitThisRound || m_liveHitLastRound;
 }
 
 
