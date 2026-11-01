@@ -173,7 +173,7 @@ public:
      * kicloudTestRouterHead, wasm/bindings/pcbnew_embind.cpp). Reset by routeStep() and added up
      * over the step (Shove mode walks around solids, shoves and may then walk again);
      * written by routeStep(), rhWalkBase(), walkInitialTrack() (walksB), walkSides() (routes),
-     * rhShoveOnly() and acceptWalk(); reading it changes nothing.
+     * rhShoveOnly(), acceptWalk() and Move() (moveMs, changedItems); reading it changes nothing.
      */
     struct WALK_STATS
     {
@@ -184,6 +184,9 @@ public:
         double shoveMs = 0.0;      ///< Shove mode: the time in SHOVE::Run()
         double recordMs = 0.0;     ///< the time in recordObstacleSides() after the step was shown
         double stepMs = 0.0;       ///< the whole routeStep() (walks, shove, optimizer, gloss)
+        double moveMs = 0.0;       ///< the whole Move() (routeStep() and the leading ratsnest line)
+        int    changedItems = 0;   ///< items the step's node adds or removes against the board
+                                   ///< (ROUTER::updateView() then draws and checks each)
     };
 
     const WALK_STATS& LastWalkStats() const { return m_walkStats; }

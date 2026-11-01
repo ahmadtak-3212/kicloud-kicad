@@ -2284,6 +2284,8 @@ bool LINE_PLACER::Move( const VECTOR2I& aP, ITEM* aEndItem )
     LINE current;
     int  eiDepth = -1;
 
+    const auto moveStart = std::chrono::steady_clock::now();   // KICLOUD: R3.1b (LastWalkStats)
+
     if( aEndItem && aEndItem->Owner() )
         eiDepth = static_cast<const NODE*>( aEndItem->Owner() )->Depth();
 
@@ -2348,6 +2350,20 @@ bool LINE_PLACER::Move( const VECTOR2I& aP, ITEM* aEndItem )
 
     updateLeadingRatLine();
     m_mouseTrailTracer.AddTrailPoint( aP );
+
+    // KICLOUD: R3.1b: LastWalkStats(): how many items this step's node changes against the board
+    // (ROUTER::updateView() draws and checks each of them after Move()), and Move()'s own time
+    {
+        NODE::ITEM_VECTOR removed, added;
+
+        if( NODE* node = CurrentNode( true ) )
+            node->GetUpdatedItems( removed, added );
+
+        m_walkStats.changedItems = (int) ( removed.size() + added.size() );
+        m_walkStats.moveMs = std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now() - moveStart ).count();
+    }
+
     return true;
 }
 
