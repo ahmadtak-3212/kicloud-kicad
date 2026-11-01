@@ -32,6 +32,7 @@
 
 using namespace std::placeholders;
 #include <tool/action_manager.h>
+#include <wx/timer.h>   // KICLOUD: R3.5 review (InlineDrag's rest timer)
 #include <board.h>
 #include <board_design_settings.h>
 #include <board_item.h>
@@ -2518,11 +2519,12 @@ void ROUTER_TOOL::restoreSelection( const PCB_SELECTION& aOriginalSelection )
 
 // KICLOUD: R3.5 review: whether aEvent runs one of the board editor's editing actions that would
 // commit on the item under the cursor (rotate, flip, mirror, delete, properties, duplicate, array,
-// swap, move exactly / relative to, break track). InlineDrag swallows them while a drag runs: the
-// drag cleared the selection, and an edit committed under the router would leave its world (and
-// the drag's next commit) stale. Activations (Move, the drawing tools) already end the drag as Esc
-// does; anything else that commits is caught by InlineDrag's TA_MODEL_CHANGE branch. Input: a
-// TC_COMMAND event. No state is changed.
+// swap, move exactly / relative to, break track) or Board Setup (it reloads the design rules the
+// drag checks against). InlineDrag swallows them while a drag runs: the drag cleared the
+// selection, and an edit committed under the router would leave its world (and the drag's next
+// commit) stale. Activations (Move, the drawing tools) already end the drag as Esc does; anything
+// else that changes the board is caught by InlineDrag's change-counter check, which cancels the
+// drag. Input: a TC_COMMAND event. No state is changed.
 static bool kicloudIsEditAction( const TOOL_EVENT& aEvent )
 {
     static const TOOL_ACTION* const editActions[] = {
@@ -2532,7 +2534,8 @@ static bool kicloudIsEditAction( const TOOL_EVENT& aEvent )
         &PCB_ACTIONS::duplicateIncrement, &PCB_ACTIONS::createArray,  &PCB_ACTIONS::swap,
         &PCB_ACTIONS::move,              &PCB_ACTIONS::moveIndividually,
         &PCB_ACTIONS::moveExact,         &PCB_ACTIONS::moveWithReference,
-        &PCB_ACTIONS::positionRelative,  &PCB_ACTIONS::breakTrack
+        &PCB_ACTIONS::positionRelative,  &PCB_ACTIONS::breakTrack,
+        &PCB_ACTIONS::boardSetup
     };
 
     for( const TOOL_ACTION* action : editActions )
@@ -2557,9 +2560,11 @@ static bool kicloudIsEditAction( const TOOL_EVENT& aEvent )
 // KICLOUD: R3.5: a click the dragger refuses (a collision; Ctrl+click forces it) keeps the drag
 // running with a message in the status bar and at the cursor (kicloudShowDragRefusal), instead of
 // ending it with nothing committed and no message; a part drag also shows at the cursor, while it
-// moves, whether the current position would be refused. While the drag runs, the editing actions
-// are swallowed (kicloudIsEditAction), and a change of the board under it (TA_MODEL_CHANGE with
-// the router's world no longer matching the board) cancels it with a message in the info bar.
+// moves, whether the current position would be refused (for a large part checked in rotation,
+// once more in full when the cursor rests: the rest timer). While the drag runs, the editing
+// actions are swallowed (kicloudIsEditAction), and a change of the board under it (its change
+// counters moved since the loop started, checked before every step and click and on
+// TA_MODEL_CHANGE) or a design-rule reload cancels it with a message in the info bar.
 int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
 {
     const PCB_SELECTION selection = m_toolMgr->GetTool<PCB_SELECTION_TOOL>()->GetSelection();
@@ -2901,6 +2906,39 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
     bool hasMultidragCancelled = false;
     bool kicloudBoardChanged = false;   // KICLOUD: R3.5 review (the board changed under the drag)
 
+    // KICLOUD: R3.5 review: the board's change counters (R2-A2) when the drag loop starts. Any
+    // add, remove or change of a board item after this (a commit, a remote change) means the
+    // router's world and the board items the drag points to may be stale. Checked before every
+    // step and click (so a stale world is never moved or committed, whatever order the queued
+    // TA_MODEL_CHANGE arrives in) and on TA_MODEL_CHANGE.
+    const uint64_t kicloudChanges0 = board()->KicloudChangeCount();
+    const uint64_t kicloudUnnotified0 = board()->KicloudUnnotifiedChangeCount();
+
+    auto kicloudBoardChangedSinceStart =
+            [&]() -> bool
+            {
+                return board()->KicloudChangeCount() != kicloudChanges0
+                       || board()->KicloudUnnotifiedChangeCount() != kicloudUnnotified0;
+            };
+
+    // KICLOUD: R3.5 review: the offset the dragged footprints were last drawn at (the position of
+    // the last Drag()), for redrawing the preview after a refused click or a rest check.
+    VECTOR2I kicloudLastOffset;
+
+    // KICLOUD: R3.5 review: the rest check. A large part's live check runs in rotation, one part
+    // per mouse move (PNS::COMPONENT_DRAGGER::liveCollision), so it stops when the cursor stops.
+    // 200 ms after the last move of such a part, the timer sends kicloudDragRestEvent to this
+    // loop (as the selection tool's disambiguation timer does), which runs the full check once.
+    static const TOOL_EVENT kicloudDragRestEvent( TC_MESSAGE, TA_ACTION,
+                                                  "pcbnew.InteractiveRouter.kicloudDragRest" );
+    wxTimer kicloudRestTimer;
+
+    kicloudRestTimer.Bind( wxEVT_TIMER,
+                           [this]( wxTimerEvent& )
+                           {
+                               m_toolMgr->ProcessEvent( kicloudDragRestEvent );
+                           } );
+
     while( TOOL_EVENT* evt = Wait() )
     {
         setCursor();
@@ -2915,6 +2953,36 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
 
             break;
         }
+        // KICLOUD: R3.5 review: before a step or a click works with the router's world, make sure
+        // the board did not change under it (see kicloudChanges0); cancel the drag if it did.
+        else if( ( evt->IsMotion() || evt->IsDrag( BUT_LEFT ) || evt->IsMouseUp( BUT_LEFT )
+                   || evt->IsClick( BUT_LEFT ) || kicloudDragRestEvent.Matches( *evt ) )
+                 && kicloudBoardChangedSinceStart() )
+        {
+            kicloudBoardChanged = true;
+            hasMultidragCancelled = true;
+            break;
+        }
+        else if( kicloudDragRestEvent.Matches( *evt ) )
+        {
+            // KICLOUD: R3.5 review: the cursor rested over a large part: the full check, and the
+            // preview and note redrawn from it
+            PNS::COMPONENT_DRAGGER* cd =
+                    dynamic_cast<PNS::COMPONENT_DRAGGER*>( m_router->GetDragger() );
+
+            if( cd )
+            {
+                bool hit = cd->KicloudCheckNow();
+
+                view()->ClearPreview();
+
+                if( !footprints.empty() )
+                    addFootprintPreview( kicloudLastOffset );
+
+                if( hit )
+                    kicloudShowDragRefusal( false );
+            }
+        }
         else if( evt->IsMotion() || evt->IsDrag( BUT_LEFT ) )
         {
             hasMouseMoved = true;
@@ -2922,6 +2990,8 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
             m_router->Move( m_endSnapPoint, m_endItem );
 
             view()->ClearPreview();
+
+            kicloudLastOffset = m_endSnapPoint - p;   // KICLOUD: R3.5 review
 
             if( !footprints.empty() )
             {
@@ -2978,6 +3048,15 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
                 {
                     kicloudShowDragRefusal( false );
                 }
+
+                // KICLOUD: R3.5 review: a part checked only in part this step gets the full
+                // check once the cursor rests (the rest timer, restarted by every move)
+                PNS::COMPONENT_DRAGGER* cd = dynamic_cast<PNS::COMPONENT_DRAGGER*>( dragger );
+
+                if( cd && cd->KicloudLiveCheckIsPartial() )
+                    kicloudRestTimer.StartOnce( 200 );
+                else
+                    kicloudRestTimer.Stop();
             }
         }
         else if( hasMouseMoved && ( evt->IsMouseUp( BUT_LEFT ) || evt->IsClick( BUT_LEFT ) ) )
@@ -2997,10 +3076,12 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
             {
                 // the click's note (from FixRoute's exact check) replaces the motion step's note:
                 // clear the preview and draw the footprints again under it
+                // (at the last Drag()'s position, where the router's copper is, not at the click's
+                // freshly snapped point)
                 view()->ClearPreview();
 
                 if( !footprints.empty() )
-                    addFootprintPreview( m_endSnapPoint - p );
+                    addFootprintPreview( kicloudLastOffset );
 
                 kicloudShowDragRefusal( true );
                 continue;
@@ -3020,10 +3101,11 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
         // below, or a remote change). The router's world and the board items it points to (the
         // dragged items, the collision record) may be stale, and a later click would commit the
         // stale branch: cancel the drag, as Esc does, and say why. A commit posted before the drag
-        // started (the router's world was synced after it) leaves the world matching and is
-        // passed on as before.
-        else if( evt->Category() == TC_MESSAGE && evt->Action() == TA_MODEL_CHANGE
-                 && !m_iface->KicloudWorldMatchesBoard() )
+        // started (counted in kicloudChanges0) is passed on as before. A design-rule reload (Board
+        // Setup: TA_MODEL_CHANGE as a TC_COMMAND, R2-A2) changes no item but leaves the router's
+        // rules stale: it cancels the drag too.
+        else if( evt->Action() == TA_MODEL_CHANGE
+                 && ( evt->Category() == TC_COMMAND || kicloudBoardChangedSinceStart() ) )
         {
             kicloudBoardChanged = true;
             hasMultidragCancelled = true;
@@ -3067,17 +3149,37 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
         handleCommonEvents( *evt );
     }
 
-    // KICLOUD: R3.5 review: a dragged footprint the change removed is not touched again (its
-    // pointer is only compared, never dereferenced, by this filter). The lock of an item unlocked
-    // for the drag is not restored either: the item may be gone.
+    kicloudRestTimer.Stop();   // KICLOUD: R3.5 review
+
+    const bool hadFootprints = !footprints.empty();   // KICLOUD: R3.5 review
+
+    // KICLOUD: R3.5 review: after a board change, an item the change removed is not touched
+    // again: the dragged footprints are filtered against the board (a pointer is only compared,
+    // never dereferenced, by these checks), and the item unlocked for the drag is locked again
+    // only when it is still on the board.
     if( kicloudBoardChanged )
     {
+        auto onBoard =
+                [&]( const BOARD_ITEM* aItem ) -> bool
+                {
+                    if( aItem->Type() == PCB_FOOTPRINT_T )
+                    {
+                        const FOOTPRINTS& fps = board()->Footprints();
+                        return std::find( fps.begin(), fps.end(), aItem ) != fps.end();
+                    }
+
+                    const TRACKS& tracks = board()->Tracks();
+                    return std::find( tracks.begin(), tracks.end(), aItem ) != tracks.end();
+                };
+
         std::erase_if( footprints,
                        [&]( FOOTPRINT* fp )
                        {
-                           const FOOTPRINTS& onBoard = board()->Footprints();
-                           return std::find( onBoard.begin(), onBoard.end(), fp ) == onBoard.end();
+                           return !onBoard( fp );
                        } );
+
+        if( wasLocked && onBoard( item ) )
+            item->SetLocked( true );
     }
 
     if( !footprints.empty() )
@@ -3093,7 +3195,14 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
             for( PAD* pad : footprint->Pads() )
                 view()->Hide( pad, false );
         }
+    }
 
+    // KICLOUD: R3.5 review: also when the change removed every dragged footprint (hadFootprints).
+    // ClearLocalRatsnest only resets anchors of items still in the connectivity and drops the
+    // dynamic lines, and the drag's dynamicData is freed without reading its pads, so neither
+    // needs a guard.
+    if( hadFootprints )
+    {
         view()->ClearPreview();
         view()->ShowPreview( false );
 
@@ -3101,7 +3210,25 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
     }
 
     // Clear temporary COURTYARD_CONFLICT flag and ensure the conflict shadow is cleared
-    courtyardClearanceDRC.ClearConflicts( getView() );
+    // KICLOUD: R3.5 review: not after a board change: the courtyard check's list of footprints in
+    // conflict may hold one the change removed. The flag is cleared on the footprints still on the
+    // board instead.
+    if( !kicloudBoardChanged )
+    {
+        courtyardClearanceDRC.ClearConflicts( getView() );
+    }
+    else
+    {
+        for( FOOTPRINT* fp : board()->Footprints() )
+        {
+            if( fp->HasFlag( COURTYARD_CONFLICT ) )
+            {
+                fp->ClearFlags( COURTYARD_CONFLICT );
+                getView()->Update( fp );
+                getView()->MarkTargetDirty( KIGFX::TARGET_OVERLAY );
+            }
+        }
+    }
 
     if( m_router->RoutingInProgress() )
         m_router->StopRouting();
@@ -3110,8 +3237,8 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
     if( kicloudBoardChanged )
     {
         // KICLOUD: R3.5 review: the selected items may be gone; the selection stays empty.
-        frame()->ShowInfoBarMsg( _( "The board changed during the drag; the drag was "
-                                    "cancelled." ) );
+        frame()->ShowInfoBarMsg( _( "The board or its design rules changed during the drag; the "
+                                    "drag was cancelled." ) );
     }
     else if( itemsToDrag.Size() && hasMultidragCancelled )
     {

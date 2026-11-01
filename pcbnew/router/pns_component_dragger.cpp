@@ -112,6 +112,8 @@ bool COMPONENT_DRAGGER::Start( const VECTOR2I& aP, ITEM_SET& aPrimitives )
                 m_conns.push_back( std::move( cn ) );
             };
 
+    BOX2I padBox;   // KICLOUD: R3.5 review (m_kicloudPartSize)
+
     for( ITEM* item : aPrimitives.Items() )
     {
         if( item->Kind() != ITEM::SOLID_T )
@@ -120,6 +122,7 @@ bool COMPONENT_DRAGGER::Start( const VECTOR2I& aP, ITEM_SET& aPrimitives )
         SOLID* solid = static_cast<SOLID*>( item );
 
         m_solids.insert( solid );
+        padBox.Merge( solid->Pos() );
 
         if( !item->IsRoutable() )
             continue;
@@ -148,6 +151,9 @@ bool COMPONENT_DRAGGER::Start( const VECTOR2I& aP, ITEM_SET& aPrimitives )
             }
         }
     }
+
+    m_kicloudPartSize = std::max( padBox.GetWidth(), padBox.GetHeight() );   // KICLOUD: R3.5 review
+    m_kicloudHaveLastP = false;
 
     return true;
 }
@@ -244,6 +250,13 @@ bool COMPONENT_DRAGGER::Drag( const VECTOR2I& aP )
     // tool can say so next to the cursor while the person is still moving (Highlight collisions
     // mode commits anyway, so nothing is checked there). The check is the one FixRoute() makes,
     // bounded per step (liveCollision); the drop's own check in FixRoute() stays exact.
+    // KICLOUD: R3.5 review: a jump farther than the part's size forgets the rotation's findings.
+    if( m_kicloudHaveLastP && ( aP - m_kicloudLastP ).EuclideanNorm() > m_kicloudPartSize )
+        m_liveHitThisRound = m_liveHitLastRound = false;
+
+    m_kicloudLastP = aP;
+    m_kicloudHaveLastP = true;
+
     m_dragStatus = Settings().AllowDRCViolations() || !liveCollision( m_currentNode );
 
     return true;
@@ -316,10 +329,13 @@ bool COMPONENT_DRAGGER::checkItem( NODE* aNode, const ITEM* aItem )
 // step checks the next items in rotation until the budget is spent (m_draggedItems is rebuilt by
 // every Drag() in the same order, so the rotation index stays meaningful), and reports a
 // collision while the round in progress or the last complete round found one. The answer (the
-// note at the cursor) can then lag a few steps behind a fast move over a large part; the drop's
-// own check (FixRoute) is always the full findCollision(). Input: the drag's current branch.
-// Result: whether to show the drop as refused. State: the rotation (m_liveNext, the round flags)
-// and m_kicloudCollision.
+// note at the cursor) can then lag a few steps behind a fast move over a large part; Drag()
+// forgets the findings after a jump farther than the part's size, the router tool runs the full
+// check once the cursor rests (KicloudCheckNow), and the drop's own check (FixRoute) is always
+// the full findCollision(). The budget is checked before each item, so a step may exceed it by
+// the segments of one bent track. Input: the drag's current branch. Result: whether to show the
+// drop as refused. State: the rotation (m_liveNext, the round flags, m_livePartial) and
+// m_kicloudCollision.
 bool COMPONENT_DRAGGER::liveCollision( NODE* aNode )
 {
     const std::vector<ITEM*>& items = m_draggedItems.CItems();
@@ -342,7 +358,9 @@ bool COMPONENT_DRAGGER::liveCollision( NODE* aNode )
     for( const ITEM* item : items )
         total += cost( item );
 
-    if( !aNode || items.empty() || total <= KICLOUD_LIVE_CHECK_BUDGET )
+    m_livePartial = aNode && !items.empty() && total > KICLOUD_LIVE_CHECK_BUDGET;
+
+    if( !m_livePartial )
     {
         m_liveNext = 0;
         m_liveHitThisRound = m_liveHitLastRound = false;
@@ -354,21 +372,43 @@ bool COMPONENT_DRAGGER::liveCollision( NODE* aNode )
 
     for( int spent = 0; spent < KICLOUD_LIVE_CHECK_BUDGET; )
     {
-        if( m_liveNext == 0 )
-        {
-            m_liveHitLastRound = m_liveHitThisRound;
-            m_liveHitThisRound = false;
-        }
-
         const ITEM* item = items[m_liveNext];
-        m_liveNext = ( m_liveNext + 1 ) % items.size();
         spent += cost( item );
 
         if( checkItem( aNode, item ) )
             m_liveHitThisRound = true;
+
+        // a round ends after the last item: its finding becomes the last round's
+        if( ++m_liveNext == items.size() )
+        {
+            m_liveNext = 0;
+            m_liveHitLastRound = m_liveHitThisRound;
+            m_liveHitThisRound = false;
+        }
     }
 
     return m_liveHitThisRound || m_liveHitLastRound;
+}
+
+
+// KICLOUD: R3.5 review: the full check for a cursor at rest. The rotation of liveCollision()
+// advances only with mouse moves, so after the cursor stops its answer can be a round old (a
+// "refused" note left from crossing a collision, or a collision not reached yet); the router tool
+// calls this once the cursor has rested (ROUTER_TOOL::InlineDrag's rest timer) for a part that is
+// checked in rotation. Runs findCollision() on the drag's current branch (the position of the last
+// Drag()), sets m_dragStatus from it (Highlight collisions mode: always fine) and starts a new
+// round that remembers the result. Result: whether the part collides there. State: the drag
+// status, the collision record and the rotation.
+bool COMPONENT_DRAGGER::KicloudCheckNow()
+{
+    bool hit = !Settings().AllowDRCViolations() && findCollision( m_currentNode );
+
+    m_liveNext = 0;
+    m_liveHitThisRound = false;
+    m_liveHitLastRound = hit;
+    m_dragStatus = !hit;
+
+    return hit;
 }
 
 

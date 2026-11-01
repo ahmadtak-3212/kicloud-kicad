@@ -129,9 +129,10 @@ public:
      * commits anyway) nothing is checked. The board items it points to are the ones the router
      * world was built from. They stay valid while the board is unchanged, which the router tool
      * guarantees for its drags: ROUTER_TOOL::InlineDrag swallows the editing actions while a drag
-     * runs and cancels the drag when the board changes under it (TA_MODEL_CHANGE with the world no
-     * longer matching the board), before the record is read again. The router's own items are not
-     * kept, because the next Drag() frees its branch.
+     * runs and cancels the drag when the board changes under it (the board's change counters moved
+     * since the drag began: checked before every step, click and rest check, and on
+     * TA_MODEL_CHANGE), before the record is read again. The router's own items are not kept,
+     * because the next Drag() frees its branch.
      */
     struct KICLOUD_DROP_COLLISION
     {
@@ -147,6 +148,16 @@ public:
     /// KICLOUD: R3.5 the collision that blocks the drop at the current position (see above).
     const KICLOUD_DROP_COLLISION& KicloudDropCollision() const { return m_kicloudCollision; }
 
+    /// KICLOUD: R3.5 review: whether the last Drag() checked only part of the dragged items (a
+    /// large part, see liveCollision()); the router tool then asks for KicloudCheckNow() when the
+    /// cursor rests.
+    bool KicloudLiveCheckIsPartial() const { return m_livePartial; }
+
+    /// KICLOUD: R3.5 review: the full check at the position of the last Drag() (findCollision),
+    /// for a cursor at rest: sets the drag status (GetForceMarkObstaclesMode's aDragStatus) and the
+    /// collision record exactly, and starts the rotation afresh. Result: whether it collides.
+    bool KicloudCheckNow();
+
 private:
     // KICLOUD: R3.5 checks every dragged item against aNode, stops at the first collision and
     // records it in m_kicloudCollision. Returns whether one was found.
@@ -161,6 +172,8 @@ private:
 
     /// KICLOUD: R3.5 review: world queries (one per pad or shape, one per track segment) the live
     /// check may make per drag step; a part whose dragged items need more is checked in rotation.
+    /// The budget is checked before each item, so a step makes at most this many plus the
+    /// segments of the longest bent track minus one (a track is not split between steps).
     static constexpr int KICLOUD_LIVE_CHECK_BUDGET = 64;
 
     struct DRAGGED_CONNECTION
@@ -188,6 +201,14 @@ private:
     size_t m_liveNext = 0;
     bool   m_liveHitThisRound = false;
     bool   m_liveHitLastRound = false;
+    bool   m_livePartial = false;        ///< the last step checked only part of the items
+
+    // KICLOUD: R3.5 review: the part's size (the larger side of its pads' box, set by Start) and
+    // the last dragged position: a step that jumps farther than the part's size starts the
+    // rotation's round flags afresh (what was found far away says nothing about here).
+    int      m_kicloudPartSize = 0;
+    VECTOR2I m_kicloudLastP;
+    bool     m_kicloudHaveLastP = false;
 };
 
 }; // namespace PNS
