@@ -1906,7 +1906,8 @@ int ROUTER_TOOL::RouteSelected( const TOOL_EVENT& aEvent )
 // Called by the tool manager for the routeSingleTrack / routeDiffPair actions; aEvent's parameter
 // is the router mode. Returns when the tool is cancelled or another tool takes over.
 // KICLOUD: R2-A2: after a commit it keeps the world when the commit was the router's own (see
-// the TA_MODEL_CHANGE branch).
+// the TA_MODEL_CHANGE branch). KICLOUD: R0.4: End (a keyboard double-click) between routes is
+// taken and does nothing (see the IsDblClick branch).
 int ROUTER_TOOL::MainLoop( const TOOL_EVENT& aEvent )
 {
     if( m_inRouterTool )
@@ -2045,6 +2046,17 @@ int ROUTER_TOOL::MainLoop( const TOOL_EVENT& aEvent )
         else if( evt->IsClick( BUT_RIGHT ) )
         {
             m_menu->ShowContextMenu( selection() );
+        }
+        else if( evt->IsDblClick( BUT_LEFT ) && evt->HasParameter() )
+        {
+            // KICLOUD: R0.4 (docs/patches.md): End with no route in progress does nothing. End is
+            // bound to both ACTIONS::finishInteractive and ACTIONS::cursorDblClick, and the hotkey
+            // runs cursorDblClick (its name sorts first), whose COMMON_TOOLS::CursorControl sends
+            // this keyboard double-click (it carries the CURSOR_DBL_CLICK parameter; a mouse
+            // double-click carries none). During a route performRouting finishes on it; here, with
+            // the route already ended, passing it on let the selection tool open the Properties
+            // dialog of the item under the pointer, and End is a key people press twice. A mouse
+            // double-click is still passed on as before. Deliberately unlike desktop KiCad.
         }
         else
         {
