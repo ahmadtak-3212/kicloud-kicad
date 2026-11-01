@@ -64,11 +64,14 @@ static constexpr int WALK_OBSTACLE_MEMORY_REACH = 3;
 /**
  * KICLOUD: R3.1b: the walks of walkInitialTrack() with and without the per-obstacle memory (walks A
  * and B) stop growing at this many times the complete-path limit (2 x the hug length threshold
- * times the initial length): a longer walk can be neither the complete path (it must be shorter
- * than that limit) nor a better partial one (the hug path uses only the walk's first 1.5 initial
- * lengths); the walk's own limit (10 initial lengths, WALKAROUND) let such walks run on.
+ * times the initial length; 6 initial lengths by default, where WALKAROUND's own limit is 10).
+ * A walk longer than that is rarely chosen: a complete path must be shorter than the limit after
+ * optimization (a raw walk twice as long seldom optimizes below it), and the hug path uses only
+ * the walk's first 1.5 initial lengths (a stopped walk can still differ there when its detour ran
+ * into a neighbouring obstacle, which is rare). It bounds the cost of the second walk the memory
+ * adds. The first step of a stage, which has no memory, keeps KiCad's limit.
  */
-static constexpr double WALK_MEMORY_LENGTH_LIMIT = 1.5;
+static constexpr double WALK_MEMORY_LENGTH_LIMIT = 2.0;
 
 /// KICLOUD: R3.1b: WALKAROUND's own length limit (its constructor's m_lengthExpansionFactor), put back
 /// after walks A and B.
@@ -605,8 +608,9 @@ bool LINE_PLACER::cursorDistMinimum( const SHAPE_LINE_CHAIN& aL, const VECTOR2I&
 bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisionMask,
                               PNS::PNS_MODE aMode, bool& aViaOk )
 {
-    // KICLOUD: R3.1b: the walk's cost for LastWalkStats(), on every return path (added up over the
-    // walks of one routing step: Shove mode's walk around solids and its fallback full walk)
+    // KICLOUD: R3.1b: the walk's cost for LastWalkStats(): WALK_TIMER adds the time from here to
+    // this function's return (its destructor, on every return path) to m_walkStats.walkMs, which
+    // routeStep() reset; so Shove mode's walk around solids and its fallback full walk add up.
     struct WALK_TIMER
     {
         WALK_STATS&                           stats;
@@ -632,7 +636,7 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
     m_pendingWalk = WALK_MEMORY();
     WALKAROUND::WALK_POLICY walkSide = WALKAROUND::WP_CW;
     VECTOR2I                walkStart;
-    double                  checkedLength = 0.0;   // KICLOUD: R3.1b (WALK_MEMORY::checkedLength)
+    WALK_CHECK              checked;               // KICLOUD: R3.1b (WALK_MEMORY::checked)
 
     WALKAROUND walkaround( m_currentNode, Router() );
 
@@ -674,7 +678,7 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
         const double initialLength = initTrack.CLine().Length();
         bool         walked = walkInitialTrack( walkaround, initTrack, aP, aCollisionMask,
                                                 initialLength, false, walkFull, walkP, walkSide,
-                                                checkedLength );
+                                                checked );
 
         std::optional<VECTOR2I>& retryFailedAt = m_walkRetryFailedAt[walkMemorySlot( aCollisionMask )];
 
@@ -687,7 +691,7 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
                 PNS_DBG( Dbg(), AddItem, &fromLastWalk, YELLOW, 20000, wxT( "walk-from-last-walk" ) );
                 walked = walkInitialTrack( walkaround, fromLastWalk, aP, aCollisionMask,
                                            initialLength, true, walkFull, walkP, walkSide,
-                                           checkedLength );
+                                           checked );
 
                 if( !walked )
                     retryFailedAt = aP;
@@ -733,7 +737,7 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
     m_pendingWalk.width = walkFull.Width();
     m_pendingWalkSlot = walkMemorySlot( aCollisionMask );
     m_pendingWalkMask = aCollisionMask;   // KICLOUD: R3.1b (recordObstacleSides)
-    m_pendingWalk.checkedLength = checkedLength;
+    m_pendingWalk.checked = checked;
 
     // KICLOUD: R3.1b: the first segment of this walk that is not the tail's (the tail's own
     // segments, unchanged, were searched for obstacles on the earlier steps): one before the
@@ -757,27 +761,44 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
 bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTrack,
                                     const VECTOR2I& aP, int aCollisionMask, double aInitialLength,
                                     bool aRememberedSideOnly, LINE& aWalkFull, VECTOR2I& aWalkP,
-                                    WALKAROUND::WALK_POLICY& aSide, double& aCheckedLength )
+                                    WALKAROUND::WALK_POLICY& aSide, WALK_CHECK& aChecked )
 {
     const WALK_MEMORY* memory = walkMemoryFor( aCollisionMask, aInitTrack );
     WALK_CHOICE        choice;
+    const VECTOR2I     end = aInitTrack.CLine().CLastPoint();
 
-    aCheckedLength = 0.0;
+    // checked: a lower bound of the length of R3.1's complete walk (walk B) to `end`, as
+    // WALK_MEMORY::checked keeps it
+    auto checked = []( double aLowerBound, const VECTOR2I& aAt )
+            {
+                WALK_CHECK c;
+                c.valid = true;
+                c.bLowerBound = aLowerBound;
+                c.at = aAt;
+                return c;
+            };
+
+    aChecked = WALK_CHECK();
 
     // No side remembered for any obstacle (the first step, or nothing near the last head): the
-    // walk of R3.1.
+    // walk of R3.1, as it was (WALKAROUND's own length limit, so the first step of a stage is
+    // KiCad's), which is also walk B's: a complete one is the bound for the next step.
     if( !memory || memory->sides.empty() )
     {
         const bool ok = walkSides( aWalkaround, aInitTrack, aP, aCollisionMask, aInitialLength,
                                    aRememberedSideOnly, false, nullptr, aWalkFull, aWalkP, aSide,
                                    choice );
 
-        aCheckedLength = ok && choice.complete ? choice.length : 0.0;
+        if( ok && choice.complete )
+            aChecked = checked( choice.length, end );
+
         return ok;
     }
 
-    // Walks A and B stop growing where neither could be chosen any more (WALK_MEMORY_LENGTH_LIMIT),
-    // which bounds the two walks the memory costs; WALKAROUND's own limit is put back on return.
+    // Walks A and B stop growing at WALK_MEMORY_LENGTH_LIMIT times the complete-path limit (beyond
+    // it a walk is rarely chosen), which bounds the two walks the memory costs. LIMIT_GUARD puts
+    // WALKAROUND's own limit back on every return of this function (its destructor), so the other
+    // users of aWalkaround (rhWalkBase()'s later calls, a retry) see the limit they had.
     const double limit = std::min( WALKAROUND_DEFAULT_LENGTH_LIMIT,
                                    WALK_MEMORY_LENGTH_LIMIT * 2.0
                                            * Settings().WalkaroundHugLengthThreshold() );
@@ -828,45 +849,47 @@ bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTr
                 return true;
             };
 
-    // The memory changed no winding: walk A is the walk without it (R3.1's), success or not; it
-    // counts as compared.
+    // The memory changed no winding: walk A is the walk without it (R3.1's), success or not.
     if( !choiceA.differsFromPlainWalk )
     {
-        aCheckedLength = choiceA.complete ? choiceA.length : 0.0;
+        if( okA && choiceA.complete )
+            aChecked = checked( choiceA.length, end );
+
         return okA ? take( walkA, pA, sideA ) : false;
     }
 
     // A complete walk A within the margin of the straight distance: no walk can be shorter by the
-    // margin, so walk B is not needed.
-    const double direct = ( aInitTrack.CLine().CLastPoint() - aInitTrack.CPoint( 0 ) ).EuclideanNorm();
+    // margin (every path is at least that long), so walk B is not needed.
+    const double direct = ( end - aInitTrack.CPoint( 0 ) ).EuclideanNorm();
 
     if( okA && choiceA.complete && choiceA.length * ( 1.0 - WALK_SIDE_SWITCH_MARGIN ) <= direct )
     {
-        aCheckedLength = choiceA.length;
+        aChecked = checked( direct, end );
         return take( walkA, pA, sideA );
     }
 
-    // A complete walk A not longer by more than the margin than when the two walks were last
-    // compared: walk B was not more than the margin shorter then, so the remembered walk is kept
-    // without walking B again. A detour that grows past the margin is compared again.
-    if( okA && choiceA.complete && memory->checkedLength > 0.0
-            && choiceA.length <= memory->checkedLength * ( 1.0 + WALK_SIDE_SWITCH_MARGIN ) )
+    // A complete walk A that walk B still cannot beat by the margin: at the last comparison walk B
+    // was at least memory->checked.bLowerBound long at memory->checked.at, and a walk to this end
+    // can be shorter than that by at most the distance the end moved (else that walk plus the
+    // straight piece back would have been shorter then). So walk B is not walked again.
+    if( okA && choiceA.complete && memory->checked.valid
+            && choiceA.length * ( 1.0 - WALK_SIDE_SWITCH_MARGIN )
+                       <= memory->checked.bLowerBound
+                                  - ( end - memory->checked.at ).EuclideanNorm() )
     {
-        aCheckedLength = memory->checkedLength;
+        aChecked = memory->checked;
         return take( walkA, pA, sideA );
     }
 
     // A cursor that no walk can reach (the track's end at the cursor collides: walk B cannot be
-    // complete either). With a partial walk A that ends within the margin of the walk's straight
-    // length from it, walk B could not end nearer by more than the margin; with no walk A at all,
-    // walk B could only give a partial path on another side of the remembered obstacles, which
-    // the memory is there to avoid (the head stays as it is, as KiCad's does with the cursor in a
-    // clearance, and rhWalkBase() still tries the retry from the last walk). Walk B is not walked.
-    if( ( !okA || ( !choiceA.complete
-                    && choiceA.cursorDist <= WALK_SIDE_SWITCH_MARGIN * aInitialLength ) )
+    // complete either) and a partial walk A that ends within the margin of the walk's straight
+    // length from it: walk B could not end nearer by more than the margin, so it is not walked.
+    // (Without a walk A, walk B is walked: its hug path is what KiCad's walk shows there.)
+    if( okA && !choiceA.complete
+            && choiceA.cursorDist <= WALK_SIDE_SWITCH_MARGIN * aInitialLength
             && endBlocked( aInitTrack, aCollisionMask ) )
     {
-        return okA ? take( walkA, pA, sideA ) : false;
+        return take( walkA, pA, sideA );
     }
 
     // Walk B: R3.1's walk, without the per-obstacle sides (taking walk A's result for each policy
@@ -884,19 +907,19 @@ bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTr
     const bool okB = walkSides( aWalkaround, aInitTrack, aP, aCollisionMask, aInitialLength,
                                 aRememberedSideOnly, false, &choiceA, walkB, pB, sideB, choiceB );
 
+    // A complete walk B is the bound for the next steps; without one there is none.
+    if( okB && choiceB.complete )
+        aChecked = checked( choiceB.length, end );
+
     if( okB && choiceB.complete
             && ( !okA || !choiceA.complete
                  || choiceB.length < choiceA.length * ( 1.0 - WALK_SIDE_SWITCH_MARGIN ) ) )
     {
-        aCheckedLength = choiceB.length;
         return take( walkB, pB, sideB );
     }
 
     if( okA && choiceA.complete )
-    {
-        aCheckedLength = choiceA.length;
         return take( walkA, pA, sideA );
-    }
 
     if( okA && okB && !choiceB.complete )
     {
@@ -1338,7 +1361,7 @@ std::optional<LINE_PLACER::OBSTACLE_KEY> LINE_PLACER::obstacleKey( const ITEM* a
         return std::nullopt;
 
     // The anchor tells apart the pieces one board item becomes (keepout triangles, edge pieces).
-    std::optional<VECTOR2I> anchor = WALKAROUND::ObstacleAnchor( aItem, aLayer );
+    std::optional<VECTOR2I> anchor = WALKAROUND::ObstacleAnchor( owner, aLayer );
 
     if( !anchor )
         return std::nullopt;
@@ -1876,7 +1899,9 @@ void LINE_PLACER::routeStep( const VECTOR2I& aP )
 
     PNS_DBG( Dbg(), BeginGroup, wxT( "route-step" ), 0 );
 
-    // KICLOUD: R3.1b: LastWalkStats() describes this step (its whole time on every return path)
+    // KICLOUD: R3.1b: LastWalkStats() describes this step: reset here; STEP_TIMER writes the time
+    // from here to the return of routeStep() into m_walkStats.stepMs (its destructor, on every
+    // return path); the walks, the shove and acceptWalk() add their parts meanwhile.
     m_walkStats = WALK_STATS();
 
     struct STEP_TIMER

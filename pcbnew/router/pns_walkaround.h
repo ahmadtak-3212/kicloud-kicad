@@ -161,7 +161,8 @@ public:
      * names for the item they hit (or for the first cluster member it names), and with the
      * policy's own winding only when it names none (RESULT::overrides and freeChoices count
      * both). The other winding is walked only when the preferred one fails or clearly puts the
-     * obstacle on the other side (measured on the part of the line that cluster's walk changed). An empty function (the default) gives KiCad 10's walk. WP_SHORTEST ignores it.
+     * obstacle on the other side (measured on the part of the line that cluster's walk
+     * changed). An empty function (the default) gives KiCad 10's walk. WP_SHORTEST ignores it.
      * Caller: LINE_PLACER::walkInitialTrack(); valid until the next call.
      */
     void SetWindingPreference( WINDING_PREFERENCE aPreference )
@@ -172,8 +173,8 @@ public:
     /**
      * KICLOUD: R3.1b: on which side of \a aLine the point \a aPoint lies, seen along the line's
      * direction at the line's point nearest to it: +1 when the cross product of that direction
-     * and (aPoint - nearest point) is >= 0 (KiCad's y axis points down, so +1 is to the right of
-     * the direction of travel), -1 otherwise; at a corner the direction is the mean of the two
+     * and (aPoint - nearest point) is positive (KiCad's y axis points down, so +1 is to the right
+     * of the direction of travel), -1 when it is negative; at a corner the direction is the mean of the two
      * segments' directions. 0 when the line has no segment, the nearest point is the line's
      * first or last point (the point lies behind the start or ahead of the end: the line does
      * not pass it), the point lies on the line (within 1 nm) or the two directions at a corner
@@ -182,9 +183,10 @@ public:
      */
     static int ObstacleSide( const SHAPE_LINE_CHAIN& aLine, const VECTOR2I& aPoint );
 
-    /// KICLOUD: R3.1b: the point ObstacleSide() measures an obstacle item by: the centre of its
-    /// shape's bounding box on \a aLayer (a pad's or via's centre, a track's middle), or no value
-    /// when the item has no shape there. Pure.
+    /// KICLOUD: R3.1b: the point ObstacleSide() measures an obstacle item by: the centre of the
+    /// bounding box on \a aLayer of its shape, or for a hole of its pad's or via's shape (a hole
+    /// counts as its pad or via, also with an offset drill), or no value when there is no shape
+    /// there. Pure.
     static std::optional<VECTOR2I> ObstacleAnchor( const ITEM* aItem, int aLayer );
 
 private:

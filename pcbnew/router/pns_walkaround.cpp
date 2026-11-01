@@ -151,7 +151,9 @@ SHAPE_LINE_CHAIN WALKAROUND::changedPart( const SHAPE_LINE_CHAIN& aBefore,
 
 std::optional<VECTOR2I> WALKAROUND::ObstacleAnchor( const ITEM* aItem, int aLayer )
 {
-    const SHAPE* shape = aItem ? aItem->Shape( aLayer ) : nullptr;
+    // A hole is measured as its pad or via, so both get the same anchor (and key).
+    const ITEM*  owner = aItem && aItem->ParentPadVia() ? aItem->ParentPadVia() : aItem;
+    const SHAPE* shape = owner ? owner->Shape( aLayer ) : nullptr;
 
     if( !shape )
         return std::nullopt;
