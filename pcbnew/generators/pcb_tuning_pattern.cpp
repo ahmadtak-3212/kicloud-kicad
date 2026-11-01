@@ -423,6 +423,30 @@ bool PCB_TUNING_PATTERN::baselineValid()
 }
 
 
+// KICLOUD: R3.3 (docs/patches.md): whether the tuning profile of aTrack's net class has time
+// domain tuning enabled, the test CreateNew() makes before it switches a new pattern to delay
+// tuning. Callers: the two places in EditStart that fall back to the tuning profile when no length
+// or skew rule applies; they used to switch to delay tuning for any profile, so a pattern on a net
+// class with a length-only profile (an impedance profile) had no target and placed no meanders
+// unless "Override custom rules" was set. Returns false when the class has no profile or the board
+// no project. Changes nothing.
+static bool kicloudProfileTunesTimeDomain( BOARD* aBoard, PCB_TRACK* aTrack )
+{
+    if( !aBoard || !aTrack || !aBoard->GetProject()
+            || !aTrack->GetEffectiveNetClass()->HasTuningProfile() )
+    {
+        return false;
+    }
+
+    const std::shared_ptr<TUNING_PROFILES> tuningParams =
+            aBoard->GetProject()->GetProjectFile().TuningProfileParameters();
+    TUNING_PROFILE& profile =
+            tuningParams->GetTuningProfile( aTrack->GetEffectiveNetClass()->GetTuningProfile() );
+
+    return profile.m_EnableTimeDomainTuning;
+}
+
+
 PCB_TUNING_PATTERN* PCB_TUNING_PATTERN::CreateNew( GENERATOR_TOOL* aTool,
                                                    PCB_BASE_EDIT_FRAME* aFrame,
                                                    BOARD_CONNECTED_ITEM* aStartItem,
@@ -587,7 +611,9 @@ void PCB_TUNING_PATTERN::EditStart( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_
                 m_settings.m_isTimeDomain = constraint.m_IsTimeDomain;
                 aTool->GetManager()->PostEvent( EVENTS::SelectedItemsModified );
             }
-            else if( track->GetEffectiveNetClass()->HasTuningProfile() )
+            // KICLOUD: R3.3: as CreateNew(): only a tuning profile with time domain tuning enabled
+            // makes the pattern tune delay (else it tuned an unset delay and placed nothing)
+            else if( kicloudProfileTunesTimeDomain( aBoard, track ) )
             {
                 m_settings.m_isTimeDomain = true;
                 aTool->GetManager()->PostEvent( EVENTS::SelectedItemsModified );
@@ -624,7 +650,8 @@ void PCB_TUNING_PATTERN::EditStart( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_
                     m_settings.m_isTimeDomain = constraint.m_IsTimeDomain;
                     aTool->GetManager()->PostEvent( EVENTS::SelectedItemsModified );
                 }
-                else if( track->GetEffectiveNetClass()->HasTuningProfile() )
+                // KICLOUD: R3.3: as above (CreateNew())
+                else if( kicloudProfileTunesTimeDomain( aBoard, track ) )
                 {
                     m_settings.m_isTimeDomain = true;
                     aTool->GetManager()->PostEvent( EVENTS::SelectedItemsModified );
