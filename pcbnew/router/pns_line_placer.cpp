@@ -765,7 +765,9 @@ bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTr
 {
     const WALK_MEMORY* memory = walkMemoryFor( aCollisionMask, aInitTrack );
     WALK_CHOICE        choice;
-    const VECTOR2I     end = aInitTrack.CLine().CLastPoint();
+    // the walk's end (the cursor); a track without points (the cursor on the start right after a
+    // fixing click) has none, and then there is no memory either (walkMemoryFor())
+    const VECTOR2I     end = aInitTrack.PointCount() ? aInitTrack.CLine().CLastPoint() : VECTOR2I();
 
     // checked: a lower bound of the length of R3.1's complete walk (walk B) to `end`, as
     // WALK_MEMORY::checked keeps it
