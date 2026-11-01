@@ -77,6 +77,17 @@ static constexpr double WALK_MEMORY_LENGTH_LIMIT = 2.0;
 /// after walks A and B.
 static constexpr double WALKAROUND_DEFAULT_LENGTH_LIMIT = 10.0;
 
+
+/// KICLOUD: R3.1b: the iteration limit of walk A (the walk with the per-obstacle memory), where
+/// KiCad's walk has the routing setting's 40: remembered sides can send the walk back and forth
+/// between two obstacles until the limit, a walk without the memory ends in a few iterations, and
+/// the line after 12 of them is the partial path the head shows anyway.
+static constexpr int WALK_MEMORY_ITERATION_LIMIT = 12;
+
+
+// KICLOUD: R3.1b: see SetObstacleMemoryForTests() in the header.
+bool LINE_PLACER::s_obstacleMemoryOn = true;
+
 /// KICLOUD: R3.1b: at most about this many obstacles are remembered per route stage; when more are,
 /// the next shown step starts the memory again from its own obstacles (a bound for very long heads).
 static constexpr size_t WALK_OBSTACLE_MEMORY_SIZE = 4096;
@@ -782,10 +793,10 @@ bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTr
 
     aChecked = WALK_CHECK();
 
-    // No side remembered for any obstacle (the first step, or nothing near the last head): the
-    // walk of R3.1, as it was (WALKAROUND's own length limit, so the first step of a stage is
+    // No side remembered for any obstacle (the first step, or nothing near the last head), or the
+    // memory switched off for a measurement (SetObstacleMemoryForTests()): the walk of R3.1, as it was (WALKAROUND's own length limit, so the first step of a stage is
     // KiCad's), which is also walk B's: a complete one is the bound for the next step.
-    if( !memory || memory->sides.empty() )
+    if( !memory || memory->sides.empty() || !s_obstacleMemoryOn )
     {
         const bool ok = walkSides( aWalkaround, aInitTrack, aP, aCollisionMask, aInitialLength,
                                    aRememberedSideOnly, false, nullptr, aWalkFull, aWalkP, aSide,
@@ -835,9 +846,13 @@ bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTr
                 return it->second;
             } );
 
+    aWalkaround.SetIterationLimit( std::min( WALK_MEMORY_ITERATION_LIMIT,
+                                             Settings().WalkaroundIterationLimit() ) );
+
     const bool okA = walkSides( aWalkaround, aInitTrack, aP, aCollisionMask, aInitialLength,
                                 aRememberedSideOnly, true, nullptr, walkA, pA, sideA, choice );
 
+    aWalkaround.SetIterationLimit( Settings().WalkaroundIterationLimit() );
     aWalkaround.SetWindingPreference( nullptr );
 
     const WALK_CHOICE choiceA = choice;
@@ -923,6 +938,29 @@ bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTr
     if( okA && choiceA.complete )
         return take( walkA, pA, sideA );
 
+    // No walk A at all and only a partial walk B (the cursor is in a clearance, or the way to it
+    // too long). Stock KiCad shows the hug that gets nearest to the cursor; with the memory that is
+    // often a partial path on the other side of an obstacle the head passed, shown for a few steps
+    // and then dropped again (a flip-back), sometimes ending farther from the cursor than the head
+    // already shown. So the head shown last (m_head, which
+    // routeStep() keeps when this walk fails) is held, unless it now collides (the world changed
+    // under it: take walk B) or walk B's partial path ends nearer the cursor than the held head by
+    // more than the margin of the walk's straight length: R3.1's margin rule, applied to the held
+    // head instead of walk A, so real progress on the other side still shows.
+    if( !okA && okB && !choiceB.complete && m_head.PointCount() > 0 )
+    {
+        const double heldDist = ( aP - m_head.CLine().CLastPoint() ).EuclideanNorm();
+        const bool   heldCollides = m_head.SegmentCount() > 0
+                                    && m_currentNode->CheckColliding( &m_head, aCollisionMask );
+
+        if( !heldCollides
+                && choiceB.cursorDist >= heldDist - WALK_SIDE_SWITCH_MARGIN * aInitialLength )
+        {
+            m_walkStats.heldHeads++;
+            return false;
+        }
+    }
+
     if( okA && okB && !choiceB.complete )
     {
         if( choiceB.cursorDist < choiceA.cursorDist - WALK_SIDE_SWITCH_MARGIN * aInitialLength )
@@ -982,6 +1020,8 @@ bool LINE_PLACER::walkSides( WALKAROUND& aWalkaround, const LINE& aInitTrack, co
         aWalkaround.SetAllowedPolicies( { WP_CCW, WP_CW } );
         wr = aWalkaround.Route( aInitTrack );
         m_walkStats.routes += 2;   // KICLOUD: R3.1b
+        m_walkStats.iterations += wr.iterations;
+        m_walkStats.retries += wr.retries;
 
         // KICLOUD: R3.1b: whether the per-obstacle side memory changed a winding; the raw results
         aChoice.differsFromPlainWalk = wr.overrides[WP_CW] > 0 || wr.overrides[WP_CCW] > 0;
@@ -1012,6 +1052,11 @@ bool LINE_PLACER::walkSides( WALKAROUND& aWalkaround, const LINE& aInitTrack, co
                         aWalkaround.SetAllowedPolicies( { aPolicy } );
                         r = aWalkaround.Route( aInitTrack );
                         m_walkStats.routes++;
+                        m_walkStats.iterations += r.iterations;
+                        m_walkStats.retries += r.retries;
+
+                        if( aObstaclePreference )
+                            m_walkStats.iterationsA += r.iterations;
                     }
 
                     aChoice.raw.status[aPolicy] = r.status[aPolicy];

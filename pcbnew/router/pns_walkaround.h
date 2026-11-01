@@ -96,6 +96,12 @@ public:
         /// singleStep(); both stay 0 without a preference.
         int  overrides[ MaxWalkPolicies ] = {};
         int  freeChoices[ MaxWalkPolicies ] = {};
+
+        /// KICLOUD: R3.1b, for the measurements (LINE_PLACER::LastWalkStats): the walk's
+        /// iterations (singleStep() calls) and the clusters walked a second time with the other
+        /// winding because the preferred one failed or gave the wrong side.
+        int  iterations = 0;
+        int  retries = 0;
     };
 
     /**

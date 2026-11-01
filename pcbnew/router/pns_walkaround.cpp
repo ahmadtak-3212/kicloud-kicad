@@ -47,6 +47,9 @@ void WALKAROUND::start( const LINE& aInitialPath )
         m_currentResult.overrides[ pol ] = 0;     // KICLOUD: R3.1b
         m_currentResult.freeChoices[ pol ] = 0;
     }
+
+    m_currentResult.iterations = 0;               // KICLOUD: R3.1b
+    m_currentResult.retries = 0;
 }
 
 
@@ -378,6 +381,8 @@ bool WALKAROUND::singleStep()
             LINE retry( before );
             bool okRetry = processCluster( cluster, retry, !cw );
 
+            m_currentResult.retries++;   // KICLOUD: R3.1b (measurement)
+
             if( okRetry
                     && ObstacleSide( changedPart( before.CLine(), retry.CLine() ), *anchor ) != -*side )
             {
@@ -593,6 +598,8 @@ const WALKAROUND::RESULT WALKAROUND::Route( const LINE& aInitialPath )
 
     }
 
+
+    m_currentResult.iterations = m_iteration;   // KICLOUD: R3.1b (measurement)
 
     return m_currentResult;
 }

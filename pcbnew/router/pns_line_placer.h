@@ -187,9 +187,22 @@ public:
         double moveMs = 0.0;       ///< the whole Move() (routeStep() and the leading ratsnest line)
         int    changedItems = 0;   ///< items the step's node adds or removes against the board
                                    ///< (ROUTER::updateView() then draws and checks each)
+        int    heldHeads = 0;      ///< walks that kept the shown head over a partial walk B
+        int    iterations = 0;     ///< WALKAROUND iterations over all Route calls
+        int    iterationsA = 0;    ///< of those, in walks with the per-obstacle memory (walk A)
+        int    retries = 0;        ///< clusters walked again with the other winding (walk A)
     };
 
     const WALK_STATS& LastWalkStats() const { return m_walkStats; }
+
+    /**
+     * KICLOUD: R3.1b: for the routing plan's measurements only (the test hook
+     * kicloudTestRouterObstacleMemory): \a aOn false makes every walk R3.1's, as if no obstacle
+     * side were remembered, so one build can be measured with and without the per-obstacle
+     * memory on the same cursor path. On by default; the sides are still recorded. Affects every
+     * LINE_PLACER (a process-wide switch), read by walkInitialTrack().
+     */
+    static void SetObstacleMemoryForTests( bool aOn ) { s_obstacleMemoryOn = aOn; }
 
     /**
      * Return the "tail" of the line being placed, the part which has already wrapped around
@@ -543,8 +556,12 @@ private:
      * each policy whose winding the memory did not change; it is not walked while walk A stays
      * complete and within the margin of a lower bound of walk B (WALK_MEMORY::checked, less the
      * distance the cursor moved since), nor when the cursor cannot be reached at all
-     * (endBlocked()) and walk A's partial path ends within the margin of it. Measured in
-     * FEATURE_ROUTING_TOOLS.md 5.1 item 1b.
+     * (endBlocked()) and walk A's partial path ends within the margin of it; walk A stops after
+     * WALK_MEMORY_ITERATION_LIMIT iterations (remembered sides can send it back and forth). When
+     * walk A finds nothing and walk B only a partial path, the head shown last is held unless it
+     * now collides or walk B ends nearer the cursor by more than the margin (stock KiCad shows the
+     * nearest partial path, which with the memory is often a flip to the other side and back).
+     * Measured in FEATURE_ROUTING_TOOLS.md 5.1 item 1b.
      * Inputs and results as walkSides() (whose length limits both walks keep), and
      * \a aChecked: the WALK_MEMORY::checked the shown walk should carry. Caller: rhWalkBase(), up
      * to twice per round. Changes m_walkStats and, for the duration of the call, \a aWalkaround's
@@ -705,6 +722,7 @@ private:
     int                      m_pendingWalkMask = ITEM::ANY_T; ///< KICLOUD: R3.1b: its collision mask
     int                      m_pendingWalkHeadSegment = 0;    ///< R3.1b: its first segment not in the tail
     WALK_STATS               m_walkStats;                     ///< R3.1b: LastWalkStats()
+    static bool              s_obstacleMemoryOn;              ///< R3.1b: SetObstacleMemoryForTests()
     std::optional<VECTOR2I>  m_walkRetryFailedAt[2]; ///< by slot: where lastWalkTrack()'s retry failed
     GLOSS_HEAD_CACHE         m_glossHeadCache;
 };
