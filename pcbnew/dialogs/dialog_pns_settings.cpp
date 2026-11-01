@@ -49,6 +49,7 @@ DIALOG_PNS_SETTINGS::DIALOG_PNS_SETTINGS( wxWindow* aParent, PNS::ROUTING_SETTIN
     m_optimizeEntireDraggedTrack->SetValue( m_settings.GetOptimizeEntireDraggedTrack() );
     m_autoPosture->SetValue( m_settings.GetAutoPosture() );
     m_fixAllSegments->SetValue( m_settings.GetFixAllSegments() );
+    m_glossWhileRouting->SetValue( m_settings.GetGlossWhileRouting() );   // KICLOUD: R3.2
 
     // Enable/disable some options
     wxCommandEvent event;
@@ -79,6 +80,7 @@ bool DIALOG_PNS_SETTINGS::TransferDataFromWindow()
     m_settings.SetOptimizeEntireDraggedTrack( m_optimizeEntireDraggedTrack->GetValue() );
     m_settings.SetAutoPosture( m_autoPosture->GetValue() );
     m_settings.SetFixAllSegments( m_fixAllSegments->GetValue() );
+    m_settings.SetGlossWhileRouting( m_glossWhileRouting->GetValue() );   // KICLOUD: R3.2
     m_settings.SetAllowDRCViolations( m_violateDrc->GetValue() );
     m_settings.SetFreeAngleMode( m_freeAngleMode->GetValue() );
 

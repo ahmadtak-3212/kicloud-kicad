@@ -365,6 +365,9 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
     routeMenu->Add( PCB_ACTIONS::tuneSkew );
 
     routeMenu->AppendSeparator();
+    routeMenu->Add( PCB_ACTIONS::routerGlossSelected );   // KICLOUD: R3.2 Gloss Selected Tracks
+
+    routeMenu->AppendSeparator();
     routeMenu->Add( PCB_ACTIONS::routerSettingsDialog );
 
 

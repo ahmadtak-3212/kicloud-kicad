@@ -2702,11 +2702,13 @@ TOOL_ACTION PCB_ACTIONS::routerAutorouteSelected( TOOL_ACTION_ARGS()
         .Flags( AF_ACTIVATE )
         .Parameter( PNS::PNS_MODE_ROUTE_SINGLE ) );
 
-// KICLOUD: R3.2 glossing (docs/patches.md). No default hotkey: Shift+O, the one proposed, is
-// Grab Nearest Unconnected Footprints (pcbnew.InteractiveSelection.GrabUnconnected).
+// KICLOUD: R3.2 glossing (docs/patches.md). Alt+O: Shift+O, the key first proposed, is Grab Nearest
+// Unconnected Footprints (pcbnew.InteractiveSelection.GrabUnconnected); no other action in pcbnew or
+// common uses Alt+O and no pcbnew menu has O as its mnemonic.
 TOOL_ACTION PCB_ACTIONS::routerGlossSelected( TOOL_ACTION_ARGS()
         .Name( "pcbnew.InteractiveRouter.GlossSelected" )
         .Scope( AS_GLOBAL )
+        .DefaultHotkey( MD_ALT + 'O' )
         .FriendlyName( _( "Gloss Selected Tracks" ) )
         .Tooltip( _( "Merge the pieces of the selected tracks and remove their tiny jogs, loops "
                      "and sharp corners, without changing what they connect or their clearances" ) ) );

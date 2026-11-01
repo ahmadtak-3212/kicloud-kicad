@@ -47,6 +47,7 @@ class DIALOG_PNS_SETTINGS_BASE : public DIALOG_SHIM
 		wxCheckBox* m_optimizeEntireDraggedTrack;
 		wxCheckBox* m_autoPosture;
 		wxCheckBox* m_fixAllSegments;
+		wxCheckBox* m_glossWhileRouting;   // KICLOUD: R3.2
 		wxStdDialogButtonSizer* m_stdButtons;
 		wxButton* m_stdButtonsOK;
 		wxButton* m_stdButtonsCancel;

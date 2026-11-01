@@ -114,6 +114,12 @@ DIALOG_PNS_SETTINGS_BASE::DIALOG_PNS_SETTINGS_BASE( wxWindow* parent, wxWindowID
 
 	gSizer1->Add( m_fixAllSegments, 0, wxRIGHT|wxLEFT, 5 );
 
+	// KICLOUD: R3.2 glossing (the "Gloss while routing" router setting; also in the .fbp)
+	m_glossWhileRouting = new wxCheckBox( bOptions->GetStaticBox(), wxID_ANY, _("Gloss while routing"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_glossWhileRouting->SetToolTip( _("When enabled, tracks are cleaned while they are routed and when a drag ends: collinear pieces are merged, and tiny jogs, loops and corners sharper than 90 degrees are removed where that keeps every connection and clearance.") );
+
+	gSizer1->Add( m_glossWhileRouting, 0, wxRIGHT|wxLEFT, 5 );
+
 
 	bOptions->Add( gSizer1, 1, wxEXPAND, 5 );
 

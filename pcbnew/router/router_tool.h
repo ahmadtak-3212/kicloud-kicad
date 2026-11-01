@@ -50,6 +50,10 @@ public:
     int CycleRouterMode( const TOOL_EVENT& aEvent );
     int CustomTrackWidthDialog( const TOOL_EVENT& aEvent );
 
+    /// KICLOUD: R3.2 glossing: Gloss Selected Tracks, and the "Gloss while routing" switch
+    int GlossSelected( const TOOL_EVENT& aEvent );
+    int ToggleGloss( const TOOL_EVENT& aEvent );
+
     PNS::PNS_MODE GetRouterMode();
 
     /**

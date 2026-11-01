@@ -689,6 +689,8 @@ bool EDIT_TOOL::Init()
                                                       && SELECTION_CONDITIONS::OnlyTypes( GENERAL_COLLECTOR::DraggableItems )
                                                       && !SELECTION_CONDITIONS::OnlyTypes( footprintTypes ) );
     menu.AddItem( PCB_ACTIONS::filletTracks,      SELECTION_CONDITIONS::OnlyTypes( trackTypes ) );
+    // KICLOUD: R3.2: Gloss Selected Tracks whenever the selection holds a straight track segment
+    menu.AddItem( PCB_ACTIONS::routerGlossSelected, SELECTION_CONDITIONS::HasType( PCB_TRACE_T ) );
 
     menu.AddItem( PCB_ACTIONS::rotateCcw,         SELECTION_CONDITIONS::NotEmpty );
     menu.AddItem( PCB_ACTIONS::rotateCw,          SELECTION_CONDITIONS::NotEmpty );

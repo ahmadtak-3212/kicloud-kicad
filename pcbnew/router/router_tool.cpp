@@ -1718,19 +1718,6 @@ int ROUTER_TOOL::SettingsDialog( const TOOL_EVENT& aEvent )
 
 int ROUTER_TOOL::ChangeRouterMode( const TOOL_EVENT& aEvent )
 {
-    // KICLOUD: R3.2: the "Gloss while routing" switch is a router setting like the mode and comes
-    // here until router_tool.h may declare a handler of its own (the header is outside the files
-    // approved for R3; docs/patches.md). It has no parameter, so it is told apart before the
-    // mode is read.
-    if( aEvent.IsAction( &PCB_ACTIONS::routerToggleGloss ) )
-    {
-        PNS::ROUTING_SETTINGS& glossSettings = m_router->Settings();
-
-        glossSettings.SetGlossWhileRouting( !glossSettings.GetGlossWhileRouting() );
-        UpdateMessagePanel();
-        return 0;
-    }
-
     PNS::PNS_MODE mode = aEvent.Parameter<PNS::PNS_MODE>();
     PNS::ROUTING_SETTINGS& settings = m_router->Settings();
 
@@ -1783,7 +1770,7 @@ void ROUTER_TOOL::breakTrack()
 
 
 // KICLOUD: R3.2 Gloss Selected Tracks (docs/patches.md): the straight track segments it works on.
-// Caller: RouteSelected() for PCB_ACTIONS::routerGlossSelected. Asks the selection tool for the
+// Caller: ROUTER_TOOL::GlossSelected(). Asks the selection tool for the
 // selection with everything but straight segments filtered out (with nothing selected, the
 // segment under the cursor is taken, as other track commands do), so the selection may shrink.
 static std::vector<PCB_TRACK*> kicloudGlossTargets( TOOL_MANAGER* aToolMgr )
@@ -1814,7 +1801,7 @@ static std::vector<PCB_TRACK*> kicloudGlossTargets( TOOL_MANAGER* aToolMgr )
 // KICLOUD: R3.2 Gloss Selected Tracks: glosses the router lines through aTracks (each whole line
 // from joint to joint, so the tracks they join are cleaned too) in a branch of the router's world
 // and commits the branch as one board change (one undo step, "Routing"), or drops it when nothing
-// changed. Reports in the status line how many segments it removed. Caller: RouteSelected(),
+// changed. Reports in the status line how many segments it removed. Caller: GlossSelected(),
 // after Activate() synced the router's world with the board. The router's collision checks run
 // with the board's current rules, so a cleaned line never comes closer to other copper than the
 // rules allow, and it keeps every same-net contact (OPTIMIZER::GlossLines).
@@ -1854,35 +1841,52 @@ static void kicloudGlossTracks( PNS::ROUTER* aRouter, PCB_EDIT_FRAME* aFrame,
 }
 
 
-int ROUTER_TOOL::RouteSelected( const TOOL_EVENT& aEvent )
+// KICLOUD: R3.2 Gloss Selected Tracks (docs/patches.md). The handler of
+// PCB_ACTIONS::routerGlossSelected (Route menu, the selection's context menu, Alt+O). Does nothing
+// while a route or drag is in progress; with no tracks selected (and none under the cursor) it
+// says so in the info bar. Otherwise it clears the selection (it would keep pointers to segments
+// the commit removes), activates the router tool so its world is synced with the board, glosses
+// and commits (kicloudGlossTracks), with undo and redo blocked meanwhile. Returns 0 (the event is
+// handled); afterwards the selection tool is active again, as after Break Track.
+int ROUTER_TOOL::GlossSelected( const TOOL_EVENT& aEvent )
 {
-    // KICLOUD: R3.2: Gloss Selected Tracks also works on the selection and comes here until
-    // router_tool.h may declare a handler of its own (the header is outside the files approved for
-    // R3; docs/patches.md). It has no parameter, so it is told apart before the mode is read.
-    if( aEvent.IsAction( &PCB_ACTIONS::routerGlossSelected ) )
+    if( m_router->RoutingInProgress() )
+        return 0;
+
+    std::vector<PCB_TRACK*> tracks = kicloudGlossTargets( m_toolMgr );
+
+    if( tracks.empty() )
     {
-        if( m_router->RoutingInProgress() )
-            return 0;
-
-        std::vector<PCB_TRACK*> tracks = kicloudGlossTargets( m_toolMgr );
-
-        if( tracks.empty() )
-        {
-            frame()->ShowInfoBarMsg( _( "Select the tracks to gloss." ) );
-            return 0;
-        }
-
-        // The selection would keep pointers to segments the commit removes.
-        m_toolMgr->RunAction( ACTIONS::selectionClear );
-
-        Activate();    // syncs the router's world with the board (TOOL_BASE::Reset)
-
-        frame()->UndoRedoBlock( true );
-        kicloudGlossTracks( m_router, getEditFrame<PCB_EDIT_FRAME>(), tracks );
-        frame()->UndoRedoBlock( false );
+        frame()->ShowInfoBarMsg( _( "Select the tracks to gloss." ) );
         return 0;
     }
 
+    m_toolMgr->RunAction( ACTIONS::selectionClear );
+
+    Activate();    // syncs the router's world with the board (TOOL_BASE::Reset)
+
+    frame()->UndoRedoBlock( true );
+    kicloudGlossTracks( m_router, getEditFrame<PCB_EDIT_FRAME>(), tracks );
+    frame()->UndoRedoBlock( false );
+    return 0;
+}
+
+
+// KICLOUD: R3.2: the handler of PCB_ACTIONS::routerToggleGloss (the router's context menu): turns
+// the "Gloss while routing" router setting (ROUTING_SETTINGS::GetGlossWhileRouting) off or on;
+// it is saved with the other router settings. Refreshes the message panel. Returns 0.
+int ROUTER_TOOL::ToggleGloss( const TOOL_EVENT& aEvent )
+{
+    PNS::ROUTING_SETTINGS& settings = m_router->Settings();
+
+    settings.SetGlossWhileRouting( !settings.GetGlossWhileRouting() );
+    UpdateMessagePanel();
+    return 0;
+}
+
+
+int ROUTER_TOOL::RouteSelected( const TOOL_EVENT& aEvent )
+{
     PNS::ROUTER_MODE mode = aEvent.Parameter<PNS::ROUTER_MODE>();
     PCB_EDIT_FRAME*  frame = getEditFrame<PCB_EDIT_FRAME>();
     VIEW_CONTROLS*   controls = getViewControls();
@@ -3239,9 +3243,9 @@ void ROUTER_TOOL::setTransitions()
     Go( &ROUTER_TOOL::ChangeRouterMode,       PCB_ACTIONS::routerWalkaroundMode.MakeEvent() );
     Go( &ROUTER_TOOL::CycleRouterMode,        PCB_ACTIONS::cycleRouterMode.MakeEvent() );
 
-    // KICLOUD: R3.2 glossing (each handler tells its action apart; see there)
-    Go( &ROUTER_TOOL::RouteSelected,          PCB_ACTIONS::routerGlossSelected.MakeEvent() );
-    Go( &ROUTER_TOOL::ChangeRouterMode,       PCB_ACTIONS::routerToggleGloss.MakeEvent() );
+    // KICLOUD: R3.2 glossing
+    Go( &ROUTER_TOOL::GlossSelected,          PCB_ACTIONS::routerGlossSelected.MakeEvent() );
+    Go( &ROUTER_TOOL::ToggleGloss,            PCB_ACTIONS::routerToggleGloss.MakeEvent() );
     Go( &ROUTER_TOOL::InlineDrag,             PCB_ACTIONS::routerInlineDrag.MakeEvent() );
     Go( &ROUTER_TOOL::InlineBreakTrack,       PCB_ACTIONS::breakTrack.MakeEvent() );
 
