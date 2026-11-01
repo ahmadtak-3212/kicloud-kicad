@@ -143,6 +143,18 @@ private:
     bool tryWalkaround( NODE* aNode, LINE& aOrig, LINE& aWalk );
     VVIA* checkVirtualVia( const VECTOR2D& aP, SEGMENT* aSeg );
 
+    /**
+     * KICLOUD: R3.2 glossing on drag release. Glosses, in \a aNode (the node about to be
+     * committed), every line the drag changed: the dragged section with the segments next to it,
+     * and the tracks a shove pushed, compared with the board so copper the drag did not touch
+     * keeps its shape (OPTIMIZER::GlossChangedLines()), and the point the drag ended at stays on
+     * the copper, so a corner dragged into a sharp spike is kept. Skipped when "Gloss while routing" is off
+     * and in free-angle drags (G), whose angles glossing would make 45-degree again; a forced
+     * commit of a colliding drag is not glossed either (FixRoute() does not call it then).
+     * Caller: FixRoute(). State: only \a aNode.
+     */
+    void glossBeforeCommit( NODE* aNode );
+
 
     VIA_HANDLE             m_initialVia;
     VIA_HANDLE             m_draggedVia;

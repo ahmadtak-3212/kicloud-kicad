@@ -2702,6 +2702,24 @@ TOOL_ACTION PCB_ACTIONS::routerAutorouteSelected( TOOL_ACTION_ARGS()
         .Flags( AF_ACTIVATE )
         .Parameter( PNS::PNS_MODE_ROUTE_SINGLE ) );
 
+// KICLOUD: R3.2 glossing (docs/patches.md). No default hotkey: Shift+O, the one proposed, is
+// Grab Nearest Unconnected Footprints (pcbnew.InteractiveSelection.GrabUnconnected).
+TOOL_ACTION PCB_ACTIONS::routerGlossSelected( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.InteractiveRouter.GlossSelected" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Gloss Selected Tracks" ) )
+        .Tooltip( _( "Merge the pieces of the selected tracks and remove their tiny jogs, loops "
+                     "and sharp corners, without changing what they connect or their clearances" ) ) );
+
+// KICLOUD: R3.2 glossing: the "Gloss while routing" router setting, as a switch (also mid-route).
+TOOL_ACTION PCB_ACTIONS::routerToggleGloss( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.InteractiveRouter.ToggleGlossWhileRouting" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Gloss While Routing" ) )
+        .Tooltip( _( "Clean the track while routing and dragging (merge pieces, remove tiny "
+                     "jogs, loops and sharp corners)" ) )
+        .ToolbarState( TOOLBAR_STATE::TOGGLE ) );
+
 TOOL_ACTION PCB_ACTIONS::cancelCurrentItem( TOOL_ACTION_ARGS()
         .Name( "pcbnew.InteractiveRouter.CancelCurrentItem" )
         .Scope( AS_GLOBAL )

@@ -272,6 +272,11 @@ public:
     static TOOL_ACTION routerAutorouteSelected;
     static TOOL_ACTION cancelCurrentItem;
 
+    /// KICLOUD: R3.2 glossing: clean the selected tracks (Gloss Selected Tracks), and switch the
+    /// router's "Gloss while routing" setting on or off
+    static TOOL_ACTION routerGlossSelected;
+    static TOOL_ACTION routerToggleGloss;
+
     /// Activation of the Push and Shove settings dialogs
     static TOOL_ACTION routerSettingsDialog;
     static TOOL_ACTION routerDiffPairDialog;

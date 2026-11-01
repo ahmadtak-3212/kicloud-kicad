@@ -152,6 +152,19 @@ public:
     bool GetFixAllSegments() const { return m_fixAllSegments; }
     void SetFixAllSegments( bool aEnable ) { m_fixAllSegments = aEnable; }
 
+    /**
+     * KICLOUD: R3.2 glossing. True (the default) when the router cleans the copper it lays or
+     * drags as it goes: the head line every routing step, the line fixed by every click, and
+     * every line a commit or a drag release changed (OPTIMIZER::GLOSS: collinear pieces merged,
+     * loops cut out, jogs shorter than the track width and corners sharper than 90 degrees
+     * replaced, pad entries kept, nothing that collides). False gives the router of KiCad 10.0.
+     * Read by LINE_PLACER (rhWalkOnly, rhShoveOnly, optimizeTailHeadTransition, simplifyNewLine,
+     * CommitPlacement) and DRAGGER::FixRoute; Gloss Selected Tracks runs whatever this says.
+     * Saved as "gloss_while_routing" in the "pns" section of pcbnew.json.
+     */
+    bool GetGlossWhileRouting() const { return m_glossWhileRouting; }
+    void SetGlossWhileRouting( bool aEnable ) { m_glossWhileRouting = aEnable; }
+
     double WalkaroundHugLengthThreshold() const { return m_walkaroundHugLengthThreshold; }
 
     int ViaForcePropIterationLimit() const { return m_viaForcePropIterationLimit; }
@@ -173,6 +186,7 @@ private:
     bool m_optimizeEntireDraggedTrack;
     bool m_autoPosture;
     bool m_fixAllSegments;
+    bool m_glossWhileRouting;   // KICLOUD: R3.2 (see GetGlossWhileRouting)
 
     DIRECTION_45::CORNER_MODE m_cornerMode;
 

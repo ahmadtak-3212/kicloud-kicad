@@ -23,6 +23,8 @@
 #ifndef __PNS_LINE_PLACER_H
 #define __PNS_LINE_PLACER_H
 
+#include <optional>   // KICLOUD: R3.1 (sameSideAsLastWalk)
+
 #include <math/vector2d.h>
 
 #include <geometry/shape.h>
@@ -353,6 +355,51 @@ private:
     ///< Route step walk around mode.
     bool rhWalkOnly( const VECTOR2I& aP, LINE& aNewHead, LINE& aNewTail );
     bool rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisionMask, PNS::PNS_MODE aMode, bool& aViaOk );
+
+    /**
+     * KICLOUD: R3.1 stable walkaround (docs/patches.md). One walk of rhWalkBase(): walks
+     * \a aInitTrack (the tail plus a new head to the cursor) around the obstacles in
+     * \a aCollisionMask clockwise and counter-clockwise and picks one result, as KiCad 10 did,
+     * except after a previous step of this route (m_walkMemory): the walk that goes the same way
+     * as the previous one (sameSideAsLastWalk()) is kept unless the other is shorter by more than
+     * WALK_SIDE_SWITCH_MARGIN; and the winding chosen last step is walked first: when its path is
+     * so short that the other side cannot beat it by the margin, the other side is not walked at
+     * all. Without a previous step (the first one) it behaves exactly as before.
+     * Caller: rhWalkBase(), up to twice per round (the second time with lastWalkTrack()).
+     * Results: true and \a aWalkFull (its shape set to the chosen walk, from the tail's start)
+     * and \a aWalkP (that walk's end) on success; false when neither side gives a usable path
+     * (\a aWalkFull and \a aWalkP are then unchanged). State: on success m_walkMemory remembers
+     * the side and the walk.
+     */
+    bool walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTrack, const VECTOR2I& aP,
+                           int aCollisionMask, LINE& aWalkFull, VECTOR2I& aWalkP );
+
+    /**
+     * KICLOUD: R3.1 stable walkaround: which of this step's two walks, \a aCw (clockwise) or
+     * \a aCcw (counter-clockwise), goes the same way as the walk the head took on the previous
+     * step (m_walkMemory): the one more of whose corners lie on it. WALKAROUND walks every obstacle
+     * on the path with the same winding, so "clockwise" alone does not say which side of the
+     * obstacle the head is on now: once the head has passed one obstacle (its detour is part of
+     * both walks) and meets the next, the previous walk lies on neither walk's new detour and the
+     * result is no preference, so the next obstacle's side is chosen by length as in KiCad 10.
+     * Caller: walkInitialTrack(). Returns no value when there is no previous walk or both walks
+     * agree with it equally. Changes nothing.
+     */
+    std::optional<WALKAROUND::WALK_POLICY> sameSideAsLastWalk( const SHAPE_LINE_CHAIN& aCw,
+                                                               const SHAPE_LINE_CHAIN& aCcw ) const;
+
+    /**
+     * KICLOUD: R3.1 stable walkaround: the fallback of rhWalkBase() when the walk from the
+     * current cursor position fails on both sides. Builds, into \a aInitTrack, the last
+     * successful walk of this route cut at its point nearest to \a aP, plus a 45-degree trace
+     * from there to \a aP, so the next walk only has to resolve the new piece instead of the whole
+     * detour again (the "flopping" of gitlab #5381 and #8562, where the head gave up instead).
+     * Returns false (and leaves \a aInitTrack alone) when there is no remembered walk for this
+     * start point, layer, width and collision mask, or while a via is being placed (its position
+     * is pushed out by buildInitialLine(), which this trace would not follow). Changes nothing.
+     */
+    bool lastWalkTrack( const VECTOR2I& aP, int aCollisionMask, LINE& aInitTrack ) const;
+
     bool splitHeadTail( const LINE& aNewLine, const LINE& aOldTail, LINE& aNewHead, LINE& aNewTail );
     bool cursorDistMinimum( const SHAPE_LINE_CHAIN& aL, const VECTOR2I& aCursor,  double lengthThreshold, SHAPE_LINE_CHAIN& aOut );
     bool clipAndCheckCollisions( const VECTOR2I& aP, const SHAPE_LINE_CHAIN& aL, SHAPE_LINE_CHAIN& aOut, int &thresholdDist );
@@ -414,6 +461,27 @@ private:
 
     FIXED_TAIL     m_fixedTail;
     MOUSE_TRAIL_TRACER m_mouseTrailTracer;
+
+    /**
+     * KICLOUD: R3.1 stable walkaround: what the last successful walk of this route chose, read
+     * and written by walkInitialTrack() and lastWalkTrack(). It belongs to one route: cleared by
+     * initPlacement() (Start); and it only applies while the walk starts from the same point on
+     * the same layer with the same width and collision mask, so a fixing click, Backspace, a
+     * layer or width change, or a switch between the solids-only walk (shove mode) and the full
+     * walk all make the next step behave like the first one.
+     */
+    struct WALK_MEMORY
+    {
+        bool     valid = false;
+        bool     clockwise = false; ///< the side chosen (WALKAROUND::WP_CW when true, else WP_CCW)
+        LINE     walk;              ///< the whole walk (tail + head), from its start to its end
+        VECTOR2I start;             ///< where that walk started (the first point of the tail)
+        int      layer = -1;
+        int      width = 0;
+        int      mask = 0;          ///< the collision mask it was walked with
+    };
+
+    WALK_MEMORY    m_walkMemory;
 };
 
 }

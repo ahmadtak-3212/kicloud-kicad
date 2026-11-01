@@ -54,6 +54,7 @@ ROUTING_SETTINGS::ROUTING_SETTINGS( JSON_SETTINGS* aParent, const std::string& a
     m_walkaroundHugLengthThreshold = 1.5;
     m_autoPosture = true;
     m_fixAllSegments = true;
+    m_glossWhileRouting = true;   // KICLOUD: R3.2
     m_viaForcePropIterationLimit = 40;
 
     m_params.emplace_back( new PARAM<int>( "mode", reinterpret_cast<int*>( &m_routingMode ),
@@ -96,6 +97,9 @@ ROUTING_SETTINGS::ROUTING_SETTINGS( JSON_SETTINGS* aParent, const std::string& a
 
     m_params.emplace_back( new PARAM<bool>( "auto_posture",     &m_autoPosture,       true ) );
     m_params.emplace_back( new PARAM<bool>( "fix_all_segments", &m_fixAllSegments,    true ) );
+
+    // KICLOUD: R3.2 glossing while routing and dragging (on unless the person turned it off)
+    m_params.emplace_back( new PARAM<bool>( "gloss_while_routing", &m_glossWhileRouting, true ) );
 
     m_params.emplace_back( new PARAM_ENUM<DIRECTION_45::CORNER_MODE>(
             "corner_mode", &m_cornerMode, DIRECTION_45::CORNER_MODE::MITERED_45,

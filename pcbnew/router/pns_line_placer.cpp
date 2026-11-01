@@ -40,6 +40,19 @@
 
 namespace PNS {
 
+/**
+ * KICLOUD: R3.1 stable walkaround (docs/patches.md): how much better the other side must be before
+ * the route head leaves the side it took on the previous step. With both sides complete, the other
+ * side's walk must be shorter by more than this share of the kept side's length (0.15: more than
+ * 15 % shorter); with neither complete, its partial path must end nearer the cursor by more than
+ * this share of the walk's straight-line length. Below that the head keeps its side, so a cursor
+ * moving past an obstacle does not make the track flip sides from frame to frame (KiCad 10 took
+ * the shorter side on every step). A constant, not a setting; tuned by the routing plan's R1
+ * jitter measurement (R-J1).
+ */
+static constexpr double WALK_SIDE_SWITCH_MARGIN = 0.15;
+
+
 LINE_PLACER::LINE_PLACER( ROUTER* aRouter ) :
     PLACEMENT_ALGO( aRouter )
 {
@@ -597,130 +610,29 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
         initTrack.Line().Simplify();
 
 
-        double initialLength = initTrack.CLine().Length();
-        double hugThresholdLength = initialLength * Settings().WalkaroundHugLengthThreshold();
-        double hugThresholdLengthComplete =
-                2.0 * initialLength * Settings().WalkaroundHugLengthThreshold();
+        // KICLOUD: R3.1 stable walkaround (docs/patches.md): the walk of initTrack and the choice
+        // of side are in walkInitialTrack(), which prefers the side this route took last step. When
+        // no path is found from the cursor's position on either side, the walk is tried once more
+        // from the last successful walk of this route (lastWalkTrack()) before giving up, which
+        // KiCad 10 did at once (the head then froze at its last position).
+        bool walked = walkInitialTrack( walkaround, initTrack, aP, aCollisionMask, walkFull, walkP );
 
-        WALKAROUND::RESULT wr = walkaround.Route( initTrack );
-        std::optional<LINE> bestLine;
-
-        OPTIMIZER optimizer( m_currentNode );
-
-        optimizer.SetEffortLevel( OPTIMIZER::MERGE_SEGMENTS );
-        optimizer.SetCollisionMask( aCollisionMask );
-
-        using WALKAROUND::WP_CW;
-        using WALKAROUND::WP_CCW;
-
-        int len_cw = wr.status[WP_CW] != WALKAROUND::ST_STUCK ? wr.lines[WP_CW].CLine().Length()
-                                                      : std::numeric_limits<int>::max();
-        int len_ccw = wr.status[WP_CCW] != WALKAROUND::ST_STUCK ? wr.lines[WP_CCW].CLine().Length()
-                                                        : std::numeric_limits<int>::max();
-
-
-        if( wr.status[ WP_CW ] == WALKAROUND::ST_DONE )
+        if( !walked )
         {
-            PNS_DBG( Dbg(), AddItem, &wr.lines[WP_CW], BLUE, 20000, wxT( "wf-result-cw-preopt" ) );
-            LINE tmpHead, tmpTail;
+            LINE fromLastWalk( initTrack );
 
-
-            OPTIMIZER::Optimize( &wr.lines[WP_CW], OPTIMIZER::MERGE_SEGMENTS, m_currentNode );
-
-            if( splitHeadTail( wr.lines[WP_CW], m_tail, tmpHead, tmpTail ) )
+            if( lastWalkTrack( aP, aCollisionMask, fromLastWalk ) )
             {
-                optimizer.Optimize( &tmpHead );
-                wr.lines[WP_CW].SetShape( tmpTail.CLine () );
-                wr.lines[WP_CW].Line().Append( tmpHead.CLine( ) );
+                PNS_DBG( Dbg(), AddItem, &fromLastWalk, YELLOW, 20000, wxT( "walk-from-last-walk" ) );
+                walked = walkInitialTrack( walkaround, fromLastWalk, aP, aCollisionMask, walkFull,
+                                           walkP );
             }
-
-            PNS_DBG( Dbg(), AddItem, &wr.lines[WP_CW], RED, 20000, wxT( "wf-result-cw-postopt" ) );
-            len_cw = wr.lines[WP_CW].CLine().Length();
-            bestLine = wr.lines[WP_CW];
-        }
-
-        if( wr.status[WP_CCW] == WALKAROUND::ST_DONE )
-        {
-            PNS_DBG( Dbg(), AddItem, &wr.lines[WP_CCW], BLUE, 20000, wxT( "wf-result-ccw-preopt" ) );
-
-            LINE tmpHead, tmpTail;
-
-            OPTIMIZER::Optimize( &wr.lines[WP_CCW], OPTIMIZER::MERGE_SEGMENTS, m_currentNode );
-
-            if( splitHeadTail( wr.lines[WP_CCW], m_tail, tmpHead, tmpTail ) )
-            {
-                optimizer.Optimize( &tmpHead );
-                wr.lines[WP_CCW].SetShape( tmpTail.CLine () );
-                wr.lines[WP_CCW].Line().Append( tmpHead.CLine( ) );
-            }
-
-            PNS_DBG( Dbg(), AddItem, &wr.lines[WP_CCW], RED, 20000, wxT( "wf-result-ccw-postopt" ) );
-            len_ccw = wr.lines[WP_CCW].CLine().Length();
-
-            if( len_ccw < len_cw )
-                bestLine = wr.lines[WP_CCW];
-        }
-
-        int bestLength = len_cw < len_ccw ? len_cw : len_ccw;
-
-        if( bestLength < hugThresholdLengthComplete && bestLine.has_value() )
-        {
-            walkFull.SetShape( bestLine->CLine() );
-            walkP = walkFull.CLine().CLastPoint();
-            PNS_DBGN( Dbg(), EndGroup );
-            continue;
-        }
-
-        bool validCw = false;
-        bool validCcw = false;
-        int  distCcw = std::numeric_limits<int>::max();
-        int  distCw = std::numeric_limits<int>::max();
-
-        SHAPE_LINE_CHAIN l_cw, l_ccw;
-
-
-        if( wr.status[WP_CW] != WALKAROUND::ST_STUCK )
-        {
-            validCw = cursorDistMinimum( wr.lines[WP_CW].CLine(), aP, hugThresholdLength, l_cw );
-
-            if( validCw )
-                distCw = ( aP - l_cw.CLastPoint() ).EuclideanNorm();
-
-            PNS_DBG( Dbg(), AddShape, &l_cw, MAGENTA, 200000, wxString::Format( "wh-result-cw %s",
-                                                                                 validCw ? "non-colliding"
-                                                                                         : "colliding" ) );
-        }
-
-        if( wr.status[WP_CCW] != WALKAROUND::ST_STUCK )
-        {
-            validCcw = cursorDistMinimum( wr.lines[WP_CCW].CLine(), aP, hugThresholdLength, l_ccw );
-
-            if( validCcw )
-                distCcw = ( aP - l_ccw.CLastPoint() ).EuclideanNorm();
-
-            PNS_DBG( Dbg(), AddShape, &l_ccw, MAGENTA, 200000, wxString::Format( "wh-result-ccw %s",
-                                                                                 validCcw ? "non-colliding"
-                                                                                          : "colliding" ) );
-        }
-
-
-        if( distCw < distCcw && validCw )
-        {
-            walkFull.SetShape( l_cw );
-            walkP = l_cw.CLastPoint();
-        }
-        else if( validCcw )
-        {
-            walkFull.SetShape( l_ccw );
-            walkP = l_ccw.CLastPoint();
-        }
-        else
-        {
-            PNS_DBGN( Dbg(), EndGroup );
-            return false;
         }
 
         PNS_DBGN( Dbg(), EndGroup );
+
+        if( !walked )
+            return false;
     } while( round < 2 && m_placingVia );
 
 
@@ -742,6 +654,334 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
     aWalkLine = walkFull;
 
     return !walkFull.EndsWithVia() || aViaOk;
+}
+
+
+// KICLOUD: R3.1 stable walkaround (docs/patches.md). walkInitialTrack() is the body of
+// rhWalkBase()'s walk as KiCad 10 had it (walk both sides, optimize each complete result, take a
+// complete path when one is short enough, else the partial "hug" path that gets nearest to the
+// cursor), with a memory of the side the previous step chose: see its comment in the header.
+bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTrack,
+                                    const VECTOR2I& aP, int aCollisionMask, LINE& aWalkFull,
+                                    VECTOR2I& aWalkP )
+{
+    using WALKAROUND::WP_CW;
+    using WALKAROUND::WP_CCW;
+
+    double initialLength = aInitTrack.CLine().Length();
+    double hugThresholdLength = initialLength * Settings().WalkaroundHugLengthThreshold();
+    double hugThresholdLengthComplete =
+            2.0 * initialLength * Settings().WalkaroundHugLengthThreshold();
+
+    // The side the previous step of this route chose, when it still applies (the walk starts at
+    // the same point on the same layer, with the same width and collision mask).
+    std::optional<WALKAROUND::WALK_POLICY> prevSide;
+
+    if( m_walkMemory.valid && m_walkMemory.mask == aCollisionMask
+            && m_walkMemory.layer == aInitTrack.Layer() && m_walkMemory.width == aInitTrack.Width()
+            && aInitTrack.PointCount() > 0 && m_walkMemory.start == aInitTrack.CPoint( 0 ) )
+    {
+        prevSide = m_walkMemory.clockwise ? WP_CW : WP_CCW;
+    }
+
+    WALKAROUND::RESULT wr;
+
+    if( !prevSide )
+    {
+        // No previous step: both sides in one walk, as in KiCad 10.
+        aWalkaround.SetAllowedPolicies( { WP_CCW, WP_CW } );
+        wr = aWalkaround.Route( aInitTrack );
+    }
+    else
+    {
+        // The previous side first. Each side is walked independently of the other
+        // (WALKAROUND::singleStep), so walking them one at a time gives the same two lines.
+        const WALKAROUND::WALK_POLICY otherSide = ( *prevSide == WP_CW ) ? WP_CCW : WP_CW;
+
+        aWalkaround.SetAllowedPolicies( { *prevSide } );
+        WALKAROUND::RESULT prevResult = aWalkaround.Route( aInitTrack );
+
+        wr.status[*prevSide] = prevResult.status[*prevSide];
+        wr.lines[*prevSide] = prevResult.lines[*prevSide];
+        wr.status[otherSide] = WALKAROUND::ST_STUCK;    // unless walked below
+
+        // Every path from the start to the end is at least as long as the straight distance
+        // between them. When the previous side's complete path is within the margin of that
+        // distance, the other side cannot be shorter by the margin, so it is not walked at all.
+        bool walkOther = true;
+
+        if( prevResult.status[*prevSide] == WALKAROUND::ST_DONE )
+        {
+            const double prevLength = prevResult.lines[*prevSide].CLine().Length();
+            const double direct =
+                    ( aInitTrack.CLine().CLastPoint() - aInitTrack.CPoint( 0 ) ).EuclideanNorm();
+
+            if( prevLength < hugThresholdLengthComplete
+                    && prevLength * ( 1.0 - WALK_SIDE_SWITCH_MARGIN ) <= direct )
+            {
+                walkOther = false;
+            }
+        }
+
+        if( walkOther )
+        {
+            aWalkaround.SetAllowedPolicies( { otherSide } );
+            WALKAROUND::RESULT otherResult = aWalkaround.Route( aInitTrack );
+
+            wr.status[otherSide] = otherResult.status[otherSide];
+            wr.lines[otherSide] = otherResult.lines[otherSide];
+        }
+    }
+
+    // remember(): keeps the side and the walk for the next step (see WALK_MEMORY).
+    auto remember =
+            [&]( WALKAROUND::WALK_POLICY aSide )
+            {
+                m_walkMemory.valid = true;
+                m_walkMemory.clockwise = ( aSide == WP_CW );
+                m_walkMemory.walk = aWalkFull;
+                m_walkMemory.start = aInitTrack.CPoint( 0 );
+                m_walkMemory.layer = aInitTrack.Layer();
+                m_walkMemory.width = aInitTrack.Width();
+                m_walkMemory.mask = aCollisionMask;
+            };
+
+    std::optional<LINE> bestLine;
+    std::optional<WALKAROUND::WALK_POLICY> bestSide;
+
+    OPTIMIZER optimizer( m_currentNode );
+
+    optimizer.SetEffortLevel( OPTIMIZER::MERGE_SEGMENTS );
+    optimizer.SetCollisionMask( aCollisionMask );
+
+    int len_cw = wr.status[WP_CW] != WALKAROUND::ST_STUCK ? wr.lines[WP_CW].CLine().Length()
+                                                  : std::numeric_limits<int>::max();
+    int len_ccw = wr.status[WP_CCW] != WALKAROUND::ST_STUCK ? wr.lines[WP_CCW].CLine().Length()
+                                                    : std::numeric_limits<int>::max();
+
+
+    if( wr.status[ WP_CW ] == WALKAROUND::ST_DONE )
+    {
+        PNS_DBG( Dbg(), AddItem, &wr.lines[WP_CW], BLUE, 20000, wxT( "wf-result-cw-preopt" ) );
+        LINE tmpHead, tmpTail;
+
+
+        OPTIMIZER::Optimize( &wr.lines[WP_CW], OPTIMIZER::MERGE_SEGMENTS, m_currentNode );
+
+        if( splitHeadTail( wr.lines[WP_CW], m_tail, tmpHead, tmpTail ) )
+        {
+            optimizer.Optimize( &tmpHead );
+            wr.lines[WP_CW].SetShape( tmpTail.CLine () );
+            wr.lines[WP_CW].Line().Append( tmpHead.CLine( ) );
+        }
+
+        PNS_DBG( Dbg(), AddItem, &wr.lines[WP_CW], RED, 20000, wxT( "wf-result-cw-postopt" ) );
+        len_cw = wr.lines[WP_CW].CLine().Length();
+        bestLine = wr.lines[WP_CW];
+        bestSide = WP_CW;
+    }
+
+    if( wr.status[WP_CCW] == WALKAROUND::ST_DONE )
+    {
+        PNS_DBG( Dbg(), AddItem, &wr.lines[WP_CCW], BLUE, 20000, wxT( "wf-result-ccw-preopt" ) );
+
+        LINE tmpHead, tmpTail;
+
+        OPTIMIZER::Optimize( &wr.lines[WP_CCW], OPTIMIZER::MERGE_SEGMENTS, m_currentNode );
+
+        if( splitHeadTail( wr.lines[WP_CCW], m_tail, tmpHead, tmpTail ) )
+        {
+            optimizer.Optimize( &tmpHead );
+            wr.lines[WP_CCW].SetShape( tmpTail.CLine () );
+            wr.lines[WP_CCW].Line().Append( tmpHead.CLine( ) );
+        }
+
+        PNS_DBG( Dbg(), AddItem, &wr.lines[WP_CCW], RED, 20000, wxT( "wf-result-ccw-postopt" ) );
+        len_ccw = wr.lines[WP_CCW].CLine().Length();
+
+        if( len_ccw < len_cw )
+        {
+            bestLine = wr.lines[WP_CCW];
+            bestSide = WP_CCW;
+        }
+    }
+
+    // Both sides complete after a previous step: keep the side the head took last step unless the
+    // other one is shorter by more than the margin (KiCad 10 took the shorter one, so the head
+    // flipped whenever the two lengths crossed as the cursor moved).
+    if( prevSide && wr.status[WP_CW] == WALKAROUND::ST_DONE
+            && wr.status[WP_CCW] == WALKAROUND::ST_DONE )
+    {
+        std::optional<WALKAROUND::WALK_POLICY> sameSide =
+                sameSideAsLastWalk( wr.lines[WP_CW].CLine(), wr.lines[WP_CCW].CLine() );
+
+        if( sameSide )
+        {
+            const WALKAROUND::WALK_POLICY otherSide = ( *sameSide == WP_CW ) ? WP_CCW : WP_CW;
+            const double lenSame = ( *sameSide == WP_CW ) ? len_cw : len_ccw;
+            const double lenOther = ( *sameSide == WP_CW ) ? len_ccw : len_cw;
+
+            bestSide = ( lenOther < lenSame * ( 1.0 - WALK_SIDE_SWITCH_MARGIN ) ) ? otherSide
+                                                                                   : *sameSide;
+            bestLine = wr.lines[*bestSide];
+        }
+    }
+
+    int bestLength = len_cw < len_ccw ? len_cw : len_ccw;
+
+    if( bestLength < hugThresholdLengthComplete && bestLine.has_value() )
+    {
+        aWalkFull.SetShape( bestLine->CLine() );
+        aWalkP = aWalkFull.CLine().CLastPoint();
+        remember( *bestSide );
+        return true;
+    }
+
+    bool validCw = false;
+    bool validCcw = false;
+    int  distCcw = std::numeric_limits<int>::max();
+    int  distCw = std::numeric_limits<int>::max();
+
+    SHAPE_LINE_CHAIN l_cw, l_ccw;
+
+
+    if( wr.status[WP_CW] != WALKAROUND::ST_STUCK )
+    {
+        validCw = cursorDistMinimum( wr.lines[WP_CW].CLine(), aP, hugThresholdLength, l_cw );
+
+        if( validCw )
+            distCw = ( aP - l_cw.CLastPoint() ).EuclideanNorm();
+
+        PNS_DBG( Dbg(), AddShape, &l_cw, MAGENTA, 200000, wxString::Format( "wh-result-cw %s",
+                                                                             validCw ? "non-colliding"
+                                                                                     : "colliding" ) );
+    }
+
+    if( wr.status[WP_CCW] != WALKAROUND::ST_STUCK )
+    {
+        validCcw = cursorDistMinimum( wr.lines[WP_CCW].CLine(), aP, hugThresholdLength, l_ccw );
+
+        if( validCcw )
+            distCcw = ( aP - l_ccw.CLastPoint() ).EuclideanNorm();
+
+        PNS_DBG( Dbg(), AddShape, &l_ccw, MAGENTA, 200000, wxString::Format( "wh-result-ccw %s",
+                                                                              validCcw ? "non-colliding"
+                                                                                       : "colliding" ) );
+    }
+
+    // No complete path: the partial path that ends nearer the cursor, as in KiCad 10, except that
+    // after a previous step its side is kept unless the other one ends nearer by more than the
+    // margin of the path length.
+    std::optional<WALKAROUND::WALK_POLICY> hugSide;
+
+    if( distCw < distCcw && validCw )
+        hugSide = WP_CW;
+    else if( validCcw )
+        hugSide = WP_CCW;
+
+    if( prevSide && validCw && validCcw )
+    {
+        std::optional<WALKAROUND::WALK_POLICY> sameSide = sameSideAsLastWalk( l_cw, l_ccw );
+
+        if( sameSide )
+        {
+            const WALKAROUND::WALK_POLICY otherSide = ( *sameSide == WP_CW ) ? WP_CCW : WP_CW;
+            const double distSame = ( *sameSide == WP_CW ) ? distCw : distCcw;
+            const double distOther = ( *sameSide == WP_CW ) ? distCcw : distCw;
+
+            hugSide = ( distOther < distSame - WALK_SIDE_SWITCH_MARGIN * initialLength )
+                              ? otherSide
+                              : *sameSide;
+        }
+    }
+
+    if( !hugSide )
+        return false;
+
+    const SHAPE_LINE_CHAIN& hug = ( *hugSide == WP_CW ) ? l_cw : l_ccw;
+
+    aWalkFull.SetShape( hug );
+    aWalkP = hug.CLastPoint();
+    remember( *hugSide );
+    return true;
+}
+
+
+// KICLOUD: R3.1 stable walkaround (docs/patches.md); see the comment in the header.
+std::optional<WALKAROUND::WALK_POLICY>
+LINE_PLACER::sameSideAsLastWalk( const SHAPE_LINE_CHAIN& aCw, const SHAPE_LINE_CHAIN& aCcw ) const
+{
+    if( !m_walkMemory.valid )
+        return std::nullopt;
+
+    // How many corners of the last walk lie on a candidate (within one track width). The last
+    // point is left out: it was the old cursor position, which neither candidate has to reach.
+    const SHAPE_LINE_CHAIN& last = m_walkMemory.walk.CLine();
+    const SEG::ecoord       tolerance = SEG::Square( std::max( m_walkMemory.width, 1 ) );
+
+    auto agreement =
+            [&]( const SHAPE_LINE_CHAIN& aCandidate )
+            {
+                int n = 0;
+
+                for( int i = 0; i + 1 < last.PointCount(); i++ )
+                {
+                    if( aCandidate.SquaredDistance( last.CPoint( i ) ) <= tolerance )
+                        n++;
+                }
+
+                return n;
+            };
+
+    const int cw = agreement( aCw );
+    const int ccw = agreement( aCcw );
+
+    if( cw == ccw )
+        return std::nullopt;
+
+    return cw > ccw ? WALKAROUND::WP_CW : WALKAROUND::WP_CCW;
+}
+
+
+// KICLOUD: R3.1 stable walkaround (docs/patches.md); see the comment in the header.
+bool LINE_PLACER::lastWalkTrack( const VECTOR2I& aP, int aCollisionMask, LINE& aInitTrack ) const
+{
+    if( m_placingVia || !m_walkMemory.valid || m_walkMemory.mask != aCollisionMask
+            || m_walkMemory.layer != aInitTrack.Layer() || m_walkMemory.width != aInitTrack.Width()
+            || aInitTrack.PointCount() == 0 || m_walkMemory.start != aInitTrack.CPoint( 0 ) )
+    {
+        return false;
+    }
+
+    SHAPE_LINE_CHAIN path( m_walkMemory.walk.CLine() );
+
+    if( path.PointCount() < 2 || path.ArcCount() )
+        return false;
+
+    // Cut the last walk where it comes nearest to the cursor, then head straight for the cursor.
+    const VECTOR2I nearest = path.NearestPoint( aP );
+    const int      cut = path.Split( nearest );
+
+    if( cut < 0 )
+        return false;
+
+    path = path.Slice( 0, cut );
+
+    if( nearest != aP )
+    {
+        const DIRECTION_45 lastDir = path.SegmentCount() ? DIRECTION_45( path.CSegment( -1 ) )
+                                                         : DIRECTION_45();
+
+        path.Append( lastDir.BuildInitialTrace( nearest, aP, false, Settings().GetCornerMode() ) );
+    }
+
+    path.Simplify();
+
+    if( path.SegmentCount() < 1 || path.CPoint( 0 ) != m_walkMemory.start )
+        return false;
+
+    aInitTrack.SetShape( path );
+    return true;
 }
 
 
@@ -776,6 +1016,11 @@ bool LINE_PLACER::rhWalkOnly( const VECTOR2I& aP, LINE& aNewHead, LINE& aNewTail
     {
         effort |= OPTIMIZER::SMART_PADS;
     }
+
+    // KICLOUD: R3.2: gloss the head every step (OPTIMIZER::gloss: merge pieces, cut loops,
+    // replace tiny jogs and sharp corners), unless the person turned "Gloss while routing" off.
+    if( Settings().GetGlossWhileRouting() )
+        effort |= OPTIMIZER::GLOSS;
 
     if( m_currentNode->CheckColliding( &walkFull ) )
     {
@@ -991,6 +1236,10 @@ bool LINE_PLACER::rhShoveOnly( const VECTOR2I& aP, LINE& aNewHead, LINE& aNewTai
         effort |= OPTIMIZER::SMART_PADS;
     }
 
+    // KICLOUD: R3.2: gloss the shoved head too (see rhWalkOnly()).
+    if( Settings().GetGlossWhileRouting() )
+        effort |= OPTIMIZER::GLOSS;
+
     if( shoveOk )
     {
         if( m_shove->HeadsModified() )
@@ -1088,7 +1337,11 @@ bool LINE_PLACER::optimizeTailHeadTransition()
 
     PNS_DBG( Dbg(), AddItem, &new_head, LIGHTCYAN, 10000, wxT( "ht-newline" ) );
 
-    if( OPTIMIZER::Optimize( &new_head, OPTIMIZER::MERGE_SEGMENTS, m_currentNode ) )
+    // KICLOUD: R3.2: also gloss where the head joins the tail (a jog or a sharp corner there).
+    const int htEffort = OPTIMIZER::MERGE_SEGMENTS
+                         | ( Settings().GetGlossWhileRouting() ? OPTIMIZER::GLOSS : 0 );
+
+    if( OPTIMIZER::Optimize( &new_head, htEffort, m_currentNode ) )
     {
         LINE tmp( m_tail, opt_line );
 
@@ -1462,6 +1715,7 @@ void LINE_PLACER::initPlacement()
     m_last_p_end.reset();
     m_p_start = m_currentStart;
     m_direction = m_initial_direction;
+    m_walkMemory = WALK_MEMORY();   // KICLOUD: R3.1: a new route has no previous walk side
 
     NODE* world = Router()->GetWorld();
 
@@ -1821,6 +2075,11 @@ bool LINE_PLACER::CommitPlacement()
         m_lastNode->KillChildren();
     }
 
+    // KICLOUD: R3.2: gloss every line the commit writes (the route and, in shove mode, the tracks
+    // it pushed), where it changed and next to it, before it reaches the board.
+    if( m_lastNode && Settings().GetGlossWhileRouting() )
+        OPTIMIZER::GlossChangedLines( m_lastNode );
+
     if( m_lastNode )
         Router()->CommitRouting( m_lastNode );
 
@@ -1981,7 +2240,30 @@ void LINE_PLACER::simplifyNewLine( NODE* aNode, LINKED_ITEM* aLatest )
     LINE l_orig = aNode->AssembleLine( aLatest, nullptr, false, false, false );
     LINE l( l_orig );
 
-    bool optimized = OPTIMIZER::Optimize( &l, OPTIMIZER::MERGE_COLINEAR, aNode );
+    bool optimized;
+
+    if( Settings().GetGlossWhileRouting() )
+    {
+        // KICLOUD: R3.2: gloss the line each fixing click lays, but only where it differs from the
+        // board (the root of aNode) and next to those places: the track the route continued from
+        // is not reshaped further away.
+        const NODE* root = aNode;
+
+        while( root->GetParent() )
+            root = root->GetParent();
+
+        OPTIMIZER optimizer( aNode );
+        LINE      tmp( l );
+
+        optimizer.SetEffortLevel( OPTIMIZER::MERGE_COLINEAR | OPTIMIZER::GLOSS );
+        optimizer.SetCollisionMask( ITEM::ANY_T );
+        optimizer.SetGlossReference( root );
+        optimized = optimizer.Optimize( &tmp, &l );
+    }
+    else
+    {
+        optimized = OPTIMIZER::Optimize( &l, OPTIMIZER::MERGE_COLINEAR, aNode );
+    }
 
     SHAPE_LINE_CHAIN simplified( l.CLine() );
 

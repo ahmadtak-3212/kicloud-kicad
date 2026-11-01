@@ -25,6 +25,8 @@
 
 #include <unordered_map>
 #include <memory>
+#include <optional> // KICLOUD: R3.2 (GlossLines)
+#include <vector>   // KICLOUD: R3.2 (GlossLines)
 
 #include <geometry/shape_index_list.h>
 #include <geometry/shape_line_chain.h>
@@ -41,6 +43,7 @@ class DIFF_PAIR;
 class ITEM;
 class JOINT;
 class OPT_CONSTRAINT;
+class LINKED_ITEM;   // KICLOUD: R3.2 (GlossLines)
 
 /**
  * Calculate the cost of a given line, taking corner angles and total length into account.
@@ -90,6 +93,8 @@ private:
  * - Rerouting path between pair of line corners with a 2-segment "\__" line and iteratively
  *   repeating the procedure as long as the total cost of the line keeps decreasing.
  * - "Smart Pads" - that is, rerouting pad/via exits to make them look nice (SMART_PADS).
+ * - KICLOUD: R3.2 glossing (GLOSS): cleaning a line without changing where it connects: see
+ *   gloss() and GlossLines().
  */
 class OPTIMIZER
 {
@@ -105,8 +110,10 @@ public:
         RESTRICT_VERTEX_RANGE = 0x40,
         MERGE_COLINEAR        = 0x80,    ///< Merge co-linear segments
         RESTRICT_AREA         = 0x100,
-        LIMIT_CORNER_COUNT    = 0x200  ///< Do not attempt to optimize if the resulting line's
+        LIMIT_CORNER_COUNT    = 0x200, ///< Do not attempt to optimize if the resulting line's
                                        ///< corner count is outside the predefined range
+        GLOSS                 = 0x400  ///< KICLOUD: R3.2: merge collinear pieces, cut out loops,
+                                       ///< replace tiny jogs and sharp corners (see gloss())
     };
 
     OPTIMIZER( NODE* aWorld );
@@ -118,6 +125,42 @@ public:
 
     bool Optimize( const LINE* aLine, LINE* aResult = nullptr, LINE* aRoot = nullptr );
     bool Optimize( DIFF_PAIR* aPair );
+
+    /**
+     * KICLOUD: R3.2 glossing (docs/patches.md). Glosses the lines through \a aSeeds in \a aNode:
+     * each seed segment's whole line (from joint to joint, stopping at locked joints) is cleaned
+     * with GLOSS and, when that changed it, replaced in \a aNode, so the caller can commit the
+     * node as one change. Lines with arcs or locked segments are left alone; each line is glossed
+     * once however many of its segments are seeds. With \a aReference (a node the lines are
+     * compared with, normally the root of \a aNode), only the places where a line differs from it
+     * are cleaned, with their neighbouring segments; without it the whole line is.
+     * Callers: GlossChangedLines(), and ROUTER_TOOL for Gloss Selected Tracks.
+     * With \a aPreserve, a line that passes that point still passes it afterwards (the point a
+     * drag put a corner or a segment at: the person asked for that shape, even a sharp corner).
+     * Result: the number of segments removed (fewer pieces after merging; can be 0 when only
+     * corners were fixed); \a aLinesChanged, when given, gets the number of lines replaced.
+     */
+    static int GlossLines( NODE* aNode, const std::vector<LINKED_ITEM*>& aSeeds,
+                           const NODE* aReference, int* aLinesChanged = nullptr,
+                           const std::optional<VECTOR2I>& aPreserve = std::nullopt );
+
+    /**
+     * KICLOUD: R3.2 glossing: GlossLines() over every segment \a aNode added or changed with
+     * respect to its root (what a commit of the node would write), compared with that root, so
+     * only the copper the route, drag or shove produced, and its neighbours, is cleaned.
+     * Callers: LINE_PLACER::CommitPlacement() and DRAGGER::FixRoute() just before the node is
+     * committed, when the "Gloss while routing" setting is on; \a aPreserve as in GlossLines()
+     * (DRAGGER passes the drag point). Result as GlossLines().
+     */
+    static int GlossChangedLines( NODE* aNode,
+                                  const std::optional<VECTOR2I>& aPreserve = std::nullopt );
+
+    /**
+     * KICLOUD: R3.2 glossing: with \a aReference set, GLOSS changes a line only where it is not
+     * already in \a aReference (a segment with both its ends and its net and layer there), and the
+     * segments next to those places; nullptr (the default) lets it change the whole line.
+     */
+    void SetGlossReference( const NODE* aReference ) { m_glossReference = aReference; }
 
 
     void SetWorld( NODE* aNode ) { m_world = aNode; }
@@ -175,6 +218,16 @@ private:
     bool runSmartPads( LINE* aLine );
     bool mergeStep( LINE* aLine, SHAPE_LINE_CHAIN& aCurrentLine, int step );
     bool fanoutCleanup( LINE * aLine );
+
+    // KICLOUD: R3.2 glossing (see the .cpp for each)
+    bool gloss( LINE* aLine, const LINE* aOrigin );
+    bool glossStep( LINE* aLine, const std::vector<ITEM*>& aContacts, bool aStartAnchored,
+                    bool aEndAnchored );
+    bool glossCollides( const LINE* aLine, const SHAPE_LINE_CHAIN& aPiece ) const;
+    bool glossKeepsContacts( const LINE* aLine, const SHAPE_LINE_CHAIN& aPath,
+                             const std::vector<ITEM*>& aContacts ) const;
+    std::vector<ITEM*> glossContacts( const LINE* aOrigin ) const;
+    bool glossSegmentIsNew( const SEG& aSeg, const LINE* aLine ) const;
     bool mergeDpSegments( DIFF_PAIR *aPair );
     bool mergeDpStep( DIFF_PAIR *aPair, bool aTryP, int step );
 
@@ -210,6 +263,7 @@ private:
     std::pair<int, int> m_restrictedVertexRange;
     BOX2I               m_restrictArea;
     bool                m_restrictAreaIsStrict;
+    const NODE*         m_glossReference;   ///< KICLOUD: R3.2 (see SetGlossReference)
 };
 
 

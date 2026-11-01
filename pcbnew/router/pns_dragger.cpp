@@ -700,6 +700,16 @@ bool DRAGGER::dragShove( const VECTOR2I& aP )
 }
 
 
+// KICLOUD: R3.2 glossing on drag release (docs/patches.md); see the header.
+void DRAGGER::glossBeforeCommit( NODE* aNode )
+{
+    // The point the drag put a segment or a corner at stays on the copper (even a sharp corner the
+    // person dragged there); m_lastValidPoint is where the committed drag ended.
+    if( aNode && Settings().GetGlossWhileRouting() && !m_freeAngleMode )
+        OPTIMIZER::GlossChangedLines( aNode, VECTOR2I( m_lastValidPoint ) );
+}
+
+
 bool DRAGGER::FixRoute( bool aForceCommit )
 {
     NODE* node = CurrentNode();
@@ -708,6 +718,7 @@ bool DRAGGER::FixRoute( bool aForceCommit )
     {
         if( m_dragStatus )
         {
+            glossBeforeCommit( node );   // KICLOUD: R3.2
             Router()->CommitRouting( node );
             return true;
         }
@@ -731,6 +742,7 @@ bool DRAGGER::FixRoute( bool aForceCommit )
 
             if( node && m_dragStatus )
             {
+                glossBeforeCommit( node );   // KICLOUD: R3.2
                 Router()->CommitRouting( node );
                 return true;
             }
