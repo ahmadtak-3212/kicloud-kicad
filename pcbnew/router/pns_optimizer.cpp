@@ -119,7 +119,10 @@ OPTIMIZER::OPTIMIZER( NODE* aWorld ) :
     m_collisionKindMask( ITEM::ANY_T ),
     m_effortLevel( MERGE_SEGMENTS ),
     m_restrictAreaIsStrict( false ),
-    m_glossReference( nullptr )   // KICLOUD: R3.2
+    m_glossReference( nullptr ),   // KICLOUD: R3.2 (the four gloss members)
+    m_glossTailSegments( 0 ),
+    m_glossBudget( GlossDefaultBudget ),
+    m_glossBudgetHit( false )
 {
 }
 
@@ -1552,29 +1555,30 @@ void Tighten( NODE *aNode, const SHAPE_LINE_CHAIN& aOldLine, const LINE& aNewLin
 // KICLOUD: R3.2 glossing (docs/patches.md)
 //
 // gloss() cleans one line the way Altium's glossing does, without changing where it connects.
-// First zero-length pieces and collinear splits are merged (Simplify2: the same copper in fewer
-// pieces). Then, one change at a time and only when the change makes the line strictly cleaner
-// (GLOSS_SCORE below), a loop of the line over itself is cut out at the crossing, and a jog
-// shorter than the track width or a corner sharper than 90 degrees is replaced by a straight or a
-// 45-degree (90-degree in the 90-degree corner modes) piece between two of the line's vertices.
-// Every replacement keeps the line's two ends; is checked against the copper of other nets with
-// the current clearance rules (strictly: without the router's clearance epsilon); keeps touching
-// every same-net item the original line touched (a pad or via it runs over, a track that ends on
-// it), so connectivity cannot change; satisfies the optimizer's other constraints (vertex to keep,
-// area, topology); and leaves alone the first or last segment where the line ends on a pad or
-// via, so the pad entry SMART_PADS made stays centred. Lines with arcs are not glossed.
+// First zero-length pieces and collinear splits are merged, but only where a vertex lies between
+// its two neighbours on one straight piece (glossMergeExact: the copper stays the same; a spike
+// that turns back is not touched here). Then, one change at a time and only when the change makes
+// the line strictly cleaner (GLOSS_SCORE below), a loop of the line over itself is cut out at the
+// crossing, and a jog shorter than the track width or a corner sharper than 90 degrees is replaced
+// by a straight or a 45-degree (90-degree in the 90-degree corner modes) piece between two of the
+// line's vertices. Every replacement keeps the line's two ends; is checked against the copper of
+// other nets with the current clearance rules (strictly: without the router's clearance epsilon);
+// keeps touching every same-net item the original line touched (a pad or via it runs over, a
+// track that ends on it), so connectivity cannot change; satisfies the optimizer's other
+// constraints (vertex to keep, area, topology); and leaves alone the first or last segment where
+// the line ends on a pad or via, so the pad entry SMART_PADS made stays centred. Lines with arcs
+// and closed lines (a ring from a via back to the same via) are not glossed.
+//
+// Cost: each candidate is scored from the few segments it changes (glossRegionScore) against the
+// line's running total, so a candidate costs O(window x segments) for the crossing test and
+// O(window) for the rest; a budget bounds the candidates one optimizer evaluates (SetGlossBudget),
+// at most GLOSS_MAX_CHECKS candidates per step get the world collision check, and a route head is
+// glossed only in its last segments (SetGlossTail).
 // ---------------------------------------------------------------------------------------------
 
-namespace
-{
-
-/// The widest piece of a line gloss() replaces at once, in segments: a jog is the short segment
-/// with its two neighbours (3); one more lets a jog right next to a corner go as well (4).
-constexpr int GLOSS_MAX_WINDOW = 4;
-
-
 /// How clean a line is. Compared field by field in this order; smaller is cleaner. gloss() only
-/// accepts replacements that make it strictly smaller, so it always ends.
+/// accepts replacements that make it strictly smaller, so it always ends. (Declared in the header
+/// so glossStep() can take it.)
 struct GLOSS_SCORE
 {
     int crossings = 0;    ///< pairs of segments that cross or touch (the line loops over itself)
@@ -1592,6 +1596,20 @@ struct GLOSS_SCORE
 };
 
 
+namespace
+{
+
+/// The widest piece of a line gloss() replaces at once, in segments: a jog is the short segment
+/// with its two neighbours (3); one more lets a jog right next to a corner go as well (4).
+constexpr int GLOSS_MAX_WINDOW = 4;
+
+/// How many of one step's candidates, best first, get the (expensive) world collision check
+/// before the step gives up.
+constexpr int GLOSS_MAX_CHECKS = 8;
+
+
+
+
 /// Whether the corner at vertex aV of aPath (not its first or last point) is sharper than 90
 /// degrees: the directions to its two neighbours point into the same half-plane. Exact (integer
 /// arithmetic); a right angle or a straight continuation is not acute.
@@ -1604,37 +1622,99 @@ bool glossIsAcute( const SHAPE_LINE_CHAIN& aPath, int aV )
 }
 
 
-/// The GLOSS_SCORE of aPath (already simplified) for a track aWidth wide.
-GLOSS_SCORE glossScore( const SHAPE_LINE_CHAIN& aPath, int aWidth )
+/// The part of aPath's GLOSS_SCORE that depends on segments aLo..aHi (clamped to the line):
+/// those segments shorter than aWidth; the crossing pairs with at least one segment in the range;
+/// the acute corners at vertices aLo..aHi+1; the corner cost of the corners at those vertices.
+/// segs is left 0. Two paths that differ only in such a range (and are equal before and after
+/// it) differ in score exactly by the difference of their region scores, which is how gloss()
+/// scores a candidate without rescanning the whole line.
+GLOSS_SCORE glossRegionScore( const SHAPE_LINE_CHAIN& aPath, int aWidth, int aLo, int aHi )
 {
     GLOSS_SCORE       score;
+    const int         nSegs = aPath.SegmentCount();
     const SEG::ecoord minLength2 = SEG::Square( aWidth );
-    const int         n = aPath.SegmentCount();
 
-    score.segs = n;
-    score.cornerCost = COST_ESTIMATOR::CornerCost( aPath );
+    aLo = std::max( aLo, 0 );
+    aHi = std::min( aHi, nSegs - 1 );
 
-    for( int i = 0; i < n; i++ )
+    for( int i = aLo; i <= aHi; i++ )
     {
         const SEG s = aPath.CSegment( i );
 
         if( s.SquaredLength() < minLength2 )
             score.shortSegs++;
 
-        for( int j = i + 2; j < n; j++ )
+        // pairs (j, i) with j < i - 1 and j outside the range (inside it they are counted from j)
+        for( int j = 0; j < std::min( i - 1, aLo ); j++ )
+        {
+            if( s.Intersects( aPath.CSegment( j ) ) )
+                score.crossings++;
+        }
+
+        // pairs (i, j) with j > i + 1
+        for( int j = i + 2; j < nSegs; j++ )
         {
             if( s.Intersects( aPath.CSegment( j ) ) )
                 score.crossings++;
         }
     }
 
-    for( int v = 1; v + 1 < aPath.PointCount(); v++ )
+    for( int v = std::max( aLo, 1 ); v <= std::min( aHi + 1, aPath.PointCount() - 2 ); v++ )
     {
         if( glossIsAcute( aPath, v ) )
             score.acute++;
+
+        score.cornerCost += COST_ESTIMATOR::CornerCost( aPath.CSegment( v - 1 ),
+                                                        aPath.CSegment( v ) );
     }
 
     return score;
+}
+
+
+/// The whole GLOSS_SCORE of aPath (O(segments^2) for the crossings; once per line).
+GLOSS_SCORE glossScore( const SHAPE_LINE_CHAIN& aPath, int aWidth )
+{
+    GLOSS_SCORE score = glossRegionScore( aPath, aWidth, 0, aPath.SegmentCount() - 1 );
+
+    score.segs = aPath.SegmentCount();
+    return score;
+}
+
+
+/// Removes duplicate points and every vertex that lies on the straight piece between its two
+/// neighbours (it turns by nothing), so the copper is exactly the same in fewer pieces. Unlike
+/// SHAPE_LINE_CHAIN::Simplify2() it never drops a vertex where the line turns back on itself (a
+/// spike A-B-C with B beyond C), which would remove copper unchecked.
+void glossMergeExact( SHAPE_LINE_CHAIN& aPath )
+{
+    std::vector<VECTOR2I> pts;
+
+    pts.reserve( aPath.PointCount() );
+
+    for( const VECTOR2I& p : aPath.CPoints() )
+    {
+        if( !pts.empty() && pts.back() == p )
+            continue;
+
+        while( pts.size() >= 2 )
+        {
+            const VECTOR2I& a = pts[pts.size() - 2];
+            const VECTOR2I& b = pts.back();
+            const VECTOR2I  ab = b - a;
+            const VECTOR2I  bc = p - b;
+
+            // b lies between a and p on one straight piece: collinear and pointing the same way
+            if( ab.Cross( bc ) == 0 && ab.Dot( bc ) > 0 )
+                pts.pop_back();
+            else
+                break;
+        }
+
+        pts.push_back( p );
+    }
+
+    aPath = SHAPE_LINE_CHAIN( pts );
 }
 
 
@@ -1653,17 +1733,19 @@ bool glossDirectionAllowed( const SEG& aSeg, bool a90 )
 // gloss(): see the block comment above. Caller: Optimize() when the effort includes GLOSS, with
 // aLine the copy being optimized (aResult there) and aOrigin the line as given (still linked to
 // its segments when it came from a node, which is how the same-net items it touches are found).
-// Result: whether the line changed. State: only aLine's shape.
+// Result: whether the line changed. State: aLine's shape, the budget (m_glossBudget).
 bool OPTIMIZER::gloss( LINE* aLine, const LINE* aOrigin )
 {
     SHAPE_LINE_CHAIN& line = aLine->Line();
 
-    if( line.ArcCount() || line.PointCount() < 2 )
+    // A closed line (a ring from a via or pad back to itself) has no loop to cut: its "loop" is
+    // the ring. KiCad's own loop removal (LINE_PLACER::removeLoops) leaves such lines alone too.
+    if( line.ArcCount() || line.PointCount() < 2 || line.CPoint( 0 ) == line.CLastPoint() )
         return false;
 
     const std::vector<VECTOR2I> before = line.CPoints();
 
-    line.Simplify2();
+    glossMergeExact( line );
 
     const std::vector<ITEM*> contacts = glossContacts( aOrigin );
     const bool startAnchored =
@@ -1671,11 +1753,13 @@ bool OPTIMIZER::gloss( LINE* aLine, const LINE* aOrigin )
     const bool endAnchored =
             findPadOrVia( aLine->Layer(), aLine->Net(), line.CLastPoint() ) != nullptr;
 
-    // Every accepted step makes the score strictly smaller; the budget only bounds the work on a
-    // pathological line.
-    for( int budget = 2 * line.SegmentCount() + 8; budget > 0; budget-- )
+    GLOSS_SCORE score = glossScore( line, aLine->Width() );
+
+    // Every accepted step makes the score strictly smaller; the step limit and the candidate
+    // budget only bound the work on a pathological line.
+    for( int steps = 2 * line.SegmentCount() + 8; steps > 0 && m_glossBudget > 0; steps-- )
     {
-        if( !glossStep( aLine, contacts, startAnchored, endAnchored ) )
+        if( !glossStep( aLine, contacts, startAnchored, endAnchored, score ) )
             break;
     }
 
@@ -1685,13 +1769,15 @@ bool OPTIMIZER::gloss( LINE* aLine, const LINE* aOrigin )
 
 // glossStep(): one improvement of aLine, if there is one. Caller: gloss(). Finds the candidate
 // replacements (loops first, then windows of 2 to GLOSS_MAX_WINDOW segments around each sharp
-// corner and each tiny jog), keeps those that score better than the line, and applies the
-// best-scoring one that passes the constraints, the clearance check and the contact check.
-// Inputs: aContacts (glossContacts() of the original line); aStartAnchored / aEndAnchored (the
-// line ends on a pad or via there, so its first / last segment is kept). Result: whether aLine
-// changed.
+// corner and each tiny jog), keeps those that score better than the line (aScore), and
+// applies the best-scoring one that passes the constraints, the clearance check and the contact
+// check (at most GLOSS_MAX_CHECKS of them are checked). With SetGlossTail() only the line's last
+// segments are touched. Inputs: aContacts (glossContacts() of the original line);
+// aStartAnchored / aEndAnchored (the line ends on a pad or via there, so its first / last segment
+// is kept, by loop cuts too). Result: whether aLine changed. State: aLine, aScore (the line's
+// score, kept up to date), m_glossBudget (one per candidate scored; m_glossBudgetHit when it runs out).
 bool OPTIMIZER::glossStep( LINE* aLine, const std::vector<ITEM*>& aContacts, bool aStartAnchored,
-                           bool aEndAnchored )
+                           bool aEndAnchored, GLOSS_SCORE& aScore )
 {
     SHAPE_LINE_CHAIN&      line = aLine->Line();
     const SHAPE_LINE_CHAIN current( line );
@@ -1701,8 +1787,7 @@ bool OPTIMIZER::glossStep( LINE* aLine, const std::vector<ITEM*>& aContacts, boo
     if( nSegs < 2 )
         return false;
 
-    const int         width = aLine->Width();
-    const GLOSS_SCORE currentScore = glossScore( current, width );
+    const int width = aLine->Width();
 
     const DIRECTION_45::CORNER_MODE cornerMode = ROUTER::GetInstance()->Settings().GetCornerMode();
     const bool is90 = cornerMode == DIRECTION_45::MITERED_90
@@ -1710,10 +1795,16 @@ bool OPTIMIZER::glossStep( LINE* aLine, const std::vector<ITEM*>& aContacts, boo
     const DIRECTION_45::CORNER_MODE pieceMode = is90 ? DIRECTION_45::MITERED_90
                                                      : DIRECTION_45::MITERED_45;
 
+    // The vertices a replacement may span: not the first / last segment of an anchored end, and
+    // with a tail limit only the line's last m_glossTailSegments segments.
+    const int firstFrom = std::max( aStartAnchored ? 1 : 0,
+                                    m_glossTailSegments > 0 ? nSegs - m_glossTailSegments : 0 );
+    const int lastTo = aEndAnchored ? nPts - 2 : nPts - 1;
+
     struct GLOSS_CANDIDATE
     {
         GLOSS_SCORE      score;
-        SHAPE_LINE_CHAIN path;    ///< the whole line after the replacement (simplified)
+        SHAPE_LINE_CHAIN path;    ///< the whole line after the replacement (merged)
         SHAPE_LINE_CHAIN piece;   ///< what replaces vertices from..to
         int              from;
         int              to;
@@ -1736,17 +1827,38 @@ bool OPTIMIZER::glossStep( LINE* aLine, const std::vector<ITEM*>& aContacts, boo
             };
 
     // addCandidate(): the line with vertices aFrom..aTo replaced by aPiece, if that is cleaner.
+    // Its score is the line's total minus what the changed segments (aFrom-1 .. aTo) contributed
+    // plus what their replacement contributes; segments before and after are the same in both.
     auto addCandidate =
             [&]( int aFrom, int aTo, const SHAPE_LINE_CHAIN& aPiece )
             {
+                if( m_glossBudget <= 0 )
+                {
+                    m_glossBudgetHit = true;
+                    return;
+                }
+
+                m_glossBudget--;
+
                 SHAPE_LINE_CHAIN path( current );
 
                 path.Replace( aFrom, aTo, aPiece );
-                path.Simplify2();
+                glossMergeExact( path );
 
-                GLOSS_SCORE score = glossScore( path, width );
+                const int   lo = aFrom - 1;
+                const int   hiCur = std::min( aTo, nSegs - 1 );
+                const int   hiNew = path.SegmentCount() - nSegs + hiCur;
+                GLOSS_SCORE old = glossRegionScore( current, width, lo, hiCur );
+                GLOSS_SCORE neu = glossRegionScore( path, width, lo, hiNew );
+                GLOSS_SCORE score = aScore;
 
-                if( score < currentScore )
+                score.crossings += neu.crossings - old.crossings;
+                score.acute += neu.acute - old.acute;
+                score.shortSegs += neu.shortSegs - old.shortSegs;
+                score.cornerCost += neu.cornerCost - old.cornerCost;
+                score.segs = path.SegmentCount();
+
+                if( score < aScore )
                     candidates.push_back( { score, path, aPiece, aFrom, aTo } );
             };
 
@@ -1760,10 +1872,15 @@ bool OPTIMIZER::glossStep( LINE* aLine, const std::vector<ITEM*>& aContacts, boo
                                       return aA.score < aB.score;
                                   } );
 
+                int checks = 0;
+
                 for( const GLOSS_CANDIDATE& c : candidates )
                 {
                     if( !checkConstraints( c.from, c.to, aLine, current, c.piece ) )
                         continue;
+
+                    if( ++checks > GLOSS_MAX_CHECKS )
+                        break;
 
                     if( glossCollides( aLine, c.piece ) )
                         continue;
@@ -1772,6 +1889,8 @@ bool OPTIMIZER::glossStep( LINE* aLine, const std::vector<ITEM*>& aContacts, boo
                         continue;
 
                     line = c.path;
+                    aScore = c.score;
+                    candidates.clear();
                     return true;
                 }
 
@@ -1780,10 +1899,10 @@ bool OPTIMIZER::glossStep( LINE* aLine, const std::vector<ITEM*>& aContacts, boo
             };
 
     // 1. Loops: where the line crosses itself, cut the loop out at the crossing (this only removes
-    //    copper; the piece lies on the two crossing segments).
-    for( int i = 0; i < nSegs; i++ )
+    //    copper; the piece lies on the two crossing segments). The anchored ends are kept.
+    for( int i = firstFrom; i < nSegs; i++ )
     {
-        for( int j = i + 2; j < nSegs; j++ )
+        for( int j = i + 2; j < nSegs && j + 1 <= lastTo; j++ )
         {
             OPT_VECTOR2I ip = current.CSegment( i ).Intersect( current.CSegment( j ) );
 
@@ -1808,18 +1927,16 @@ bool OPTIMIZER::glossStep( LINE* aLine, const std::vector<ITEM*>& aContacts, boo
     //    track width. Windows that hold it are replaced by a straight piece (only in an allowed
     //    direction when the window's own segments all were) or either two-segment piece.
     const SEG::ecoord minLength2 = SEG::Square( width );
-    const int         firstFrom = aStartAnchored ? 1 : 0;
-    const int         lastTo = aEndAnchored ? nPts - 2 : nPts - 1;
 
     std::vector<std::pair<int, int>> defects;
 
-    for( int v = 1; v + 1 < nPts; v++ )
+    for( int v = std::max( 1, firstFrom ); v + 1 < nPts; v++ )
     {
         if( glossIsAcute( current, v ) )
             defects.emplace_back( v - 1, v );
     }
 
-    for( int k = 0; k < nSegs; k++ )
+    for( int k = firstFrom; k < nSegs; k++ )
     {
         if( current.CSegment( k ).SquaredLength() < minLength2 )
             defects.emplace_back( k, k );
@@ -1959,50 +2076,83 @@ bool OPTIMIZER::glossKeepsContacts( const LINE* aLine, const SHAPE_LINE_CHAIN& a
 
 
 // glossSegmentIsNew(): whether aSeg (a piece of aLine) is missing from the reference node, i.e.
-// the route, drag or shove being committed made it. With no reference every segment counts as
-// new. Caller: glossStep(). Changes nothing.
+// the route, drag or shove being committed made it. A segment counts as old when the reference has
+// it, or when at each of its ends the reference has a segment of the same net and layer running
+// along it (the merge of an old collinear split is still old copper). With no reference every
+// segment counts as new. Caller: glossStep(). Changes nothing.
 bool OPTIMIZER::glossSegmentIsNew( const SEG& aSeg, const LINE* aLine ) const
 {
     if( !m_glossReference )
         return true;
 
-    const JOINT* joint = m_glossReference->FindJoint( aSeg.A, aLine->Layer(), aLine->Net() );
+    // alongAt(): whether the reference has, at aEnd, a segment that is aSeg itself or lies on it.
+    auto alongAt =
+            [&]( const VECTOR2I& aEnd ) -> bool
+            {
+                const JOINT* joint = m_glossReference->FindJoint( aEnd, aLine->Layer(),
+                                                                  aLine->Net() );
 
-    if( !joint )
-        return true;
+                if( !joint )
+                    return false;
 
-    for( ITEM* item : joint->LinkList() )
-    {
-        if( !item->OfKind( ITEM::SEGMENT_T ) )
-            continue;
+                for( ITEM* item : joint->LinkList() )
+                {
+                    if( !item->OfKind( ITEM::SEGMENT_T ) )
+                        continue;
 
-        const SEG& s = static_cast<const SEGMENT*>( item )->Seg();
+                    const SEG&     s = static_cast<const SEGMENT*>( item )->Seg();
+                    const VECTOR2I other = ( s.A == aEnd ) ? s.B : s.A;
 
-        if( ( s.A == aSeg.A && s.B == aSeg.B ) || ( s.A == aSeg.B && s.B == aSeg.A ) )
-            return false;
-    }
+                    if( ( s.A == aEnd || s.B == aEnd ) && aSeg.Collinear( s )
+                            && aSeg.Contains( other ) )
+                    {
+                        return true;
+                    }
+                }
 
-    return true;
+                return false;
+            };
+
+    return !( alongAt( aSeg.A ) && alongAt( aSeg.B ) );
 }
 
 
-// GlossLines(): see the header. Each line is assembled once, glossed with a fresh optimizer on
-// aNode and, when it changed, removed from aNode and added again in its new shape (the node keeps
-// the change for the commit; the removed segments stay owned by the node).
+// GlossLines(): see the header. Each line is assembled once (stopping at locked joints and at
+// width changes), glossed with a fresh optimizer on aNode and, when it changed, written back:
+// the segments of the old line the new shape no longer has are removed and the new shape is added,
+// which links the segments it shares with the old line instead of recreating them (NODE::Add finds
+// them as redundant), so untouched segments keep their board item. Skipped: lines with arcs,
+// locked lines (this includes the tracks of a length-tuning pattern, which the router syncs as
+// locked) and lines of a differential pair's nets.
 int OPTIMIZER::GlossLines( NODE* aNode, const std::vector<LINKED_ITEM*>& aSeeds,
                            const NODE* aReference, int* aLinesChanged,
-                           const std::optional<VECTOR2I>& aPreserve )
+                           const std::optional<VECTOR2I>& aPreserve, int aBudget, bool* aPartial )
 {
     std::set<const LINKED_ITEM*> visited;
     int                          removed = 0;
     int                          changed = 0;
+    int                          budget = aBudget > 0 ? aBudget : GlossDefaultBudget;
+    RULE_RESOLVER*               resolver = aNode->GetRuleResolver();
+
+    if( aPartial )
+        *aPartial = false;
 
     for( LINKED_ITEM* seed : aSeeds )
     {
         if( !seed || !seed->OfKind( ITEM::SEGMENT_T ) || visited.count( seed ) )
             continue;
 
-        LINE line = aNode->AssembleLine( seed, nullptr, true );
+        if( budget <= 0 )
+        {
+            if( aPartial )
+                *aPartial = true;
+
+            break;
+        }
+
+        // aAllowSegmentSizeMismatch = false: a line never spans two widths, so writing it back
+        // cannot give one part another part's width (as LINE_PLACER::simplifyNewLine).
+        LINE line = aNode->AssembleLine( seed, nullptr, true, false, false );
         bool locked = false;
 
         for( const LINKED_ITEM* link : line.Links() )
@@ -2014,23 +2164,60 @@ int OPTIMIZER::GlossLines( NODE* aNode, const std::vector<LINKED_ITEM*>& aSeeds,
         if( locked || line.SegmentCount() < 1 || line.ArcCount() )
             continue;
 
+        if( resolver && resolver->DpCoupledNet( line.Net() ) )
+            continue;
+
         OPTIMIZER optimizer( aNode );
         LINE      glossed;
 
         optimizer.SetEffortLevel( GLOSS );
         optimizer.SetCollisionMask( ITEM::ANY_T );
         optimizer.SetGlossReference( aReference );
+        optimizer.SetGlossBudget( budget );
 
         if( aPreserve )
             optimizer.SetPreserveVertex( *aPreserve );
 
-        if( !optimizer.Optimize( &line, &glossed ) || glossed.CLine().CPoints() == line.CLine().CPoints() )
+        const bool optimized = optimizer.Optimize( &line, &glossed );
+
+        budget = optimizer.m_glossBudget;
+
+        if( optimizer.m_glossBudgetHit && aPartial )
+            *aPartial = true;
+
+        if( !optimized || glossed.CLine().CPoints() == line.CLine().CPoints() )
             continue;
 
         removed += line.SegmentCount() - glossed.SegmentCount();
         changed++;
 
-        aNode->Remove( line );
+        // Keep the segments the new shape still has; remove the others.
+        const SHAPE_LINE_CHAIN& shape = glossed.CLine();
+
+        auto stillThere =
+                [&]( const SEG& aSeg )
+                {
+                    for( int i = 0; i < shape.SegmentCount(); i++ )
+                    {
+                        const SEG& s = shape.CSegment( i );
+
+                        if( ( s.A == aSeg.A && s.B == aSeg.B ) || ( s.A == aSeg.B && s.B == aSeg.A ) )
+                            return true;
+                    }
+
+                    return false;
+                };
+
+        for( LINKED_ITEM* link : line.Links() )
+        {
+            if( link->OfKind( ITEM::SEGMENT_T )
+                    && !stillThere( static_cast<SEGMENT*>( link )->Seg() ) )
+            {
+                aNode->Remove( static_cast<SEGMENT*>( link ) );
+            }
+        }
+
+        glossed.ClearLinks();
         aNode->Add( glossed );
     }
 

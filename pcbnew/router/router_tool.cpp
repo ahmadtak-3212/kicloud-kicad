@@ -1801,7 +1801,8 @@ static std::vector<PCB_TRACK*> kicloudGlossTargets( TOOL_MANAGER* aToolMgr )
 // KICLOUD: R3.2 Gloss Selected Tracks: glosses the router lines through aTracks (each whole line
 // from joint to joint, so the tracks they join are cleaned too) in a branch of the router's world
 // and commits the branch as one board change (one undo step, "Routing"), or drops it when nothing
-// changed. Reports in the status line how many segments it removed. Caller: GlossSelected(),
+// changed. Reports in the status line how many segments it removed, and when the work bound
+// stopped it early. Caller: GlossSelected(),
 // after Activate() synced the router's world with the board. The router's collision checks run
 // with the board's current rules, so a cleaned line never comes closer to other copper than the
 // rules allow, and it keeps every same-net contact (OPTIMIZER::GlossLines).
@@ -1819,25 +1820,39 @@ static void kicloudGlossTracks( PNS::ROUTER* aRouter, PCB_EDIT_FRAME* aFrame,
             seeds.push_back( static_cast<PNS::LINKED_ITEM*>( item ) );
     }
 
+    // A bound on the work (candidate replacements over all lines), so a selection of long tracks
+    // cannot freeze the editor; lines left when it runs out stay as they are, and the status line
+    // says so.
+    constexpr int KICLOUD_GLOSS_SELECTED_BUDGET = 20000;
+
     PNS::NODE* branch = world->Branch();
     int        lines = 0;
-    int        removed = PNS::OPTIMIZER::GlossLines( branch, seeds, nullptr, &lines );
+    bool       partial = false;
+    int        removed = PNS::OPTIMIZER::GlossLines( branch, seeds, nullptr, &lines, std::nullopt,
+                                                     KICLOUD_GLOSS_SELECTED_BUDGET, &partial );
 
     if( lines > 0 )
         aRouter->CommitRouting( branch );
     else
         delete branch;
 
+    wxString msg;
+
     if( lines > 0 )
     {
-        aFrame->DisplayToolMsg( wxString::Format( _( "Gloss Selected Tracks: %d segment(s) removed, "
-                                                     "%d track(s) cleaned" ),
-                                                  std::max( removed, 0 ), lines ) );
+        msg = wxString::Format( _( "Gloss Selected Tracks: %d segment(s) removed, %d track(s) "
+                                   "cleaned" ),
+                                std::max( removed, 0 ), lines );
     }
     else
     {
-        aFrame->DisplayToolMsg( _( "Gloss Selected Tracks: nothing to clean" ) );
+        msg = _( "Gloss Selected Tracks: nothing to clean" );
     }
+
+    if( partial )
+        msg += _( " (stopped early: select fewer tracks and run it again)" );
+
+    aFrame->DisplayToolMsg( msg );
 }
 
 

@@ -51,6 +51,10 @@ DIALOG_PNS_SETTINGS::DIALOG_PNS_SETTINGS( wxWindow* aParent, PNS::ROUTING_SETTIN
     m_fixAllSegments->SetValue( m_settings.GetFixAllSegments() );
     m_glossWhileRouting->SetValue( m_settings.GetGlossWhileRouting() );   // KICLOUD: R3.2
 
+    // KICLOUD: R3.2: the setting also changes outside this dialog (the Gloss While Routing switch
+    // in the router's menu), so the dialog must not restore the box's last state over it.
+    OptOut( m_glossWhileRouting );
+
     // Enable/disable some options
     wxCommandEvent event;
     onModeChange( event );

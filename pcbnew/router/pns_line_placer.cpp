@@ -52,6 +52,12 @@ namespace PNS {
  */
 static constexpr double WALK_SIDE_SWITCH_MARGIN = 0.15;
 
+/// KICLOUD: R3.2 glossing: the route head is glossed only in its last GLOSS_HEAD_SEGMENTS segments
+/// each step (what the cursor just changed; the rest was glossed on earlier steps), with at most
+/// GLOSS_HEAD_BUDGET candidate replacements, so a long walk-around head costs no frame time.
+static constexpr int GLOSS_HEAD_SEGMENTS = 8;
+static constexpr int GLOSS_HEAD_BUDGET = 200;
+
 
 LINE_PLACER::LINE_PLACER( ROUTER* aRouter ) :
     PLACEMENT_ALGO( aRouter )
@@ -581,6 +587,12 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
 
     VECTOR2I walkP = aP;
 
+    // KICLOUD: R3.1: what this call walks is remembered only once its caller shows it
+    // (acceptWalk()); start without a pending walk.
+    m_pendingWalk = WALK_MEMORY();
+    WALKAROUND::WALK_POLICY walkSide = WALKAROUND::WP_CW;
+    VECTOR2I                walkStart;
+
     WALKAROUND walkaround( m_currentNode, Router() );
 
     walkaround.SetSolidsOnly( false );
@@ -613,21 +625,30 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
         // KICLOUD: R3.1 stable walkaround (docs/patches.md): the walk of initTrack and the choice
         // of side are in walkInitialTrack(), which prefers the side this route took last step. When
         // no path is found from the cursor's position on either side, the walk is tried once more
-        // from the last successful walk of this route (lastWalkTrack()) before giving up, which
-        // KiCad 10 did at once (the head then froze at its last position).
-        bool walked = walkInitialTrack( walkaround, initTrack, aP, aCollisionMask, walkFull, walkP );
+        // from the last shown walk of this route (lastWalkTrack()), on that walk's side only and
+        // with the length limits of the original walk, before giving up, which KiCad 10 did at
+        // once (the head then froze at its last position). A cursor position where that retry
+        // failed is not retried (m_walkRetryFailedAt).
+        const double initialLength = initTrack.CLine().Length();
+        bool         walked = walkInitialTrack( walkaround, initTrack, aP, aCollisionMask,
+                                                initialLength, false, walkFull, walkP, walkSide );
 
-        if( !walked )
+        if( !walked && m_walkRetryFailedAt != aP )
         {
             LINE fromLastWalk( initTrack );
 
             if( lastWalkTrack( aP, aCollisionMask, fromLastWalk ) )
             {
                 PNS_DBG( Dbg(), AddItem, &fromLastWalk, YELLOW, 20000, wxT( "walk-from-last-walk" ) );
-                walked = walkInitialTrack( walkaround, fromLastWalk, aP, aCollisionMask, walkFull,
-                                           walkP );
+                walked = walkInitialTrack( walkaround, fromLastWalk, aP, aCollisionMask,
+                                           initialLength, true, walkFull, walkP, walkSide );
+
+                if( !walked )
+                    m_walkRetryFailedAt = aP;
             }
         }
+
+        walkStart = initTrack.CPoint( 0 );
 
         PNS_DBGN( Dbg(), EndGroup );
 
@@ -653,7 +674,20 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
 
     aWalkLine = walkFull;
 
-    return !walkFull.EndsWithVia() || aViaOk;
+    if( walkFull.EndsWithVia() && !aViaOk )
+        return false;
+
+    // KICLOUD: R3.1: the walk the caller may show; acceptWalk() keeps it once it does.
+    m_pendingWalk.valid = true;
+    m_pendingWalk.clockwise = ( walkSide == WALKAROUND::WP_CW );
+    m_pendingWalk.walk = walkFull;
+    m_pendingWalk.walk.RemoveVia();
+    m_pendingWalk.start = walkStart;
+    m_pendingWalk.layer = walkFull.Layer();
+    m_pendingWalk.width = walkFull.Width();
+    m_pendingWalkSlot = walkMemorySlot( aCollisionMask );
+
+    return true;
 }
 
 
@@ -662,27 +696,29 @@ bool LINE_PLACER::rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisio
 // complete path when one is short enough, else the partial "hug" path that gets nearest to the
 // cursor), with a memory of the side the previous step chose: see its comment in the header.
 bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTrack,
-                                    const VECTOR2I& aP, int aCollisionMask, LINE& aWalkFull,
-                                    VECTOR2I& aWalkP )
+                                    const VECTOR2I& aP, int aCollisionMask, double aInitialLength,
+                                    bool aRememberedSideOnly, LINE& aWalkFull, VECTOR2I& aWalkP,
+                                    WALKAROUND::WALK_POLICY& aSide )
 {
     using WALKAROUND::WP_CW;
     using WALKAROUND::WP_CCW;
 
-    double initialLength = aInitTrack.CLine().Length();
+    // The length limits come from the walk of the cursor's own initial track (aInitialLength), so a
+    // retry from the last walk (whose track already holds a detour) is held to the same limits.
+    double initialLength = aInitialLength;
     double hugThresholdLength = initialLength * Settings().WalkaroundHugLengthThreshold();
     double hugThresholdLengthComplete =
             2.0 * initialLength * Settings().WalkaroundHugLengthThreshold();
 
-    // The side the previous step of this route chose, when it still applies (the walk starts at
-    // the same point on the same layer, with the same width and collision mask).
+    // The side the previous shown step of this route chose, when it still applies.
     std::optional<WALKAROUND::WALK_POLICY> prevSide;
+    const WALK_MEMORY*                     memory = walkMemoryFor( aCollisionMask, aInitTrack );
 
-    if( m_walkMemory.valid && m_walkMemory.mask == aCollisionMask
-            && m_walkMemory.layer == aInitTrack.Layer() && m_walkMemory.width == aInitTrack.Width()
-            && aInitTrack.PointCount() > 0 && m_walkMemory.start == aInitTrack.CPoint( 0 ) )
-    {
-        prevSide = m_walkMemory.clockwise ? WP_CW : WP_CCW;
-    }
+    if( memory )
+        prevSide = memory->clockwise ? WP_CW : WP_CCW;
+
+    if( aRememberedSideOnly && !prevSide )
+        return false;
 
     WALKAROUND::RESULT wr;
 
@@ -708,9 +744,9 @@ bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTr
         // Every path from the start to the end is at least as long as the straight distance
         // between them. When the previous side's complete path is within the margin of that
         // distance, the other side cannot be shorter by the margin, so it is not walked at all.
-        bool walkOther = true;
+        bool walkOther = !aRememberedSideOnly;
 
-        if( prevResult.status[*prevSide] == WALKAROUND::ST_DONE )
+        if( walkOther && prevResult.status[*prevSide] == WALKAROUND::ST_DONE )
         {
             const double prevLength = prevResult.lines[*prevSide].CLine().Length();
             const double direct =
@@ -733,21 +769,9 @@ bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTr
         }
     }
 
-    // remember(): keeps the side and the walk for the next step (see WALK_MEMORY).
-    auto remember =
-            [&]( WALKAROUND::WALK_POLICY aSide )
-            {
-                m_walkMemory.valid = true;
-                m_walkMemory.clockwise = ( aSide == WP_CW );
-                m_walkMemory.walk = aWalkFull;
-                m_walkMemory.start = aInitTrack.CPoint( 0 );
-                m_walkMemory.layer = aInitTrack.Layer();
-                m_walkMemory.width = aInitTrack.Width();
-                m_walkMemory.mask = aCollisionMask;
-            };
-
     std::optional<LINE> bestLine;
     std::optional<WALKAROUND::WALK_POLICY> bestSide;
+    bool                                   keptSide = false;
 
     OPTIMIZER optimizer( m_currentNode );
 
@@ -813,7 +837,7 @@ bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTr
             && wr.status[WP_CCW] == WALKAROUND::ST_DONE )
     {
         std::optional<WALKAROUND::WALK_POLICY> sameSide =
-                sameSideAsLastWalk( wr.lines[WP_CW].CLine(), wr.lines[WP_CCW].CLine() );
+                sameSideAsLastWalk( *memory, wr.lines[WP_CW].CLine(), wr.lines[WP_CCW].CLine() );
 
         if( sameSide )
         {
@@ -823,17 +847,32 @@ bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTr
 
             bestSide = ( lenOther < lenSame * ( 1.0 - WALK_SIDE_SWITCH_MARGIN ) ) ? otherSide
                                                                                    : *sameSide;
+
+            // The kept side must itself be short enough to count as a complete path; if only the
+            // other one is, take that one.
+            const double lenBest = ( *bestSide == WP_CW ) ? len_cw : len_ccw;
+            const double lenRest = ( *bestSide == WP_CW ) ? len_ccw : len_cw;
+
+            if( lenBest >= hugThresholdLengthComplete && lenRest < hugThresholdLengthComplete )
+                bestSide = ( *bestSide == WP_CW ) ? WP_CCW : WP_CW;
+
             bestLine = wr.lines[*bestSide];
+            keptSide = true;
         }
     }
 
+    // As KiCad 10 the shorter of the two lengths decides whether a complete path is short enough;
+    // after a kept side, that side's own length does.
     int bestLength = len_cw < len_ccw ? len_cw : len_ccw;
+
+    if( keptSide )
+        bestLength = ( *bestSide == WP_CW ) ? len_cw : len_ccw;
 
     if( bestLength < hugThresholdLengthComplete && bestLine.has_value() )
     {
         aWalkFull.SetShape( bestLine->CLine() );
         aWalkP = aWalkFull.CLine().CLastPoint();
-        remember( *bestSide );
+        aSide = *bestSide;
         return true;
     }
 
@@ -881,7 +920,8 @@ bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTr
 
     if( prevSide && validCw && validCcw )
     {
-        std::optional<WALKAROUND::WALK_POLICY> sameSide = sameSideAsLastWalk( l_cw, l_ccw );
+        std::optional<WALKAROUND::WALK_POLICY> sameSide = sameSideAsLastWalk( *memory, l_cw,
+                                                                              l_ccw );
 
         if( sameSide )
         {
@@ -902,22 +942,20 @@ bool LINE_PLACER::walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTr
 
     aWalkFull.SetShape( hug );
     aWalkP = hug.CLastPoint();
-    remember( *hugSide );
+    aSide = *hugSide;
     return true;
 }
 
 
 // KICLOUD: R3.1 stable walkaround (docs/patches.md); see the comment in the header.
 std::optional<WALKAROUND::WALK_POLICY>
-LINE_PLACER::sameSideAsLastWalk( const SHAPE_LINE_CHAIN& aCw, const SHAPE_LINE_CHAIN& aCcw ) const
+LINE_PLACER::sameSideAsLastWalk( const WALK_MEMORY& aMemory, const SHAPE_LINE_CHAIN& aCw,
+                                 const SHAPE_LINE_CHAIN& aCcw ) const
 {
-    if( !m_walkMemory.valid )
-        return std::nullopt;
-
     // How many corners of the last walk lie on a candidate (within one track width). The last
     // point is left out: it was the old cursor position, which neither candidate has to reach.
-    const SHAPE_LINE_CHAIN& last = m_walkMemory.walk.CLine();
-    const SEG::ecoord       tolerance = SEG::Square( std::max( m_walkMemory.width, 1 ) );
+    const SHAPE_LINE_CHAIN& last = aMemory.walk.CLine();
+    const SEG::ecoord       tolerance = SEG::Square( std::max( aMemory.width, 1 ) );
 
     auto agreement =
             [&]( const SHAPE_LINE_CHAIN& aCandidate )
@@ -943,17 +981,85 @@ LINE_PLACER::sameSideAsLastWalk( const SHAPE_LINE_CHAIN& aCw, const SHAPE_LINE_C
 }
 
 
+// KICLOUD: R3.1 stable walkaround (docs/patches.md); see the comments in the header.
+int LINE_PLACER::walkMemorySlot( int aCollisionMask )
+{
+    return aCollisionMask == ITEM::SOLID_T ? 0 : 1;
+}
+
+
+const LINE_PLACER::WALK_MEMORY* LINE_PLACER::walkMemoryFor( int aCollisionMask,
+                                                            const LINE& aInitTrack ) const
+{
+    const WALK_MEMORY& memory = m_walkMemory[walkMemorySlot( aCollisionMask )];
+
+    if( !memory.valid || memory.layer != aInitTrack.Layer() || memory.width != aInitTrack.Width()
+            || aInitTrack.PointCount() == 0 || memory.start != aInitTrack.CPoint( 0 ) )
+    {
+        return nullptr;
+    }
+
+    return &memory;
+}
+
+
+void LINE_PLACER::acceptWalk()
+{
+    if( m_pendingWalk.valid )
+        m_walkMemory[m_pendingWalkSlot] = m_pendingWalk;
+
+    m_pendingWalk = WALK_MEMORY();
+}
+
+
+// KICLOUD: R3.2 glossing (docs/patches.md); see the comments in the header.
+bool LINE_PLACER::glossWhileRouting() const
+{
+    return Settings().GetGlossWhileRouting() && Settings().Mode() != RM_MarkObstacles;
+}
+
+
+void LINE_PLACER::glossHead( LINE& aHead )
+{
+    if( !glossWhileRouting() || aHead.PointCount() < 3 )
+        return;
+
+    if( m_glossHeadCache.valid && m_glossHeadCache.node == m_currentNode
+            && m_glossHeadCache.layer == aHead.Layer() && m_glossHeadCache.width == aHead.Width()
+            && m_glossHeadCache.in == aHead.CLine().CPoints() )
+    {
+        aHead.Line() = m_glossHeadCache.out;
+        return;
+    }
+
+    m_glossHeadCache.valid = true;
+    m_glossHeadCache.node = m_currentNode;
+    m_glossHeadCache.layer = aHead.Layer();
+    m_glossHeadCache.width = aHead.Width();
+    m_glossHeadCache.in = aHead.CLine().CPoints();
+
+    OPTIMIZER optimizer( m_currentNode );
+    LINE      head( aHead );
+
+    optimizer.SetEffortLevel( OPTIMIZER::GLOSS );
+    optimizer.SetCollisionMask( ITEM::ANY_T );
+    optimizer.SetGlossTail( GLOSS_HEAD_SEGMENTS );
+    optimizer.SetGlossBudget( GLOSS_HEAD_BUDGET );
+    optimizer.Optimize( &head, &aHead );
+
+    m_glossHeadCache.out = aHead.CLine();
+}
+
+
 // KICLOUD: R3.1 stable walkaround (docs/patches.md); see the comment in the header.
 bool LINE_PLACER::lastWalkTrack( const VECTOR2I& aP, int aCollisionMask, LINE& aInitTrack ) const
 {
-    if( m_placingVia || !m_walkMemory.valid || m_walkMemory.mask != aCollisionMask
-            || m_walkMemory.layer != aInitTrack.Layer() || m_walkMemory.width != aInitTrack.Width()
-            || aInitTrack.PointCount() == 0 || m_walkMemory.start != aInitTrack.CPoint( 0 ) )
-    {
-        return false;
-    }
+    const WALK_MEMORY* memory = walkMemoryFor( aCollisionMask, aInitTrack );
 
-    SHAPE_LINE_CHAIN path( m_walkMemory.walk.CLine() );
+    if( m_placingVia || !memory )
+        return false;
+
+    SHAPE_LINE_CHAIN path( memory->walk.CLine() );
 
     if( path.PointCount() < 2 || path.ArcCount() )
         return false;
@@ -977,7 +1083,7 @@ bool LINE_PLACER::lastWalkTrack( const VECTOR2I& aP, int aCollisionMask, LINE& a
 
     path.Simplify();
 
-    if( path.SegmentCount() < 1 || path.CPoint( 0 ) != m_walkMemory.start )
+    if( path.SegmentCount() < 1 || path.CPoint( 0 ) != memory->start )
         return false;
 
     aInitTrack.SetShape( path );
@@ -1017,11 +1123,6 @@ bool LINE_PLACER::rhWalkOnly( const VECTOR2I& aP, LINE& aNewHead, LINE& aNewTail
         effort |= OPTIMIZER::SMART_PADS;
     }
 
-    // KICLOUD: R3.2: gloss the head every step (OPTIMIZER::gloss: merge pieces, cut loops,
-    // replace tiny jogs and sharp corners), unless the person turned "Gloss while routing" off.
-    if( Settings().GetGlossWhileRouting() )
-        effort |= OPTIMIZER::GLOSS;
-
     if( m_currentNode->CheckColliding( &walkFull ) )
     {
         PNS_DBG( Dbg(), AddItem, &walkFull, GREEN, 100000, wxString::Format( "collision check fail" ) );
@@ -1053,6 +1154,11 @@ bool LINE_PLACER::rhWalkOnly( const VECTOR2I& aP, LINE& aNewHead, LINE& aNewTail
     }
 
     OPTIMIZER::Optimize( &aNewHead, effort, m_currentNode );
+
+    // KICLOUD: R3.2: gloss the end of the head every step (glossHead); R3.1: this walk is shown, so
+    // the next step prefers its side (acceptWalk).
+    glossHead( aNewHead );
+    acceptWalk();
 
     PNS_DBG( Dbg(), AddItem, &aNewHead, GREEN, 100000, wxString::Format( "walk-new-head" ) );
     PNS_DBG( Dbg(), AddItem, &aNewTail, BLUE, 100000, wxT( "walk-new-tail" ) );
@@ -1236,10 +1342,6 @@ bool LINE_PLACER::rhShoveOnly( const VECTOR2I& aP, LINE& aNewHead, LINE& aNewTai
         effort |= OPTIMIZER::SMART_PADS;
     }
 
-    // KICLOUD: R3.2: gloss the shoved head too (see rhWalkOnly()).
-    if( Settings().GetGlossWhileRouting() )
-        effort |= OPTIMIZER::GLOSS;
-
     if( shoveOk )
     {
         if( m_shove->HeadsModified() )
@@ -1258,6 +1360,11 @@ bool LINE_PLACER::rhShoveOnly( const VECTOR2I& aP, LINE& aNewHead, LINE& aNewTai
             aNewHead.AppendVia( newHead.Via() );
 
         OPTIMIZER::Optimize( &aNewHead, effort, m_currentNode );
+
+        // KICLOUD: R3.2 / R3.1: as in rhWalkOnly()
+        glossHead( aNewHead );
+        acceptWalk();
+
         PNS_DBG( Dbg(), AddItem, &aNewHead, GREEN, 1000000, "head-sh-postopt" );
 
         return true;
@@ -1339,7 +1446,7 @@ bool LINE_PLACER::optimizeTailHeadTransition()
 
     // KICLOUD: R3.2: also gloss where the head joins the tail (a jog or a sharp corner there).
     const int htEffort = OPTIMIZER::MERGE_SEGMENTS
-                         | ( Settings().GetGlossWhileRouting() ? OPTIMIZER::GLOSS : 0 );
+                         | ( glossWhileRouting() ? OPTIMIZER::GLOSS : 0 );
 
     if( OPTIMIZER::Optimize( &new_head, htEffort, m_currentNode ) )
     {
@@ -1715,7 +1822,10 @@ void LINE_PLACER::initPlacement()
     m_last_p_end.reset();
     m_p_start = m_currentStart;
     m_direction = m_initial_direction;
-    m_walkMemory = WALK_MEMORY();   // KICLOUD: R3.1: a new route has no previous walk side
+    // KICLOUD: R3.1 / R3.2: a new route has no previous walk side and no glossed head yet
+    m_walkMemory[0] = m_walkMemory[1] = m_pendingWalk = WALK_MEMORY();
+    m_walkRetryFailedAt.reset();
+    m_glossHeadCache = GLOSS_HEAD_CACHE();
 
     NODE* world = Router()->GetWorld();
 
@@ -2077,7 +2187,7 @@ bool LINE_PLACER::CommitPlacement()
 
     // KICLOUD: R3.2: gloss every line the commit writes (the route and, in shove mode, the tracks
     // it pushed), where it changed and next to it, before it reaches the board.
-    if( m_lastNode && Settings().GetGlossWhileRouting() )
+    if( m_lastNode && glossWhileRouting() )
         OPTIMIZER::GlossChangedLines( m_lastNode );
 
     if( m_lastNode )
@@ -2242,7 +2352,7 @@ void LINE_PLACER::simplifyNewLine( NODE* aNode, LINKED_ITEM* aLatest )
 
     bool optimized;
 
-    if( Settings().GetGlossWhileRouting() )
+    if( glossWhileRouting() )
     {
         // KICLOUD: R3.2: gloss the line each fixing click lays, but only where it differs from the
         // board (the root of aNode) and next to those places: the track the route continued from

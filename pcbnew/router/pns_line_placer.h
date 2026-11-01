@@ -357,45 +357,111 @@ private:
     bool rhWalkBase( const VECTOR2I& aP, LINE& aWalkLine, int aCollisionMask, PNS::PNS_MODE aMode, bool& aViaOk );
 
     /**
+     * KICLOUD: R3.1 stable walkaround: what the last walk of this route that the head showed
+     * chose. There are two (walkMemorySlot()): one for the solids-only walk of Shove mode and one
+     * for the full walk of Walk around mode (and Shove mode's fallback to it), so switching
+     * between the two walks does not wipe either. Written only through acceptWalk() once the
+     * walk's head is accepted (rhWalkOnly(), rhShoveOnly()), never for a walk that was then
+     * refused (a collision, an unusable via). Cleared by initPlacement() (Start). It only applies
+     * while the walk starts from the same point on the same layer with the same width
+     * (walkMemoryFor()), so a fixing click, Backspace or a layer or width change make the next
+     * step behave like the first one.
+     */
+    struct WALK_MEMORY
+    {
+        bool     valid = false;
+        bool     clockwise = false; ///< the side chosen (WALKAROUND::WP_CW when true, else WP_CCW)
+        LINE     walk;              ///< the whole walk (tail + head), from its start to its end
+        VECTOR2I start;             ///< where that walk started (the first point of the tail)
+        int      layer = -1;
+        int      width = 0;
+    };
+
+    /**
+     * KICLOUD: R3.2 glossing: the last head glossHead() glossed and its result. When the next
+     * step brings the same head on the same layer, width and world node, the result is reused
+     * instead of glossing again (the cursor often moves without changing the head).
+     */
+    struct GLOSS_HEAD_CACHE
+    {
+        bool                  valid = false;
+        const NODE*           node = nullptr;
+        int                   layer = -1;
+        int                   width = 0;
+        std::vector<VECTOR2I> in;
+        SHAPE_LINE_CHAIN      out;
+    };
+
+    /// KICLOUD: R3.1: the m_walkMemory slot of a collision mask: 0 for ITEM::SOLID_T (Shove mode's
+    /// walk around solids), 1 for every other mask (the full walk).
+    static int walkMemorySlot( int aCollisionMask );
+
+    /// KICLOUD: R3.1: the remembered walk that applies to a walk of \a aInitTrack with
+    /// \a aCollisionMask (same start point, layer and width), or nullptr. Changes nothing.
+    const WALK_MEMORY* walkMemoryFor( int aCollisionMask, const LINE& aInitTrack ) const;
+
+    /// KICLOUD: R3.1: the head of rhWalkBase()'s last walk is shown: keep that walk
+    /// (m_pendingWalk) in its slot of m_walkMemory. Callers: rhWalkOnly(), rhShoveOnly().
+    void acceptWalk();
+
+    /// KICLOUD: R3.2: whether the router glosses what it lays now: the "Gloss while routing"
+    /// setting is on and the mode is not Highlight collisions (whose free-angle mode and manual
+    /// work glossing must not reshape). Read by every gloss of the placer.
+    bool glossWhileRouting() const;
+
+    /**
+     * KICLOUD: R3.2: glosses \a aHead (a new route head) in place, only its last
+     * GLOSS_HEAD_SEGMENTS segments and with a small candidate budget, so the cost of a step does
+     * not grow with a long walk-around head; reuses the last result when the head did not change
+     * (m_glossHeadCache). Does nothing when glossWhileRouting() is false. Callers: rhWalkOnly(),
+     * rhShoveOnly(), after the head's usual optimization.
+     */
+    void glossHead( LINE& aHead );
+
+    /**
      * KICLOUD: R3.1 stable walkaround (docs/patches.md). One walk of rhWalkBase(): walks
      * \a aInitTrack (the tail plus a new head to the cursor) around the obstacles in
      * \a aCollisionMask clockwise and counter-clockwise and picks one result, as KiCad 10 did,
-     * except after a previous step of this route (m_walkMemory): the walk that goes the same way
-     * as the previous one (sameSideAsLastWalk()) is kept unless the other is shorter by more than
-     * WALK_SIDE_SWITCH_MARGIN; and the winding chosen last step is walked first: when its path is
-     * so short that the other side cannot beat it by the margin, the other side is not walked at
-     * all. Without a previous step (the first one) it behaves exactly as before.
-     * Caller: rhWalkBase(), up to twice per round (the second time with lastWalkTrack()).
-     * Results: true and \a aWalkFull (its shape set to the chosen walk, from the tail's start)
-     * and \a aWalkP (that walk's end) on success; false when neither side gives a usable path
-     * (\a aWalkFull and \a aWalkP are then unchanged). State: on success m_walkMemory remembers
-     * the side and the walk.
+     * except after a previous shown step of this route (walkMemoryFor()): the walk that goes the
+     * same way as the previous one (sameSideAsLastWalk()) is kept unless the other is shorter by
+     * more than WALK_SIDE_SWITCH_MARGIN (and the kept one must itself be short enough to count as
+     * complete); and the winding chosen last step is walked first: when its path is so short that
+     * the other side cannot beat it by the margin, the other side is not walked at all. Without a
+     * previous step (the first one) it behaves exactly as before. The length limits come from
+     * \a aInitialLength (the length of the cursor's own initial track, also for a retry);
+     * \a aRememberedSideOnly walks only the remembered side (the retry from lastWalkTrack(); false
+     * without a memory). Caller: rhWalkBase(), up to twice per round.
+     * Results: true, \a aWalkFull (its shape set to the chosen walk, from the tail's start),
+     * \a aWalkP (that walk's end) and \a aSide on success; false when neither side gives a usable
+     * path (the outputs are then unchanged). Changes no member.
      */
     bool walkInitialTrack( WALKAROUND& aWalkaround, const LINE& aInitTrack, const VECTOR2I& aP,
-                           int aCollisionMask, LINE& aWalkFull, VECTOR2I& aWalkP );
+                           int aCollisionMask, double aInitialLength, bool aRememberedSideOnly,
+                           LINE& aWalkFull, VECTOR2I& aWalkP, WALKAROUND::WALK_POLICY& aSide );
 
     /**
      * KICLOUD: R3.1 stable walkaround: which of this step's two walks, \a aCw (clockwise) or
-     * \a aCcw (counter-clockwise), goes the same way as the walk the head took on the previous
-     * step (m_walkMemory): the one more of whose corners lie on it. WALKAROUND walks every obstacle
+     * \a aCcw (counter-clockwise), goes the same way as \a aMemory, the walk the head showed on
+     * the previous step: the one more of whose corners lie on it. WALKAROUND walks every obstacle
      * on the path with the same winding, so "clockwise" alone does not say which side of the
      * obstacle the head is on now: once the head has passed one obstacle (its detour is part of
      * both walks) and meets the next, the previous walk lies on neither walk's new detour and the
      * result is no preference, so the next obstacle's side is chosen by length as in KiCad 10.
-     * Caller: walkInitialTrack(). Returns no value when there is no previous walk or both walks
-     * agree with it equally. Changes nothing.
+     * Caller: walkInitialTrack(). Returns no value when both walks agree with it equally.
+     * Changes nothing.
      */
-    std::optional<WALKAROUND::WALK_POLICY> sameSideAsLastWalk( const SHAPE_LINE_CHAIN& aCw,
+    std::optional<WALKAROUND::WALK_POLICY> sameSideAsLastWalk( const WALK_MEMORY& aMemory,
+                                                               const SHAPE_LINE_CHAIN& aCw,
                                                                const SHAPE_LINE_CHAIN& aCcw ) const;
 
     /**
      * KICLOUD: R3.1 stable walkaround: the fallback of rhWalkBase() when the walk from the
      * current cursor position fails on both sides. Builds, into \a aInitTrack, the last
-     * successful walk of this route cut at its point nearest to \a aP, plus a 45-degree trace
+     * shown walk of this route cut at its point nearest to \a aP, plus a 45-degree trace
      * from there to \a aP, so the next walk only has to resolve the new piece instead of the whole
      * detour again (the "flopping" of gitlab #5381 and #8562, where the head gave up instead).
      * Returns false (and leaves \a aInitTrack alone) when there is no remembered walk for this
-     * start point, layer, width and collision mask, or while a via is being placed (its position
+     * start point, layer, width and collision mask (walkMemoryFor()), or while a via is being placed (its position
      * is pushed out by buildInitialLine(), which this trace would not follow). Changes nothing.
      */
     bool lastWalkTrack( const VECTOR2I& aP, int aCollisionMask, LINE& aInitTrack ) const;
@@ -462,26 +528,12 @@ private:
     FIXED_TAIL     m_fixedTail;
     MOUSE_TRAIL_TRACER m_mouseTrailTracer;
 
-    /**
-     * KICLOUD: R3.1 stable walkaround: what the last successful walk of this route chose, read
-     * and written by walkInitialTrack() and lastWalkTrack(). It belongs to one route: cleared by
-     * initPlacement() (Start); and it only applies while the walk starts from the same point on
-     * the same layer with the same width and collision mask, so a fixing click, Backspace, a
-     * layer or width change, or a switch between the solids-only walk (shove mode) and the full
-     * walk all make the next step behave like the first one.
-     */
-    struct WALK_MEMORY
-    {
-        bool     valid = false;
-        bool     clockwise = false; ///< the side chosen (WALKAROUND::WP_CW when true, else WP_CCW)
-        LINE     walk;              ///< the whole walk (tail + head), from its start to its end
-        VECTOR2I start;             ///< where that walk started (the first point of the tail)
-        int      layer = -1;
-        int      width = 0;
-        int      mask = 0;          ///< the collision mask it was walked with
-    };
-
-    WALK_MEMORY    m_walkMemory;
+    // KICLOUD: R3.1 / R3.2 state of one route (see WALK_MEMORY and GLOSS_HEAD_CACHE above)
+    WALK_MEMORY              m_walkMemory[2];      ///< by walkMemorySlot(): solids-only, full walk
+    WALK_MEMORY              m_pendingWalk;        ///< rhWalkBase()'s walk until acceptWalk()
+    int                      m_pendingWalkSlot = 1;
+    std::optional<VECTOR2I>  m_walkRetryFailedAt;  ///< the cursor where lastWalkTrack()'s retry failed
+    GLOSS_HEAD_CACHE         m_glossHeadCache;
 };
 
 }

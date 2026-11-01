@@ -44,6 +44,7 @@ class ITEM;
 class JOINT;
 class OPT_CONSTRAINT;
 class LINKED_ITEM;   // KICLOUD: R3.2 (GlossLines)
+struct GLOSS_SCORE;  // KICLOUD: R3.2 (glossStep; defined in pns_optimizer.cpp)
 
 /**
  * Calculate the cost of a given line, taking corner angles and total length into account.
@@ -137,12 +138,22 @@ public:
      * Callers: GlossChangedLines(), and ROUTER_TOOL for Gloss Selected Tracks.
      * With \a aPreserve, a line that passes that point still passes it afterwards (the point a
      * drag put a corner or a segment at: the person asked for that shape, even a sharp corner).
+     * Lines are assembled without crossing a width change, so a written-back line keeps its own
+     * width; closed lines, locked lines (tuning patterns included) and the lines of a
+     * differential pair's nets are left alone; segments the new shape shares with the old line
+     * keep their board item. \a aBudget bounds the candidates evaluated over all lines (0: the
+     * default, GlossDefaultBudget); when it runs out the remaining lines are left as they are and
+     * \a aPartial (when given) is set.
      * Result: the number of segments removed (fewer pieces after merging; can be 0 when only
      * corners were fixed); \a aLinesChanged, when given, gets the number of lines replaced.
      */
     static int GlossLines( NODE* aNode, const std::vector<LINKED_ITEM*>& aSeeds,
                            const NODE* aReference, int* aLinesChanged = nullptr,
-                           const std::optional<VECTOR2I>& aPreserve = std::nullopt );
+                           const std::optional<VECTOR2I>& aPreserve = std::nullopt,
+                           int aBudget = 0, bool* aPartial = nullptr );
+
+    /// KICLOUD: R3.2: the candidate replacements one gloss evaluates when not told otherwise.
+    static constexpr int GlossDefaultBudget = 4000;
 
     /**
      * KICLOUD: R3.2 glossing: GlossLines() over every segment \a aNode added or changed with
@@ -161,6 +172,16 @@ public:
      * segments next to those places; nullptr (the default) lets it change the whole line.
      */
     void SetGlossReference( const NODE* aReference ) { m_glossReference = aReference; }
+
+    /**
+     * KICLOUD: R3.2 glossing: with \a aSegments > 0, GLOSS changes only the line's last
+     * \a aSegments segments (a route head: what the cursor just changed); 0 (the default) lets it
+     * change the whole line.
+     */
+    void SetGlossTail( int aSegments ) { m_glossTailSegments = aSegments; }
+
+    /// KICLOUD: R3.2 glossing: how many candidate replacements GLOSS may evaluate in total.
+    void SetGlossBudget( int aCandidates ) { m_glossBudget = aCandidates; }
 
 
     void SetWorld( NODE* aNode ) { m_world = aNode; }
@@ -222,7 +243,7 @@ private:
     // KICLOUD: R3.2 glossing (see the .cpp for each)
     bool gloss( LINE* aLine, const LINE* aOrigin );
     bool glossStep( LINE* aLine, const std::vector<ITEM*>& aContacts, bool aStartAnchored,
-                    bool aEndAnchored );
+                    bool aEndAnchored, GLOSS_SCORE& aScore );
     bool glossCollides( const LINE* aLine, const SHAPE_LINE_CHAIN& aPiece ) const;
     bool glossKeepsContacts( const LINE* aLine, const SHAPE_LINE_CHAIN& aPath,
                              const std::vector<ITEM*>& aContacts ) const;
@@ -264,6 +285,9 @@ private:
     BOX2I               m_restrictArea;
     bool                m_restrictAreaIsStrict;
     const NODE*         m_glossReference;   ///< KICLOUD: R3.2 (see SetGlossReference)
+    int                 m_glossTailSegments;   ///< KICLOUD: R3.2 (see SetGlossTail)
+    int                 m_glossBudget;      ///< KICLOUD: R3.2: candidates GLOSS may still evaluate
+    bool                m_glossBudgetHit;   ///< KICLOUD: R3.2: the budget ran out
 };
 
 
